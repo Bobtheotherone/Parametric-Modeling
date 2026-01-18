@@ -5,6 +5,7 @@ description = "Formula Foundry: GPU-first EM surrogate + symbolic discovery pipe
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [
+    "cupy-cuda12x",
     "numpy",
     "torch",
 ]
