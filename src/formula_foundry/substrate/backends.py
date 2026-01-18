@@ -185,5 +185,5 @@ def _try_setattr(owner: Any, attr: str, value: Any) -> bool:
 def _import_optional(name: str) -> Any | None:
     try:
         return importlib.import_module(name)
-    except Exception:
+    except ImportError:
         return None
