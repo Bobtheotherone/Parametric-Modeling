@@ -1,6 +1,6 @@
 """Substrate utilities for deterministic, GPU-first execution."""
 
-from . import backends
+from . import backends, manifest
 from .backends import (
     Backend,
     BackendName,
@@ -21,6 +21,23 @@ from .determinism import (
     determinism_context,
     determinism_manifest,
 )
+from .manifest import (
+    MANIFEST_REQUIRED_FIELDS,
+    Manifest,
+    ManifestValidationError,
+    RunArtifacts,
+    build_environment_fingerprint,
+    build_environment_payload,
+    canonical_json_dumps,
+    create_run,
+    get_git_sha,
+    init_run_dir,
+    normalize_determinism_entry,
+    sha256_bytes,
+    sha256_file,
+    validate_manifest,
+    write_manifest,
+)
 
 __all__ = [
     "Backend",
@@ -34,10 +51,26 @@ __all__ = [
     "DeterminismMode",
     "apply_determinism",
     "backends",
+    "build_environment_fingerprint",
+    "build_environment_payload",
+    "canonical_json_dumps",
+    "create_run",
     "cupy_to_torch",
     "determinism_context",
     "determinism_manifest",
     "host_transfer_guard",
     "select_backend",
+    "get_git_sha",
+    "init_run_dir",
+    "MANIFEST_REQUIRED_FIELDS",
+    "Manifest",
+    "ManifestValidationError",
+    "manifest",
+    "normalize_determinism_entry",
+    "RunArtifacts",
+    "sha256_bytes",
+    "sha256_file",
     "torch_to_cupy",
+    "validate_manifest",
+    "write_manifest",
 ]

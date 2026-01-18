@@ -514,7 +514,7 @@ def _run_agent_live(
     script = (state.project_root / script_rel).resolve()
 
     env = os.environ.copy()
-    force_write = agent == "gemini"
+    force_write = agent in ("gemini", "claude", "codex")
     wants_write = state.grant_write_access or force_write
     env["WRITE_ACCESS"] = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
 
