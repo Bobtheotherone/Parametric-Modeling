@@ -168,6 +168,10 @@ def _run_smoke(
             report["backend"] = {"name": "none", "gpu_available": False}
             _set_check(report, "backend", "failed", str(exc))
             failure = True
+        except backends.BackendSelectionError as exc:
+            report["backend"] = {"name": "none", "gpu_available": False}
+            _set_check(report, "backend", "skipped", str(exc))
+            failure = failure or args.require_gpu
 
         if backend is None or backend.name != "cupy":
             _set_check(report, "cupy_op", "skipped", "GPU backend unavailable")
@@ -249,6 +253,25 @@ def _run_bench(
             run_manifest.write(run.manifest_path)
         log_event(run.logs_path, "bench.failure", level="error", data={"reason": str(exc)})
         return 2
+    except backends.BackendSelectionError as exc:
+        report = {
+            "backend": {"name": "none", "gpu_available": False},
+            "status": "skipped",
+            "detail": str(exc),
+        }
+        name, digest = _write_json_artifact(run.artifacts_dir, "bench_report.json", report)
+        mode = cast(Literal["strict", "fast"], args.mode)
+        with determinism.determinism_context(mode, args.seed) as config:
+            run_manifest = manifest.Manifest.from_environment(
+                config,
+                command_line=command_line,
+                artifacts={name: digest},
+                project_root=project_root,
+            )
+            run_manifest.write(run.manifest_path)
+        _emit_json_report(report, args.json, default_path=run.run_dir / "bench.json")
+        log_event(run.logs_path, "bench.complete", data={"failure": False, "skipped": True})
+        return 0
 
     artifacts: dict[str, str] = {}
     mode = cast(Literal["strict", "fast"], args.mode)
