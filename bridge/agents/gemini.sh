@@ -71,13 +71,13 @@ allowed = set(schema.get("properties", {}).keys())
 required = list(schema.get("required", []))
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
 
-def jload(s):
+def jload(s: str):
     try:
         return json.loads(s)
     except Exception:
         return None
 
-def salvage_json(s):
+def salvage_json(s: str):
     i = s.find("{")
     return jload(s[i:]) if i != -1 else None
 
@@ -95,49 +95,70 @@ def strip_fences(s: str) -> str:
 def extract_stats_ids(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
 
+def choose_stats_ref(ids: list[str]) -> list[str]:
+    if not ids:
+        return ["GM-1"]
+    gm = [x for x in ids if x.startswith("GM-")]
+    return [gm[0] if gm else ids[0]]
+
 def extract_milestone_id(text: str) -> str | None:
     m = re.search(r'"milestone_id"\s*:\s*"([^"]+)"', text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
+    return m2.group(1) if m2 else None
+
+stats_ids = extract_stats_ids(prompt_text)
+milestone_id = extract_milestone_id(prompt_text) or "M0"
+
+def synthesize(reason: str, model_text: str) -> dict:
+    return {
+        "agent": "gemini",
+        "milestone_id": milestone_id,
+        "phase": "plan",
+        "work_completed": False,
+        "project_complete": False,
+        "summary": reason,
+        "gates_passed": [],
+        "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
+        "next_agent": "codex",
+        "next_prompt": "Use tools.verify output; fix remaining gates, then commit + re-run verify.",
+        "delegate_rationale": (strip_fences(model_text)[:4000] if model_text else "(empty model output)"),
+        "stats_refs": choose_stats_ref(stats_ids),
+        "needs_write_access": True,
+        "artifacts": [],
+    }
 
 wrapper = jload(raw) or salvage_json(raw)
-if not isinstance(wrapper, dict):
-    print(raw if raw else "{}")
-    raise SystemExit(0)
-
-resp = (wrapper.get("response") or "").strip()
-if not resp:
-    print("{}")
-    raise SystemExit(0)
-
-resp = strip_fences(resp)
-
-turn = jload(resp)
-if turn is None:
-    l, r = resp.find("{"), resp.rfind("}")
-    if l != -1 and r != -1 and r > l:
-        turn = jload(resp[l:r+1].strip())
+model_text = ""
+turn = None
+if isinstance(wrapper, dict):
+    resp = (wrapper.get("response") or "").strip()
+    if resp:
+        model_text = strip_fences(resp)
+        turn = jload(model_text)
+        if turn is None:
+            l, r = model_text.find("{"), model_text.rfind("}")
+            if l != -1 and r != -1 and r > l:
+                turn = jload(model_text[l : r + 1].strip())
 
 if not isinstance(turn, dict):
-    print(resp if resp else "{}")
-    raise SystemExit(0)
+    turn = synthesize("Gemini did not emit a parseable JSON turn; synthesized.", model_text or raw)
 
 # --- Normalize to schema ---
 turn = {k: v for k, v in turn.items() if k in allowed}
 
-# Enforce required fields and types expected by orchestrator validator.
 turn["agent"] = "gemini"
 
-if not isinstance(turn.get("milestone_id"), str) or not turn["milestone_id"].strip():
-    mid = extract_milestone_id(prompt_text)
-    if mid:
-        turn["milestone_id"] = mid
+mid = turn.get("milestone_id")
+if not isinstance(mid, str) or not re.fullmatch(r"M\d+", mid.strip()):
+    turn["milestone_id"] = milestone_id
 
 if turn.get("phase") not in ("plan", "implement", "verify", "finalize"):
     turn["phase"] = "plan"
 
 for b in ("work_completed", "project_complete", "needs_write_access"):
     if not isinstance(turn.get(b), bool):
-        # Default to True for needs_write_access so codex/claude can work immediately.
         turn[b] = (b == "needs_write_access")
 
 for s in ("summary", "next_prompt", "delegate_rationale"):
@@ -153,13 +174,8 @@ def str_list(x):
 turn["gates_passed"] = str_list(turn.get("gates_passed", []))
 turn["stats_refs"] = str_list(turn.get("stats_refs", []))
 
-# stats_refs must be non-empty and must match STATS ids; pick one from prompt if missing.
 if not turn["stats_refs"]:
-    ids = extract_stats_ids(prompt_text)
-    if ids:
-        # Prefer GM-* if present
-        gm = [x for x in ids if x.startswith("GM-")]
-        turn["stats_refs"] = [gm[0] if gm else ids[0]]
+    turn["stats_refs"] = choose_stats_ref(stats_ids)
 
 rp = turn.get("requirement_progress")
 if not isinstance(rp, dict):
@@ -178,12 +194,10 @@ if isinstance(arts, list):
             d = a.get("description")
             if isinstance(p, str) and isinstance(d, str):
                 clean.append({"path": p, "description": d})
-turn["artifacts"] = clean  # guarantees presence (empty list OK)
+turn["artifacts"] = clean
 
-# Output only schema keys (prevents "unexpected keys present")
 turn = {k: turn.get(k) for k in allowed if k in turn}
 
-# Ensure all required keys exist (final safety)
 for k in required:
     if k not in turn:
         if k == "artifacts":
@@ -193,7 +207,9 @@ for k in required:
         elif k == "requirement_progress":
             turn[k] = {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}
         elif k == "stats_refs":
-            turn[k] = extract_stats_ids(prompt_text)[:1] or ["GM-1"]
+            turn[k] = choose_stats_ref(stats_ids)
+        elif k == "milestone_id":
+            turn[k] = milestone_id
         elif k in ("work_completed", "project_complete", "needs_write_access"):
             turn[k] = False
         else:
@@ -203,7 +219,7 @@ print(json.dumps(turn, ensure_ascii=False, separators=(",", ":")))
 PY
 
 if [[ ! -s "$OUT_FILE" ]]; then
-  echo "{}" > "$OUT_FILE"
+  echo '{"agent":"gemini","milestone_id":"M0","phase":"plan","work_completed":false,"project_complete":false,"summary":"Gemini wrapper produced empty output; synthesized.","gates_passed":[],"requirement_progress":{"covered_req_ids":[],"tests_added_or_modified":[],"commands_run":[]},"next_agent":"codex","next_prompt":"Use tools.verify output; fix remaining gates, then commit + re-run verify.","delegate_rationale":"(empty)","stats_refs":["GM-1"],"needs_write_access":true,"artifacts":[]}' > "$OUT_FILE"
 fi
 
 cat "$OUT_FILE"
