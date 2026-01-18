@@ -1,18 +1,56 @@
 from __future__ import annotations
 
+from pathlib import Path
+import threading
+
 import pytest
 
+from formula_foundry.substrate import runner
 
-@pytest.mark.skip(reason="M0 stub")
+
 def test_runner_task_resource_schema() -> None:
-    pass
+    resources = runner.ResourceRequest(cpu_threads=2, ram_gb=1.5, vram_gb=0.0)
+    task = runner.TaskSpec(task_id="task-1", resources=resources, fn=lambda: "ok")
+
+    assert task.task_id == "task-1"
+    assert task.resources.cpu_threads == 2
+    assert task.resources.ram_gb == 1.5
+    assert task.resources.vram_gb == 0.0
+
+    with pytest.raises(ValueError, match="cpu_threads"):
+        runner.ResourceRequest(cpu_threads=0, ram_gb=1.0, vram_gb=0.0)
+
+    with pytest.raises(ValueError, match="ram_gb"):
+        runner.ResourceRequest(cpu_threads=1, ram_gb=-1.0, vram_gb=0.0)
 
 
-@pytest.mark.skip(reason="M0 stub")
 def test_runner_deterministic_schedule() -> None:
-    pass
+    hardware = runner.HardwareConfig(cpu_cores=2, ram_gb=4.0, vram_gb=1.0)
+    local_runner = runner.LocalJobRunner(hardware)
+    tasks = [
+        runner.TaskSpec("task-a", runner.ResourceRequest(1, 1.0, 0.0), fn=lambda: "a"),
+        runner.TaskSpec("task-b", runner.ResourceRequest(1, 0.5, 1.0), fn=lambda: "b"),
+        runner.TaskSpec("task-c", runner.ResourceRequest(1, 0.5, 0.0), fn=lambda: "c"),
+    ]
+
+    schedule_one = [task.task_id for task in local_runner.schedule(tasks)]
+    schedule_two = [task.task_id for task in local_runner.schedule(tasks)]
+
+    assert schedule_one == schedule_two == ["task-a", "task-b", "task-c"]
+    assert isinstance(local_runner.cpu_semaphore, threading.Semaphore)
+    assert isinstance(local_runner.gpu_semaphore, threading.Semaphore)
+
+    oversized = runner.TaskSpec("oversized", runner.ResourceRequest(3, 1.0, 0.0), fn=lambda: "boom")
+    with pytest.raises(ValueError, match="cpu"):
+        local_runner.schedule([oversized])
 
 
-@pytest.mark.skip(reason="M0 stub")
 def test_hardware_yaml_contract() -> None:
-    pass
+    config_path = Path("config") / "hardware.yaml"
+    assert config_path.exists()
+
+    config = runner.load_hardware_config(config_path)
+
+    assert config.cpu_cores > 0
+    assert config.ram_gb > 0
+    assert config.vram_gb >= 0

@@ -1,6 +1,6 @@
 """Substrate utilities for deterministic, GPU-first execution."""
 
-from . import backends, manifest
+from . import backends, manifest, runner
 from .backends import (
     Backend,
     BackendName,
@@ -38,6 +38,15 @@ from .manifest import (
     validate_manifest,
     write_manifest,
 )
+from .runner import (
+    DEFAULT_HARDWARE_PATH,
+    DEFAULT_MEMORY_GRANULARITY_GB,
+    HardwareConfig,
+    LocalJobRunner,
+    ResourceRequest,
+    TaskSpec,
+    load_hardware_config,
+)
 
 __all__ = [
     "Backend",
@@ -67,10 +76,18 @@ __all__ = [
     "ManifestValidationError",
     "manifest",
     "normalize_determinism_entry",
+    "DEFAULT_HARDWARE_PATH",
+    "DEFAULT_MEMORY_GRANULARITY_GB",
+    "HardwareConfig",
+    "LocalJobRunner",
+    "ResourceRequest",
+    "TaskSpec",
     "RunArtifacts",
     "sha256_bytes",
     "sha256_file",
     "torch_to_cupy",
     "validate_manifest",
     "write_manifest",
+    "load_hardware_config",
+    "runner",
 ]
