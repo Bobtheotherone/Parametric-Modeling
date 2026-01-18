@@ -21,7 +21,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("OpenAI-style key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
     ("Anthropic key", re.compile(r"\bsk-ant-[A-Za-z0-9\-]{10,}\b")),
@@ -102,8 +101,8 @@ def main() -> int:
 
     if findings:
         print("Potential secret/hygiene issues detected:")
-        for f in findings:
-            print(f"- {f}")
+        for issue in findings:
+            print(f"- {issue}")
         return 2
 
     return 0

@@ -23,9 +23,9 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 REQ_RE = re.compile(r"^\s*-\s*\[(REQ-[A-Z0-9]+-\d{3,})\]\s+(.+?)\s*$")
 MILESTONE_RE = re.compile(r"\*\*Milestone:\*\*\s*(M\d+)\b")
