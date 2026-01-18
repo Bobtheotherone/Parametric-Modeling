@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from formula_foundry.substrate import backends, determinism, manifest
 
@@ -50,25 +50,50 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Formula Foundry M0 substrate CLI")
-    parser.add_argument("--project-root", default=".")
-    parser.add_argument("--run-root", default="")
-    parser.add_argument("--run-id", default="")
-    parser.add_argument("--mode", choices=("strict", "fast"), default="strict")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--require-gpu", action="store_true")
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--project-root", default=".")
+    shared.add_argument("--run-root", default="")
+    shared.add_argument("--run-id", default="")
+    shared.add_argument("--mode", choices=("strict", "fast"), default="strict")
+    shared.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    shared.add_argument("--require-gpu", action="store_true")
 
+    parser = argparse.ArgumentParser(
+        description="Formula Foundry M0 substrate CLI",
+        parents=[shared],
+        conflict_handler="resolve",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    doctor = subparsers.add_parser("doctor", help="Check CUDA availability and report environment info")
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check CUDA availability and report environment info",
+        parents=[shared],
+        conflict_handler="resolve",
+    )
     doctor.add_argument("--json", nargs="?", const="-", default=None)
 
-    subparsers.add_parser("smoke", help="Run fast GPU smoke checks")
+    subparsers.add_parser(
+        "smoke",
+        help="Run fast GPU smoke checks",
+        parents=[shared],
+        conflict_handler="resolve",
+    )
 
-    bench = subparsers.add_parser("bench", help="Run microbenchmarks")
+    bench = subparsers.add_parser(
+        "bench",
+        help="Run microbenchmarks",
+        parents=[shared],
+        conflict_handler="resolve",
+    )
     bench.add_argument("--json", nargs="?", const="default", default=None)
 
-    repro = subparsers.add_parser("repro-check", help="Run deterministic repro check")
+    repro = subparsers.add_parser(
+        "repro-check",
+        help="Run deterministic repro check",
+        parents=[shared],
+        conflict_handler="resolve",
+    )
     repro.add_argument("--payload-bytes", type=int, default=256)
 
     return parser
@@ -99,7 +124,8 @@ def _run_doctor(
     log_event(run.logs_path, "doctor.report", data=report)
     artifacts: dict[str, str] = {}
 
-    with determinism.determinism_context(args.mode, args.seed) as config:
+    mode = cast(Literal["strict", "fast"], args.mode)
+    with determinism.determinism_context(mode, args.seed) as config:
         name, digest = _write_json_artifact(run.artifacts_dir, "doctor_report.json", report)
         artifacts[name] = digest
         run_manifest = manifest.Manifest.from_environment(
@@ -132,7 +158,8 @@ def _run_smoke(
     failure = False
     artifacts: dict[str, str] = {}
 
-    with determinism.determinism_context(args.mode, args.seed) as config:
+    mode = cast(Literal["strict", "fast"], args.mode)
+    with determinism.determinism_context(mode, args.seed) as config:
         backend = None
         try:
             backend = backends.select_backend(require_gpu=args.require_gpu)
@@ -211,7 +238,8 @@ def _run_bench(
             "detail": str(exc),
         }
         name, digest = _write_json_artifact(run.artifacts_dir, "bench_report.json", report)
-        with determinism.determinism_context(args.mode, args.seed) as config:
+        mode = cast(Literal["strict", "fast"], args.mode)
+        with determinism.determinism_context(mode, args.seed) as config:
             run_manifest = manifest.Manifest.from_environment(
                 config,
                 command_line=command_line,
@@ -223,7 +251,8 @@ def _run_bench(
         return 2
 
     artifacts: dict[str, str] = {}
-    with determinism.determinism_context(args.mode, args.seed) as config:
+    mode = cast(Literal["strict", "fast"], args.mode)
+    with determinism.determinism_context(mode, args.seed) as config:
         report, failure = _run_microbench(backend)
         name, digest = _write_json_artifact(run.artifacts_dir, "bench_report.json", report)
         artifacts[name] = digest
@@ -288,7 +317,9 @@ def _run_repro_pass(
     run = manifest.init_run_dir(run_root, run_id)
     log_event(run.logs_path, "repro.start", data={"run_id": run_id})
     artifacts: dict[str, str] = {}
-    with determinism.determinism_context(mode, seed) as config:
+    
+    safe_mode = cast(Literal["strict", "fast"], mode)
+    with determinism.determinism_context(safe_mode, seed) as config:
         payload = _build_repro_payload(payload_bytes)
         name, digest = _write_bytes_artifact(run.artifacts_dir, "repro_payload.bin", payload)
         artifacts[name] = digest
@@ -525,7 +556,7 @@ def _torch_cuda_available(torch_module: Any | None) -> bool:
 def _import_optional(name: str) -> Any | None:
     try:
         return importlib.import_module(name)
-    except Exception:
+    except ImportError:
         return None
 
 

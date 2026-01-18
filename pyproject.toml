@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Formula Foundry: GPU-first EM surrogate + symbolic discovery pipeline"
 requires-python = ">=3.10"
 readme = "README.md"
+dependencies = [
+    "numpy",
+    "torch",
+]
 
 [project.optional-dependencies]
 dev = [

@@ -3,9 +3,10 @@ from __future__ import annotations
 import importlib
 import math
 import threading
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 DEFAULT_MEMORY_GRANULARITY_GB = 1.0
 DEFAULT_HARDWARE_PATH = Path(__file__).resolve().parents[3] / "config" / "hardware.yaml"
