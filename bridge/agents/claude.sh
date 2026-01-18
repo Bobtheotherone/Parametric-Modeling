@@ -10,10 +10,10 @@ TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
 
 prompt="$(cat "$PROMPT_FILE")"
 
-# Final hard reminder at the end helps on long prompts.
+# Strong tail reminder helps on long prompts.
 prompt="${prompt}
 
-REMINDER (NON-NEGOTIABLE): Output EXACTLY ONE JSON object that matches the provided JSON schema.
+REMINDER (NON-NEGOTIABLE): Output EXACTLY ONE JSON object matching the turn schema.
 No markdown. No code fences. No extra text before/after the JSON."
 
 # Claude Code expects --json-schema as an *inline JSON string*, not a file path.
@@ -23,33 +23,66 @@ SCHEMA_JSON="$(
 )"
 
 ERR_FILE="${OUT_FILE}.stderr"
-WRAP_JSON="${OUT_FILE}.wrapper.json"
+WRAP1_JSON="${OUT_FILE}.wrapper1.json"
+WRAP2_JSON="${OUT_FILE}.wrapper2.json"
+: > "$ERR_FILE"
 
-# Run Claude in JSON wrapper mode; apply schema validation at the CLI level.
-if command -v timeout >/dev/null 2>&1; then
-  timeout "${TIMEOUT_S}s" claude \
-    -p "$prompt" \
-    --output-format json \
-    --json-schema "$SCHEMA_JSON" \
-    --model "$MODEL" \
-    --no-session-persistence \
-    --permission-mode dontAsk \
-    --tools "" \
-    >"$WRAP_JSON" 2>"$ERR_FILE" || true
-else
-  claude \
-    -p "$prompt" \
-    --output-format json \
-    --json-schema "$SCHEMA_JSON" \
-    --model "$MODEL" \
-    --no-session-persistence \
-    --permission-mode dontAsk \
-    --tools "" \
-    >"$WRAP_JSON" 2>"$ERR_FILE" || true
-fi
+_run_claude() {
+  # args: <prompt_text> <wrap_json_path> <use_schema:0|1>
+  local ptxt="$1"
+  local wrap="$2"
+  local use_schema="$3"
 
-# Extract Claude wrapper JSON -> model text -> parse/normalize into strict turn schema.
-python3 - <<'PY' "$WRAP_JSON" "$SCHEMA_FILE" "$PROMPT_FILE" > "$OUT_FILE" || true
+  if command -v timeout >/dev/null 2>&1; then
+    if [[ "$use_schema" == "1" ]]; then
+      timeout "${TIMEOUT_S}s" claude \
+        -p "$ptxt" \
+        --output-format json \
+        --json-schema "$SCHEMA_JSON" \
+        --model "$MODEL" \
+        --no-session-persistence \
+        --permission-mode dontAsk \
+        --tools "" \
+        >"$wrap" 2>>"$ERR_FILE" || true
+    else
+      timeout "${TIMEOUT_S}s" claude \
+        -p "$ptxt" \
+        --output-format json \
+        --model "$MODEL" \
+        --no-session-persistence \
+        --permission-mode dontAsk \
+        --tools "" \
+        >"$wrap" 2>>"$ERR_FILE" || true
+    fi
+  else
+    if [[ "$use_schema" == "1" ]]; then
+      claude \
+        -p "$ptxt" \
+        --output-format json \
+        --json-schema "$SCHEMA_JSON" \
+        --model "$MODEL" \
+        --no-session-persistence \
+        --permission-mode dontAsk \
+        --tools "" \
+        >"$wrap" 2>>"$ERR_FILE" || true
+    else
+      claude \
+        -p "$ptxt" \
+        --output-format json \
+        --model "$MODEL" \
+        --no-session-persistence \
+        --permission-mode dontAsk \
+        --tools "" \
+        >"$wrap" 2>>"$ERR_FILE" || true
+    fi
+  fi
+}
+
+_normalize_or_fail() {
+  # args: <wrap_json_path>
+  local wrap="$1"
+
+  python3 - "$wrap" "$SCHEMA_FILE" "$PROMPT_FILE" <<'PY'
 import json, re, sys
 
 wrap_path, schema_path, prompt_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -174,60 +207,39 @@ def normalize_requirement_progress(x):
         "commands_run": to_str_list(rp.get("commands_run", [])),
     }
 
-# Parse Claude wrapper JSON
 wrapper = jload(raw) or salvage_json_obj(raw)
-model_text = ""
-is_error = False
+if not isinstance(wrapper, dict):
+    raise SystemExit(2)
 
-if isinstance(wrapper, dict):
-    is_error = bool(wrapper.get("is_error", False))
-    for k in ("result", "response", "content", "output", "text", "message"):
-        v = wrapper.get(k)
-        if isinstance(v, str) and v.strip():
-            model_text = v.strip()
-            break
-        if isinstance(v, (dict, list)):
-            model_text = json.dumps(v)
-            break
+# Claude Code JSON wrapper commonly includes: {"type":"result", ... , "result":"<text>"}
+is_error = bool(wrapper.get("is_error", False))
+model_text = ""
+for k in ("result", "response", "content", "output", "text", "message"):
+    v = wrapper.get(k)
+    if isinstance(v, str) and v.strip():
+        model_text = v.strip()
+        break
+    if isinstance(v, (dict, list)):
+        model_text = json.dumps(v)
+        break
 
 model_text = strip_fences(model_text)
 
-# Parse the model output into a dict turn.
+if is_error or not model_text:
+    raise SystemExit(3)
+
 turn = jload(model_text)
 if turn is None:
     obj_txt = extract_balanced_object(model_text)
     if obj_txt:
         turn = jload(obj_txt)
 
+if not isinstance(turn, dict):
+    raise SystemExit(4)
+
 stats_ids = extract_stats_ids(prompt_text)
 milestone_id = extract_milestone_id(prompt_text)
 
-# If Claude failed or didn't produce JSON, synthesize a valid turn.
-if not isinstance(turn, dict):
-    out = {
-        "agent": "claude",
-        "milestone_id": milestone_id,
-        "phase": "plan",
-        "work_completed": False,
-        "project_complete": False,
-        "summary": "Claude output was not valid JSON under schema enforcement; wrapper synthesized a valid turn.",
-        "gates_passed": [],
-        "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
-        "next_agent": "codex",
-        "next_prompt": "Claude did not emit schema-valid JSON. Continue using tools.verify output; fix remaining gates, then re-run.",
-        "delegate_rationale": (
-            f"(claude is_error={is_error})\n"
-            + (model_text[:4000] if model_text else "(empty model output)")
-        ),
-        "stats_refs": choose_stats_ref(stats_ids),
-        # Keep write access flowing to codex by default:
-        "needs_write_access": True,
-        "artifacts": [],
-    }
-    print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
-    raise SystemExit(0)
-
-# Normalize parsed turn into the strict schema expected by bridge/loop.py
 out = {}
 out["agent"] = "claude"
 out["milestone_id"] = milestone_id
@@ -254,18 +266,69 @@ out["stats_refs"] = refs if refs else choose_stats_ref(stats_ids)
 out["requirement_progress"] = normalize_requirement_progress(turn.get("requirement_progress"))
 out["artifacts"] = normalize_artifacts(turn.get("artifacts"))
 
-# **Key policy change**: If we delegate to a coding agent, keep write access enabled.
-# This prevents the orchestrator from dropping WRITE_ACCESS on the next call.
+# Keep write access flowing to coding agents.
 if out["next_agent"] in ("codex", "claude"):
     out["needs_write_access"] = True
 else:
     out["needs_write_access"] = to_bool(turn.get("needs_write_access"), True)
 
-out = {k: out[k] for k in REQUIRED_KEYS}
+out = {k: out.get(k) for k in REQUIRED_KEYS}
 print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 PY
+}
 
-# Guarantee non-empty output.
+# Attempt 1: NO schema enforcement (avoids schema-rejection causing empty/errored result)
+_run_claude "$prompt" "$WRAP1_JSON" "0"
+if _normalize_or_fail "$WRAP1_JSON" > "$OUT_FILE"; then
+  : # ok
+else
+  # Attempt 2: minimal correction prompt + schema enforcement
+  # Extract milestone + a known stats id from the original orchestrator prompt
+  MID="$(python3 - <<'PY' < "$PROMPT_FILE"
+import re,sys
+t=sys.stdin.read()
+m=re.search(r'"milestone_id"\s*:\s*"([^"]+)"', t)
+print(m.group(1) if m else "M0")
+PY
+)"
+  STAT="$(python3 - <<'PY' < "$PROMPT_FILE"
+import re,sys
+t=sys.stdin.read()
+ids=sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", t)))
+cl=[x for x in ids if x.startswith("CL-")]
+print((cl[0] if cl else (ids[0] if ids else "CL-1")))
+PY
+)"
+  CORR_PROMPT="You MUST output exactly one JSON object matching the schema. No markdown.
+Use:
+agent='claude'
+milestone_id='${MID}'
+phase='plan'
+work_completed=false
+project_complete=false
+summary='(correction) emit schema-valid JSON'
+gates_passed=[]
+requirement_progress={covered_req_ids:[],tests_added_or_modified:[],commands_run:[]}
+next_agent='codex'
+next_prompt='Continue with the next smallest implementable step per tools.verify.'
+delegate_rationale='Correction pass.'
+stats_refs=['${STAT}']
+needs_write_access=true
+artifacts=[]
+Return ONLY the JSON object."
+
+  _run_claude "$CORR_PROMPT" "$WRAP2_JSON" "1"
+  if _normalize_or_fail "$WRAP2_JSON" > "$OUT_FILE"; then
+    : # ok
+  else
+    # Last resort: synthesize a minimal valid turn.
+    MID_F="$MID"
+    STAT_F="$STAT"
+    printf '%s' "{\"agent\":\"claude\",\"milestone_id\":\"${MID_F}\",\"phase\":\"plan\",\"work_completed\":false,\"project_complete\":false,\"summary\":\"Claude failed to emit valid JSON; synthesized.\",\"gates_passed\":[],\"requirement_progress\":{\"covered_req_ids\":[],\"tests_added_or_modified\":[],\"commands_run\":[]},\"next_agent\":\"codex\",\"next_prompt\":\"Continue based on tools.verify output; fix remaining gates.\",\"delegate_rationale\":\"See ${OUT_FILE}.stderr and wrapper json files.\",\"stats_refs\":[\"${STAT_F}\"],\"needs_write_access\":true,\"artifacts\":[]}" > "$OUT_FILE"
+  fi
+fi
+
+# Guarantee non-empty output
 if [[ ! -s "$OUT_FILE" ]]; then
   echo "{}" > "$OUT_FILE"
 fi
