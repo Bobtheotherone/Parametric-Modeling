@@ -7,6 +7,8 @@ OUT_FILE="${3:?out_file}"
 
 MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet-latest}"
 TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CLAUDE_ARGS_JSON_MODE="${CLAUDE_ARGS_JSON_MODE:-}"
 
 prompt="$(cat "$PROMPT_FILE")"
 
@@ -29,53 +31,71 @@ ERR_FILE="${OUT_FILE}.stderr"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
 
+HELP_TEXT="$("$CLAUDE_BIN" --help 2>/dev/null || true)"
+
+supports_flag() {
+  local flag="$1"
+  [[ "$HELP_TEXT" == *"$flag"* ]]
+}
+
+PROMPT_FLAG="-p"
+if supports_flag "--prompt"; then
+  PROMPT_FLAG="--prompt"
+fi
+
+COMMON_ARGS=("$PROMPT_FLAG" "$prompt")
+if [[ -n "$MODEL" ]] && supports_flag "--model"; then
+  COMMON_ARGS+=(--model "$MODEL")
+fi
+if supports_flag "--no-session-persistence"; then
+  COMMON_ARGS+=(--no-session-persistence)
+fi
+if supports_flag "--permission-mode"; then
+  COMMON_ARGS+=(--permission-mode dontAsk)
+fi
+if supports_flag "--tools"; then
+  COMMON_ARGS+=(--tools "")
+fi
+
+JSON_ARGS=()
+if [[ -n "$CLAUDE_ARGS_JSON_MODE" ]]; then
+  read -r -a JSON_ARGS <<< "$CLAUDE_ARGS_JSON_MODE"
+else
+  if supports_flag "--output-format"; then
+    JSON_ARGS+=(--output-format json)
+  fi
+  if supports_flag "--json-schema"; then
+    JSON_ARGS+=(--json-schema "$SCHEMA_JSON")
+  elif supports_flag "--json"; then
+    JSON_ARGS+=(--json)
+  fi
+fi
+
+PLAIN_ARGS=()
+if supports_flag "--output-format"; then
+  PLAIN_ARGS+=(--output-format json)
+elif supports_flag "--json"; then
+  PLAIN_ARGS+=(--json)
+fi
+
 run_claude() {
-  # args: <use_schema:0|1> <wrap_path>
-  local use_schema="$1"
+  # args: <mode:json|plain> <wrap_path>
+  local mode="$1"
   local wrap_path="$2"
+  local -a mode_args=()
+
+  if [[ "$mode" == "json" ]]; then
+    mode_args=("${JSON_ARGS[@]}")
+  else
+    mode_args=("${PLAIN_ARGS[@]}")
+  fi
+
+  local -a cmd=("$CLAUDE_BIN" "${COMMON_ARGS[@]}" "${mode_args[@]}")
 
   if command -v timeout >/dev/null 2>&1; then
-    if [[ "$use_schema" == "1" ]]; then
-      timeout "${TIMEOUT_S}s" claude \
-        -p "$prompt" \
-        --output-format json \
-        --json-schema "$SCHEMA_JSON" \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    else
-      timeout "${TIMEOUT_S}s" claude \
-        -p "$prompt" \
-        --output-format json \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    fi
+    timeout "${TIMEOUT_S}s" "${cmd[@]}" >"$wrap_path" 2>>"$ERR_FILE" || true
   else
-    if [[ "$use_schema" == "1" ]]; then
-      claude \
-        -p "$prompt" \
-        --output-format json \
-        --json-schema "$SCHEMA_JSON" \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    else
-      claude \
-        -p "$prompt" \
-        --output-format json \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    fi
+    "${cmd[@]}" >"$wrap_path" 2>>"$ERR_FILE" || true
   fi
 }
 
@@ -84,11 +104,11 @@ run_claude() {
 : > "$WRAP_PLAIN"
 
 # Try schema-enforced first (best chance of correct structured output).
-run_claude "1" "$WRAP_SCHEMA"
+run_claude "json" "$WRAP_SCHEMA"
 
 # If that produced an error wrapper or no usable result, we’ll fall back to plain.
 # Normalization logic below will choose the better wrapper automatically.
-run_claude "0" "$WRAP_PLAIN"
+run_claude "plain" "$WRAP_PLAIN"
 
 python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" > "$OUT_FILE" || true
 import json, re, sys
