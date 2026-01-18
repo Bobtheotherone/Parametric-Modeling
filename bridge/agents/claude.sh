@@ -10,15 +10,27 @@ TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
 
 prompt="$(cat "$PROMPT_FILE")"
 
+# Final hard reminder at the end helps on long prompts.
+prompt="${prompt}
+
+REMINDER (NON-NEGOTIABLE): Output EXACTLY ONE JSON object that matches the provided JSON schema.
+No markdown. No code fences. No extra text before/after the JSON."
+
+# Claude Code expects --json-schema as an *inline JSON string*, not a file path.
+SCHEMA_JSON="$(
+  python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",",":")))' \
+    "$SCHEMA_FILE"
+)"
+
 ERR_FILE="${OUT_FILE}.stderr"
 WRAP_JSON="${OUT_FILE}.wrapper.json"
 
-# Run Claude in JSON wrapper mode so stdout is always machine-parseable.
-# We keep headless-safe flags to avoid hanging on interactive permissions.
+# Run Claude in JSON wrapper mode; apply schema validation at the CLI level.
 if command -v timeout >/dev/null 2>&1; then
   timeout "${TIMEOUT_S}s" claude \
     -p "$prompt" \
     --output-format json \
+    --json-schema "$SCHEMA_JSON" \
     --model "$MODEL" \
     --no-session-persistence \
     --permission-mode dontAsk \
@@ -28,6 +40,7 @@ else
   claude \
     -p "$prompt" \
     --output-format json \
+    --json-schema "$SCHEMA_JSON" \
     --model "$MODEL" \
     --no-session-persistence \
     --permission-mode dontAsk \
@@ -35,7 +48,7 @@ else
     >"$WRAP_JSON" 2>"$ERR_FILE" || true
 fi
 
-# Extract model "result" and normalize to the strict orchestrator schema.
+# Extract Claude wrapper JSON -> model text -> parse/normalize into strict turn schema.
 python3 - <<'PY' "$WRAP_JSON" "$SCHEMA_FILE" "$PROMPT_FILE" > "$OUT_FILE" || true
 import json, re, sys
 
@@ -44,7 +57,6 @@ raw = open(wrap_path, "r", encoding="utf-8").read().strip()
 schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
 
-# The orchestrator validator allows ONLY these keys (and requires all of them).
 REQUIRED_KEYS = [
     "agent",
     "milestone_id",
@@ -85,21 +97,48 @@ def strip_fences(s: str) -> str:
         return "\n".join(lines).strip()
     return s
 
+def extract_balanced_object(s: str) -> str | None:
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        else:
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return s[start : i + 1]
+    return None
+
 def extract_stats_ids(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
 
 def choose_stats_ref(ids: list[str]) -> list[str]:
     if not ids:
-        return ["CL-1"]  # last-resort; prompt usually contains CL-*
+        return ["CL-1"]
     cl = [x for x in ids if x.startswith("CL-")]
     return [cl[0] if cl else ids[0]]
 
 def extract_milestone_id(text: str) -> str:
-    # Prefer the orchestrator state blob: "milestone_id": "M0"
     m = re.search(r'"milestone_id"\s*:\s*"([^"]+)"', text)
     if m:
         return m.group(1)
-    # Fallback: DESIGN_DOCUMENT excerpt: **Milestone:** M0
     m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
     return m2.group(1) if m2 else "M0"
 
@@ -112,11 +151,7 @@ def to_str(x, default=""):
 def to_str_list(x):
     if not isinstance(x, list):
         return []
-    out = []
-    for i in x:
-        if isinstance(i, str) and i.strip():
-            out.append(i.strip())
-    return out
+    return [i.strip() for i in x if isinstance(i, str) and i.strip()]
 
 def normalize_artifacts(x):
     if not isinstance(x, list):
@@ -142,7 +177,10 @@ def normalize_requirement_progress(x):
 # Parse Claude wrapper JSON
 wrapper = jload(raw) or salvage_json_obj(raw)
 model_text = ""
+is_error = False
+
 if isinstance(wrapper, dict):
+    is_error = bool(wrapper.get("is_error", False))
     for k in ("result", "response", "content", "output", "text", "message"):
         v = wrapper.get(k)
         if isinstance(v, str) and v.strip():
@@ -154,17 +192,17 @@ if isinstance(wrapper, dict):
 
 model_text = strip_fences(model_text)
 
-# Try to parse the model text as JSON object
+# Parse the model output into a dict turn.
 turn = jload(model_text)
 if turn is None:
-    l, r = model_text.find("{"), model_text.rfind("}")
-    if l != -1 and r != -1 and r > l:
-        turn = jload(model_text[l : r + 1].strip())
+    obj_txt = extract_balanced_object(model_text)
+    if obj_txt:
+        turn = jload(obj_txt)
 
-# If still not a dict, synthesize a minimal valid turn so the orchestrator can proceed.
 stats_ids = extract_stats_ids(prompt_text)
 milestone_id = extract_milestone_id(prompt_text)
 
+# If Claude failed or didn't produce JSON, synthesize a valid turn.
 if not isinstance(turn, dict):
     out = {
         "agent": "claude",
@@ -172,20 +210,24 @@ if not isinstance(turn, dict):
         "phase": "plan",
         "work_completed": False,
         "project_complete": False,
-        "summary": "Claude returned non-JSON; wrapper coerced to a valid turn. See delegate_rationale.",
+        "summary": "Claude output was not valid JSON under schema enforcement; wrapper synthesized a valid turn.",
         "gates_passed": [],
         "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
         "next_agent": "codex",
-        "next_prompt": "Claude output was not valid JSON. Continue the task using tools.verify output; fix remaining gates.",
-        "delegate_rationale": (model_text[:4000] if model_text else "(empty model output)"),
+        "next_prompt": "Claude did not emit schema-valid JSON. Continue using tools.verify output; fix remaining gates, then re-run.",
+        "delegate_rationale": (
+            f"(claude is_error={is_error})\n"
+            + (model_text[:4000] if model_text else "(empty model output)")
+        ),
         "stats_refs": choose_stats_ref(stats_ids),
+        # Keep write access flowing to codex by default:
         "needs_write_access": True,
         "artifacts": [],
     }
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
     raise SystemExit(0)
 
-# Normalize a real parsed dict to strict schema
+# Normalize parsed turn into the strict schema expected by bridge/loop.py
 out = {}
 out["agent"] = "claude"
 out["milestone_id"] = milestone_id
@@ -203,10 +245,8 @@ out["delegate_rationale"] = to_str(turn.get("delegate_rationale"), "")
 na = turn.get("next_agent")
 out["next_agent"] = na if na in ("codex", "gemini", "claude") else "codex"
 
-out["needs_write_access"] = to_bool(turn.get("needs_write_access"), True)
 out["gates_passed"] = to_str_list(turn.get("gates_passed", []))
 
-# stats_refs must be non-empty and must reference known IDs
 refs = to_str_list(turn.get("stats_refs", []))
 refs = [r for r in refs if r in stats_ids]
 out["stats_refs"] = refs if refs else choose_stats_ref(stats_ids)
@@ -214,12 +254,18 @@ out["stats_refs"] = refs if refs else choose_stats_ref(stats_ids)
 out["requirement_progress"] = normalize_requirement_progress(turn.get("requirement_progress"))
 out["artifacts"] = normalize_artifacts(turn.get("artifacts"))
 
-# Output only required keys, no extras.
+# **Key policy change**: If we delegate to a coding agent, keep write access enabled.
+# This prevents the orchestrator from dropping WRITE_ACCESS on the next call.
+if out["next_agent"] in ("codex", "claude"):
+    out["needs_write_access"] = True
+else:
+    out["needs_write_access"] = to_bool(turn.get("needs_write_access"), True)
+
 out = {k: out[k] for k in REQUIRED_KEYS}
 print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 PY
 
-# Guarantee non-empty output so the orchestrator never sees "empty output".
+# Guarantee non-empty output.
 if [[ ! -s "$OUT_FILE" ]]; then
   echo "{}" > "$OUT_FILE"
 fi
