@@ -1,0 +1,31 @@
+{
+  "agents": {
+    "gemini": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "gemini",
+          "milestone_id": "M0",
+          "phase": "finalize",
+          "work_completed": true,
+          "project_complete": true,
+          "summary": "Mock completion: demonstrating JSON handoff + completion gating.",
+          "gates_passed": ["read_stats", "read_design_document"],
+          "requirement_progress": {
+            "covered_req_ids": ["REQ-M0-001", "REQ-M0-002", "REQ-M0-003", "REQ-M0-004", "REQ-M0-005"],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "codex",
+          "next_prompt": "(mock run done)",
+          "delegate_rationale": "No next step; this is a deterministic mock run.",
+          "stats_refs": ["GM-4"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ],
+    "codex": [],
+    "claude": []
+  }
+}

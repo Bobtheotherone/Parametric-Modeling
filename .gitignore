@@ -1,0 +1,28 @@
+# Orchestrator runs
+runs/
+**/runs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets
+.env
+.env.*
+
+# Misc
+*.log
