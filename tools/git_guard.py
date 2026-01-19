@@ -32,6 +32,8 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9\._\-]{20,}\b")),
 ]
 
+EGG_INFO_RE = re.compile(r"(^|/)[^/]+\.egg-info/")
+
 
 def _run(cmd: list[str], cwd: Path) -> tuple[int, str, str]:
     proc = subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True)
@@ -45,16 +47,28 @@ def _git_root() -> Path:
     return Path(out.strip())
 
 
-def _tracked_files(root: Path) -> list[Path]:
+def _git_ls_files(root: Path) -> list[str]:
     rc, out, err = _run(["git", "ls-files"], root)
     if rc != 0:
         raise RuntimeError(err.strip())
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _tracked_files(root: Path) -> list[Path]:
     files: list[Path] = []
-    for line in out.splitlines():
-        p = (root / line.strip()).resolve()
+    for line in _git_ls_files(root):
+        p = (root / line).resolve()
         if p.is_file():
             files.append(p)
     return files
+
+
+def _find_tracked_egg_info(paths: list[str]) -> list[str]:
+    hits: list[str] = []
+    for path in paths:
+        if EGG_INFO_RE.search(path):
+            hits.append(path)
+    return hits
 
 
 def _scan_file(path: Path) -> list[str]:
@@ -84,6 +98,11 @@ def main() -> int:
         rc, _, _ = _run(["git", "check-ignore", ".env"], root)
         if rc != 0:
             findings.append(".env exists but is not ignored by git")
+
+    tracked_paths = _git_ls_files(root)
+    egg_hits = _find_tracked_egg_info(tracked_paths)
+    for hit in egg_hits:
+        findings.append(f"Tracked .egg-info file: {hit}")
 
     for f in _tracked_files(root):
         hits = _scan_file(f)

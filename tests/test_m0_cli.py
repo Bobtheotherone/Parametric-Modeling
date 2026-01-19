@@ -37,11 +37,19 @@ def test_doctor_command_contract(tmp_path: Path) -> None:
     assert report_path.exists()
     manifest_data = _read_json(manifest_path)
     assert "doctor_report.json" in manifest_data["artifacts"]
-    assert _read_json(json_path)["require_gpu"] is False
+    doctor_json = _read_json(json_path)
+    assert doctor_json["require_gpu"] is False
+    assert isinstance(doctor_json["gpu_devices"], list)
+    assert "cuda_visible_devices" in doctor_json
+    assert "driver_version" in doctor_json
+    assert "cuda_runtime_version" in doctor_json
+    assert "cudnn_version" in doctor_json
+    assert isinstance(doctor_json["nvidia_smi"], dict)
 
 
 def test_smoke_command_contract(tmp_path: Path) -> None:
     run_root = tmp_path / "runs"
+    json_path = tmp_path / "smoke.json"
 
     rc = m0.main(
         [
@@ -50,6 +58,8 @@ def test_smoke_command_contract(tmp_path: Path) -> None:
             str(run_root),
             "--run-id",
             "smoke-1",
+            "--json",
+            str(json_path),
         ]
     )
 
@@ -63,6 +73,9 @@ def test_smoke_command_contract(tmp_path: Path) -> None:
     assert report_path.exists()
     report_data = _read_json(report_path)
     assert "checks" in report_data
+    assert json_path.exists()
+    assert report_data["dlpack_zero_copy_ok"] in (True, False, "skip")
+    assert isinstance(report_data["dlpack_pointer"], dict)
 
 
 def test_bench_command_contract(tmp_path: Path) -> None:
