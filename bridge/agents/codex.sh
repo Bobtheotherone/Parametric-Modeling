@@ -64,6 +64,8 @@ fi
 cmd+=(--output-schema "$SCHEMA_FILE" -o "$OUT_FILE" -)
 
 python3 - <<'PY' "$CODEX_TIMEOUT_S" "$PROMPT_FILE" "${cmd[@]}" 1>/dev/null
+import os
+import signal
 import subprocess
 import sys
 
@@ -74,16 +76,21 @@ cmd = sys.argv[3:]
 prompt = open(prompt_path, "r", encoding="utf-8").read()
 
 try:
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        input=prompt,
         text=True,
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=sys.stderr,
-        timeout=timeout_s,
+        start_new_session=True,
     )
+    proc.communicate(input=prompt, timeout=timeout_s)
     raise SystemExit(proc.returncode)
 except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
     sys.stderr.write(f"CODEX_TIMEOUT after {timeout_s}s\\n")
     raise SystemExit(124)
 PY

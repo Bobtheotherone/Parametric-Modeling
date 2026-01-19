@@ -14,6 +14,14 @@ CLAUDE_HELP_TIMEOUT_S="${CLAUDE_HELP_TIMEOUT_S:-5}"
 SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
+CREDS_MISSING="true"
+for var in ANTHROPIC_API_KEY CLAUDE_API_KEY; do
+  if [[ -n "${!var:-}" ]]; then
+    CREDS_MISSING="false"
+    break
+  fi
+done
+
 prompt="$(cat "$PROMPT_FILE")"
 
 if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
@@ -41,7 +49,80 @@ ERR_PLAIN="${OUT_FILE}.stderr.plain"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
 
+if [[ "$CREDS_MISSING" == "true" ]]; then
+  python3 - <<'PY' "$SCHEMA_FILE" "$PROMPT_FILE" "$OUT_FILE"
+import json
+import re
+import sys
+
+schema_path, prompt_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
+schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
+prompt_text = open(prompt_path, "r", encoding="utf-8").read()
+
+def extract_stats_ids(text: str) -> list[str]:
+    return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
+
+def choose_stats_ref(ids: list[str]) -> list[str]:
+    if not ids:
+        return ["CL-1"]
+    cl = [x for x in ids if x.startswith("CL-")]
+    return [cl[0] if cl else ids[0]]
+
+def extract_milestone_id(text: str) -> str:
+    m = re.search(r'"milestone_id"\s*:\s*"([^"]+)"', text)
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
+    return m2.group(1) if m2 else "M0"
+
+stats_ids = extract_stats_ids(prompt_text)
+milestone_id = extract_milestone_id(prompt_text)
+
+summary = "Claude credentials missing (creds_missing=true). Diagnostics: cmd=(skipped) rc=missing_creds stderr="
+
+turn = {
+    "agent": "claude",
+    "milestone_id": milestone_id,
+    "phase": "plan",
+    "work_completed": False,
+    "project_complete": False,
+    "summary": summary,
+    "gates_passed": [],
+    "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
+    "next_agent": "codex",
+    "next_prompt": "Set ANTHROPIC_API_KEY or CLAUDE_API_KEY, then re-run claude preflight.",
+    "delegate_rationale": "creds_missing=true",
+    "stats_refs": choose_stats_ref(stats_ids),
+    "needs_write_access": True,
+    "artifacts": [],
+}
+
+required = schema.get("required", [])
+for k in required:
+    if k not in turn:
+        if k == "artifacts":
+            turn[k] = []
+        elif k == "gates_passed":
+            turn[k] = []
+        elif k == "requirement_progress":
+            turn[k] = {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}
+        elif k == "stats_refs":
+            turn[k] = choose_stats_ref(stats_ids)
+        elif k in ("work_completed", "project_complete", "needs_write_access"):
+            turn[k] = False
+        else:
+            turn[k] = ""
+
+with open(out_path, "w", encoding="utf-8") as handle:
+    json.dump(turn, handle, ensure_ascii=False, separators=(",", ":"))
+PY
+  cat "$OUT_FILE"
+  exit 0
+fi
+
 HELP_TEXT="$(python3 - <<'PY' "$CLAUDE_BIN" "$CLAUDE_HELP_TIMEOUT_S"
+import os
+import signal
 import subprocess
 import sys
 
@@ -49,8 +130,21 @@ bin_path = sys.argv[1]
 timeout_s = int(sys.argv[2])
 out = ""
 try:
-    proc = subprocess.run([bin_path, "--help"], text=True, capture_output=True, timeout=timeout_s)
-    out = proc.stdout or proc.stderr or ""
+    proc = subprocess.Popen(
+        [bin_path, "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    stdout, stderr = proc.communicate(timeout=timeout_s)
+    out = stdout or stderr or ""
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    out = ""
 except Exception:
     out = ""
 print(out)
@@ -120,6 +214,8 @@ run_claude() {
 
   python3 - <<'PY' "$TIMEOUT_S" "$wrap_path" "$err_path" "${wrap_path}.meta.json" "${cmd[@]}"
 import json
+import os
+import signal
 import subprocess
 import sys
 
@@ -133,13 +229,24 @@ out = ""
 err = ""
 rc = 0
 try:
-    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout_s)
-    out = proc.stdout or ""
-    err = proc.stderr or ""
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    stdout, stderr = proc.communicate(timeout=timeout_s)
+    out = stdout or ""
+    err = stderr or ""
     rc = proc.returncode
 except subprocess.TimeoutExpired as exc:
-    out = exc.stdout or ""
-    err = exc.stderr or ""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    out = (exc.stdout or "")
+    err = (exc.stderr or "")
     rc = 124
     err = (err or "") + f"\\nTIMEOUT after {timeout_s}s\\n"
 
@@ -401,7 +508,7 @@ def synthesize(reason: str, model_text: str) -> dict:
         "phase": "plan",
         "work_completed": False,
         "project_complete": False,
-        "summary": f"{reason} Diagnostics:\\n{diag}",
+        "summary": f"{reason} (creds_missing=false) Diagnostics:\\n{diag}",
         "gates_passed": [],
         "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
         "next_agent": "codex",

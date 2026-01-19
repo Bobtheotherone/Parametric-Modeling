@@ -26,15 +26,29 @@ ERR_FILE="${OUT_FILE}.stderr"
 WRAP_JSON="${OUT_FILE}.wrapper.json"
 
 python3 - <<'PY' "$MODEL" "$TIMEOUT_S" "$FULL_PROMPT" "$WRAP_JSON" "$ERR_FILE"
-import subprocess, sys
+import os
+import signal
+import subprocess
+import sys
 
 model, timeout_s, full_prompt, out_path, err_path = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 
 def run(cmd):
     try:
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout_s)
-        return (p.stdout or ""), (p.stderr or "")
+        proc = subprocess.Popen(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        return (stdout or ""), (stderr or "")
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
         return "", f"TIMEOUT after {timeout_s}s\nCMD: {cmd}\n"
 
 # Attempt #1: positional prompt (preferred)

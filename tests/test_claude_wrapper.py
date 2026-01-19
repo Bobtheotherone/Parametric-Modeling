@@ -68,6 +68,7 @@ PY
 
     env = os.environ.copy()
     env["CLAUDE_BIN"] = str(claude_stub)
+    env["ANTHROPIC_API_KEY"] = "dummy"
 
     subprocess.run(
         [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
@@ -102,6 +103,7 @@ exit 1
 
     env = os.environ.copy()
     env["CLAUDE_BIN"] = str(claude_stub)
+    env["ANTHROPIC_API_KEY"] = "dummy"
 
     subprocess.run(
         [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
@@ -161,6 +163,99 @@ PY
 
     env = os.environ.copy()
     env["CLAUDE_BIN"] = str(claude_stub)
+    env["ANTHROPIC_API_KEY"] = "dummy"
+
+    subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        check=True,
+        env=env,
+        text=True,
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+
+
+def test_claude_wrapper_missing_creds_skips_cli(tmp_path: Path) -> None:
+    called_marker = tmp_path / "called.txt"
+    claude_stub = tmp_path / "claude"
+    _write_executable(
+        claude_stub,
+        f"""#!/usr/bin/env bash
+echo "called" > "{called_marker}"
+exit 0
+""",
+    )
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = os.environ.copy()
+    env["CLAUDE_BIN"] = str(claude_stub)
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("CLAUDE_API_KEY", None)
+
+    subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        check=True,
+        env=env,
+        text=True,
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "creds_missing=true" in payload["summary"]
+    assert not called_marker.exists()
+
+
+def test_claude_help_timeout_fallback(tmp_path: Path) -> None:
+    claude_stub = tmp_path / "claude"
+    _write_executable(
+        claude_stub,
+        """#!/usr/bin/env bash
+if [[ "$1" == "--help" ]]; then
+  sleep 2
+  exit 0
+fi
+
+python3 - <<'PY'
+import json
+turn = {
+    "agent": "claude",
+    "milestone_id": "M0",
+    "phase": "plan",
+    "work_completed": False,
+    "project_complete": False,
+    "summary": "ok",
+    "gates_passed": [],
+    "requirement_progress": {
+        "covered_req_ids": [],
+        "tests_added_or_modified": [],
+        "commands_run": [],
+    },
+    "next_agent": "codex",
+    "next_prompt": "",
+    "delegate_rationale": "",
+    "stats_refs": ["CL-1"],
+    "needs_write_access": True,
+    "artifacts": [],
+}
+print(json.dumps({"result": json.dumps(turn)}))
+PY
+""",
+    )
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = os.environ.copy()
+    env["CLAUDE_BIN"] = str(claude_stub)
+    env["CLAUDE_HELP_TIMEOUT_S"] = "1"
+    env["ANTHROPIC_API_KEY"] = "dummy"
 
     subprocess.run(
         [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
