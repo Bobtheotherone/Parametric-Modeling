@@ -26,3 +26,4 @@ venv/
 
 # Misc
 *.log
+.verify --strict-git
