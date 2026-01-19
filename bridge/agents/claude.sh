@@ -5,7 +5,7 @@ PROMPT_FILE="${1:?prompt_file}"
 SCHEMA_FILE="${2:?schema_file}"
 OUT_FILE="${3:?out_file}"
 
-MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet-latest}"
+MODEL="${CLAUDE_MODEL:-claude-opus-4-5}"
 FF_SMOKE="${FF_SMOKE:-0}"
 DEFAULT_TIMEOUT_S=86400
 SMOKE_TIMEOUT_S=180

@@ -57,7 +57,7 @@ MODEL_ENV_VARS = {
 DEFAULT_AGENT_MODELS = {
     "codex": "gpt-5.2-codex",
     "gemini": "gemini-3-pro-preview",
-    "claude": "claude-3-7-sonnet-latest",
+    "claude": "claude-opus-4-5",
 }
 STREAM_MODES = {"off", "stdout", "stderr", "both"}
 REDACT_PATTERNS = [

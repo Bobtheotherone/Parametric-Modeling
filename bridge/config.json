@@ -36,7 +36,7 @@
     },
     "claude": {
       "script": "bridge/agents/claude.sh",
-      "model": "claude-3-7-sonnet-latest",
+      "model": "claude-opus-4-5",
       "role": "verifier",
       "supports_write_access": true,
       "quota_error_patterns": [
