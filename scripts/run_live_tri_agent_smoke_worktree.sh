@@ -27,6 +27,7 @@ SMOKE_DIR="$WORKTREE/agent_smoke"
 mkdir -p "$SMOKE_DIR"
 LOG_FILE="$SMOKE_DIR/loop.log"
 CONFIG_PATH="$SMOKE_DIR/smoke_config.json"
+PREFLIGHT_LOG="$SMOKE_DIR/claude_preflight.log"
 
 python3 - <<'PY' "$WORKTREE/bridge/config.json" "$CONFIG_PATH"
 import json
@@ -50,6 +51,12 @@ export CLAUDE_TIMEOUT_S=60
 export CLAUDE_HELP_TIMEOUT_S=5
 export CODEX_TIMEOUT_S=60
 export CODEX_ASK_FOR_APPROVAL=never
+
+if ! "$WORKTREE/scripts/claude_preflight.sh" >"$PREFLIGHT_LOG" 2>&1; then
+  echo "Claude preflight failed; see $PREFLIGHT_LOG" >&2
+  cat "$PREFLIGHT_LOG" >&2
+  exit 1
+fi
 
 if command -v timeout >/dev/null 2>&1; then
   timeout "${LOOP_TIMEOUT_S}s" python3 -u bridge/loop.py \
