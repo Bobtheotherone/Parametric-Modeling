@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
 import importlib
 import math
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -105,6 +107,7 @@ class LocalJobRunner:
         self.cpu_semaphore = threading.Semaphore(self._capacity.cpu)
         self.ram_semaphore = threading.Semaphore(self._capacity.ram)
         self.gpu_semaphore = threading.Semaphore(self._capacity.vram)
+        self.last_run_log: list[dict[str, Any]] = []
 
     def schedule(self, tasks: Sequence[TaskSpec]) -> list[TaskSpec]:
         scheduled: list[TaskSpec] = []
@@ -115,15 +118,70 @@ class LocalJobRunner:
         return scheduled
 
     def run(self, tasks: Sequence[TaskSpec]) -> dict[str, Any]:
+        results, _ = self.run_with_logs(tasks)
+        return results
+
+    def run_with_logs(self, tasks: Sequence[TaskSpec]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        scheduled = self.schedule(tasks)
+        if not scheduled:
+            self.last_run_log = []
+            return {}, []
         results: dict[str, Any] = {}
-        for task in self.schedule(tasks):
+        logs: list[dict[str, Any]] = []
+        log_lock = threading.Lock()
+        seq = 0
+
+        def log_event(task: TaskSpec, event: str, *, status: str | None = None, detail: str | None = None) -> None:
+            nonlocal seq
+            with log_lock:
+                seq += 1
+                entry: dict[str, Any] = {
+                    "seq": seq,
+                    "ts": time.monotonic(),
+                    "event": event,
+                    "task_id": task.task_id,
+                    "resources": {
+                        "cpu_threads": task.resources.cpu_threads,
+                        "ram_gb": task.resources.ram_gb,
+                        "vram_gb": task.resources.vram_gb,
+                    },
+                }
+                if status:
+                    entry["status"] = status
+                if detail:
+                    entry["detail"] = detail
+                logs.append(entry)
+
+        def run_task(task: TaskSpec) -> Any:
             tokens = self._tokens_for_request(task.resources)
             acquired = self._acquire_resources(tokens)
+            log_event(task, "start")
+            status = "ok"
+            detail = None
             try:
-                results[task.task_id] = task.fn()
+                return task.fn()
+            except Exception as exc:
+                status = "error"
+                detail = str(exc)
+                raise
             finally:
                 self._release_resources(acquired)
-        return results
+                log_event(task, "finish", status=status, detail=detail)
+
+        first_error: Exception | None = None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(scheduled)) as executor:
+            future_map = {executor.submit(run_task, task): task for task in scheduled}
+            for future in concurrent.futures.as_completed(future_map):
+                task = future_map[future]
+                try:
+                    results[task.task_id] = future.result()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+        self.last_run_log = sorted(logs, key=lambda entry: entry["seq"])
+        if first_error is not None:
+            raise first_error
+        return results, self.last_run_log
 
     def _tokens_for_request(self, request: ResourceRequest) -> ResourceTokens:
         return ResourceTokens(

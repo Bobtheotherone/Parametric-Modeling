@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
+import os
 import platform
 import random
+import re
+import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -73,12 +77,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument("--json", nargs="?", const="-", default=None)
 
-    subparsers.add_parser(
+    smoke = subparsers.add_parser(
         "smoke",
         help="Run fast GPU smoke checks",
         parents=[shared],
         conflict_handler="resolve",
     )
+    smoke.add_argument("--json", nargs="?", const="-", default=None)
 
     bench = subparsers.add_parser(
         "bench",
@@ -119,7 +124,7 @@ def _run_doctor(
 ) -> int:
     run_id = _resolve_run_id(args.run_id, "doctor")
     run = manifest.init_run_dir(run_root, run_id)
-    report = _doctor_report(require_gpu=args.require_gpu)
+    report, gpu_payload = _doctor_report_with_payload(require_gpu=args.require_gpu)
     log_event(run.logs_path, "doctor.start", data={"run_id": run_id})
     log_event(run.logs_path, "doctor.report", data=report)
     artifacts: dict[str, str] = {}
@@ -133,6 +138,7 @@ def _run_doctor(
             command_line=command_line,
             artifacts=artifacts,
             project_root=project_root,
+            environment_payload=_build_environment_payload(project_root, gpu_payload),
         )
         run_manifest.write(run.manifest_path)
 
@@ -157,6 +163,7 @@ def _run_smoke(
     report: dict[str, Any] = {"checks": {}}
     failure = False
     artifacts: dict[str, str] = {}
+    gpu_payload = _gpu_environment_payload(require_gpu=args.require_gpu)
 
     mode = cast(Literal["strict", "fast"], args.mode)
     with determinism.determinism_context(mode, args.seed) as config:
@@ -216,9 +223,11 @@ def _run_smoke(
             command_line=command_line,
             artifacts=artifacts,
             project_root=project_root,
+            environment_payload=_build_environment_payload(project_root, gpu_payload),
         )
         run_manifest.write(run.manifest_path)
 
+    _emit_json_report(report, args.json)
     log_event(run.logs_path, "smoke.complete", data={"failure": failure})
     return 2 if failure else 0
 
@@ -232,6 +241,7 @@ def _run_bench(
     run_id = _resolve_run_id(args.run_id, "bench")
     run = manifest.init_run_dir(run_root, run_id)
     log_event(run.logs_path, "bench.start", data={"run_id": run_id})
+    gpu_payload = _gpu_environment_payload(require_gpu=args.require_gpu)
 
     try:
         backend = backends.select_backend(require_gpu=args.require_gpu)
@@ -249,6 +259,7 @@ def _run_bench(
                 command_line=command_line,
                 artifacts={name: digest},
                 project_root=project_root,
+                environment_payload=_build_environment_payload(project_root, gpu_payload),
             )
             run_manifest.write(run.manifest_path)
         log_event(run.logs_path, "bench.failure", level="error", data={"reason": str(exc)})
@@ -267,6 +278,7 @@ def _run_bench(
                 command_line=command_line,
                 artifacts={name: digest},
                 project_root=project_root,
+                environment_payload=_build_environment_payload(project_root, gpu_payload),
             )
             run_manifest.write(run.manifest_path)
         _emit_json_report(report, args.json, default_path=run.run_dir / "bench.json")
@@ -284,6 +296,7 @@ def _run_bench(
             command_line=command_line,
             artifacts=artifacts,
             project_root=project_root,
+            environment_payload=_build_environment_payload(project_root, gpu_payload),
         )
         run_manifest.write(run.manifest_path)
 
@@ -301,6 +314,8 @@ def _run_repro_check(
     base_id = _resolve_run_id(args.run_id, "repro")
     run_id_a = f"{base_id}-a"
     run_id_b = f"{base_id}-b"
+    gpu_payload = _gpu_environment_payload(require_gpu=args.require_gpu)
+    env_payload = _build_environment_payload(project_root, gpu_payload)
 
     artifacts_a = _run_repro_pass(
         run_root,
@@ -310,6 +325,7 @@ def _run_repro_check(
         mode=args.mode,
         seed=args.seed,
         payload_bytes=args.payload_bytes,
+        environment_payload=env_payload,
     )
     artifacts_b = _run_repro_pass(
         run_root,
@@ -319,6 +335,7 @@ def _run_repro_check(
         mode=args.mode,
         seed=args.seed,
         payload_bytes=args.payload_bytes,
+        environment_payload=env_payload,
     )
 
     mismatch = _compare_artifact_hashes(artifacts_a, artifacts_b)
@@ -336,6 +353,7 @@ def _run_repro_pass(
     mode: str,
     seed: int,
     payload_bytes: int,
+    environment_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     run = manifest.init_run_dir(run_root, run_id)
     log_event(run.logs_path, "repro.start", data={"run_id": run_id})
@@ -351,6 +369,7 @@ def _run_repro_pass(
             command_line=command_line,
             artifacts=artifacts,
             project_root=project_root,
+            environment_payload=environment_payload,
         )
         run_manifest.write(run.manifest_path)
     log_event(run.logs_path, "repro.complete", data={"artifacts": artifacts})
@@ -371,6 +390,11 @@ def _compare_artifact_hashes(a: Mapping[str, str], b: Mapping[str, str]) -> list
 
 
 def _doctor_report(*, require_gpu: bool) -> dict[str, Any]:
+    report, _ = _doctor_report_with_payload(require_gpu=require_gpu)
+    return report
+
+
+def _doctor_report_with_payload(*, require_gpu: bool) -> tuple[dict[str, Any], dict[str, Any]]:
     cupy_module = _import_optional("cupy")
     torch_module = _import_optional("torch")
     cupy_available = cupy_module is not None
@@ -379,7 +403,13 @@ def _doctor_report(*, require_gpu: bool) -> dict[str, Any]:
     torch_cuda_available = _torch_cuda_available(torch_module)
     cuda_available = cupy_cuda_available or torch_cuda_available
 
-    return {
+    nvidia_smi = _nvidia_smi_summary()
+    devices, selected_device = _collect_gpu_devices(cupy_module, torch_module, nvidia_smi)
+    driver_version = _resolve_driver_version(nvidia_smi)
+    cuda_runtime_version = _resolve_cuda_runtime_version(cupy_module, torch_module)
+    cudnn_version = _resolve_cudnn_version(torch_module)
+
+    report = {
         "python_version": sys.version,
         "platform": platform.platform(),
         "cupy_available": cupy_available,
@@ -390,7 +420,357 @@ def _doctor_report(*, require_gpu: bool) -> dict[str, Any]:
         "torch_version": getattr(torch_module, "__version__", None) if torch_available else None,
         "cuda_available": cuda_available,
         "require_gpu": require_gpu,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "gpu_devices": devices,
+        "selected_device": selected_device,
+        "driver_version": driver_version,
+        "cuda_runtime_version": cuda_runtime_version,
+        "cudnn_version": cudnn_version,
+        "nvidia_smi": nvidia_smi,
     }
+    return report, _stable_gpu_payload(report)
+
+
+def _gpu_environment_payload(*, require_gpu: bool) -> dict[str, Any]:
+    _, payload = _doctor_report_with_payload(require_gpu=require_gpu)
+    return payload
+
+
+def _build_environment_payload(project_root: Path, gpu_payload: Mapping[str, Any]) -> dict[str, Any]:
+    payload = manifest.build_environment_payload(project_root)
+    payload["gpu"] = dict(gpu_payload)
+    return payload
+
+
+def _stable_gpu_payload(report: Mapping[str, Any]) -> dict[str, Any]:
+    devices: list[dict[str, Any]] = []
+    for device in report.get("gpu_devices", []) if isinstance(report.get("gpu_devices"), list) else []:
+        if not isinstance(device, Mapping):
+            continue
+        devices.append(
+            {
+                "index": device.get("index"),
+                "name": device.get("name"),
+                "compute_capability": device.get("compute_capability"),
+                "total_vram_bytes": device.get("total_vram_bytes"),
+            }
+        )
+    return {
+        "cuda_visible_devices": report.get("cuda_visible_devices"),
+        "driver_version": report.get("driver_version"),
+        "cuda_runtime_version": report.get("cuda_runtime_version"),
+        "cudnn_version": report.get("cudnn_version"),
+        "selected_device": report.get("selected_device"),
+        "devices": devices,
+    }
+
+
+def _collect_gpu_devices(
+    cupy_module: Any | None,
+    torch_module: Any | None,
+    nvidia_smi: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], int | None]:
+    devices, selected = _torch_gpu_devices(torch_module)
+    if not devices:
+        devices, selected = _cupy_gpu_devices(cupy_module)
+    if not devices:
+        smi_devices = nvidia_smi.get("gpus")
+        if isinstance(smi_devices, list):
+            for item in smi_devices:
+                if not isinstance(item, Mapping):
+                    continue
+                devices.append(
+                    {
+                        "index": item.get("index"),
+                        "name": item.get("name"),
+                        "compute_capability": None,
+                        "total_vram_bytes": _mb_to_bytes(item.get("memory_total_mb")),
+                    }
+                )
+    return devices, selected
+
+
+def _torch_gpu_devices(torch_module: Any | None) -> tuple[list[dict[str, Any]], int | None]:
+    if torch_module is None or not _torch_cuda_available(torch_module):
+        return [], None
+    cuda_module = getattr(torch_module, "cuda", None)
+    if cuda_module is None:
+        return [], None
+    try:
+        count = int(cuda_module.device_count())
+    except Exception:
+        return [], None
+    selected: int | None = None
+    try:
+        selected = int(cuda_module.current_device())
+    except Exception:
+        selected = None
+    devices: list[dict[str, Any]] = []
+    for idx in range(count):
+        name: str | None = None
+        compute_capability: str | None = None
+        total_vram: int | None = None
+        try:
+            props = cuda_module.get_device_properties(idx)
+        except Exception:
+            props = None
+        if props is not None:
+            name = getattr(props, "name", None)
+            total = getattr(props, "total_memory", None)
+            if total is not None:
+                try:
+                    total_vram = int(total)
+                except Exception:
+                    total_vram = None
+            major = getattr(props, "major", None)
+            minor = getattr(props, "minor", None)
+            if major is not None and minor is not None:
+                compute_capability = f"{major}.{minor}"
+        if compute_capability is None:
+            try:
+                cap = cuda_module.get_device_capability(idx)
+                if cap is not None and len(cap) >= 2:
+                    compute_capability = f"{cap[0]}.{cap[1]}"
+            except Exception:
+                compute_capability = None
+        if name is None:
+            try:
+                name = cuda_module.get_device_name(idx)
+            except Exception:
+                name = None
+        devices.append(
+            {
+                "index": idx,
+                "name": name,
+                "compute_capability": compute_capability,
+                "total_vram_bytes": total_vram,
+            }
+        )
+    return devices, selected
+
+
+def _cupy_gpu_devices(cupy_module: Any | None) -> tuple[list[dict[str, Any]], int | None]:
+    if cupy_module is None or not _cupy_cuda_available(cupy_module):
+        return [], None
+    cuda_module = getattr(cupy_module, "cuda", None)
+    if cuda_module is None:
+        return [], None
+    runtime = getattr(cuda_module, "runtime", None) if cuda_module is not None else None
+    if runtime is None:
+        return [], None
+    try:
+        count = int(runtime.getDeviceCount())
+    except Exception:
+        return [], None
+    selected: int | None = None
+    try:
+        selected = int(runtime.getDevice())
+    except Exception:
+        selected = None
+    devices: list[dict[str, Any]] = []
+    for idx in range(count):
+        name: str | None = None
+        compute_capability: str | None = None
+        total_vram: int | None = None
+        try:
+            device = cuda_module.Device(idx)
+        except Exception:
+            device = None
+        if device is not None:
+            try:
+                name = device.name
+            except Exception:
+                name = None
+            try:
+                cap = device.compute_capability
+                if cap is not None and len(cap) >= 2:
+                    compute_capability = f"{cap[0]}.{cap[1]}"
+            except Exception:
+                compute_capability = None
+            try:
+                mem_info = device.mem_info
+                if mem_info is not None and len(mem_info) >= 2:
+                    total_vram = int(mem_info[1])
+            except Exception:
+                total_vram = None
+        devices.append(
+            {
+                "index": idx,
+                "name": name,
+                "compute_capability": compute_capability,
+                "total_vram_bytes": total_vram,
+            }
+        )
+    return devices, selected
+
+
+def _resolve_driver_version(nvidia_smi: Mapping[str, Any]) -> str | None:
+    if isinstance(nvidia_smi, Mapping):
+        driver = nvidia_smi.get("driver_version")
+        if isinstance(driver, str) and driver:
+            return driver
+    return _nvml_driver_version()
+
+
+def _resolve_cuda_runtime_version(cupy_module: Any | None, torch_module: Any | None) -> str | None:
+    cuda_module = getattr(cupy_module, "cuda", None) if cupy_module is not None else None
+    runtime = getattr(cuda_module, "runtime", None) if cuda_module is not None else None
+    get_version = getattr(runtime, "runtimeGetVersion", None) if runtime is not None else None
+    if callable(get_version):
+        try:
+            return _format_cuda_version(int(get_version()))
+        except Exception:
+            pass
+    if torch_module is not None:
+        version = getattr(torch_module, "version", None)
+        cuda_version = getattr(version, "cuda", None) if version is not None else None
+        if cuda_version:
+            return str(cuda_version)
+    return None
+
+
+def _resolve_cudnn_version(torch_module: Any | None) -> int | None:
+    if torch_module is None:
+        return None
+    backends = getattr(torch_module, "backends", None)
+    cudnn = getattr(backends, "cudnn", None) if backends is not None else None
+    version = getattr(cudnn, "version", None) if cudnn is not None else None
+    if callable(version):
+        try:
+            value = version()
+        except Exception:
+            return None
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                return None
+    return None
+
+
+def _format_cuda_version(value: int) -> str:
+    major = value // 1000
+    minor = (value % 1000) // 10
+    patch = value % 10
+    if patch:
+        return f"{major}.{minor}.{patch}"
+    return f"{major}.{minor}"
+
+
+def _mb_to_bytes(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) * 1024 * 1024
+    if isinstance(value, str):
+        try:
+            return int(float(value)) * 1024 * 1024
+        except ValueError:
+            return None
+    return None
+
+
+def _nvidia_smi_summary() -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "available": False,
+        "exit_code": None,
+        "driver_version": None,
+        "cuda_version": None,
+        "gpus": [],
+    }
+    rc, out, err = _run_nvidia_smi(["nvidia-smi"])
+    summary["exit_code"] = rc
+    if rc != 0:
+        summary["error"] = err.strip() or None
+        return summary
+    summary["available"] = True
+    driver, cuda = _parse_nvidia_smi_versions(out)
+    summary["driver_version"] = driver
+    summary["cuda_version"] = cuda
+    q_rc, q_out, q_err = _run_nvidia_smi(
+        ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"]
+    )
+    summary["query_exit_code"] = q_rc
+    if q_rc == 0:
+        summary["gpus"] = _parse_nvidia_smi_query(q_out)
+    else:
+        summary["query_error"] = q_err.strip() or None
+    return summary
+
+
+def _parse_nvidia_smi_versions(text: str) -> tuple[str | None, str | None]:
+    driver = None
+    cuda = None
+    driver_match = re.search(r"Driver Version:\s*([0-9A-Za-z\.\-]+)", text)
+    if driver_match:
+        driver = driver_match.group(1)
+    cuda_match = re.search(r"CUDA Version:\s*([0-9A-Za-z\.\-]+)", text)
+    if cuda_match:
+        cuda = cuda_match.group(1)
+    return driver, cuda
+
+
+def _parse_nvidia_smi_query(text: str) -> list[dict[str, Any]]:
+    gpus: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 3:
+            continue
+        index: int | None
+        try:
+            index = int(parts[0])
+        except Exception:
+            index = None
+        name = parts[1] or None
+        memory_total_mb = _parse_int(parts[2])
+        gpus.append(
+            {
+                "index": index,
+                "name": name,
+                "memory_total_mb": memory_total_mb,
+            }
+        )
+    return gpus
+
+
+def _parse_int(value: str) -> int | None:
+    tokens = value.strip().split()
+    if not tokens:
+        return None
+    try:
+        return int(float(tokens[0]))
+    except Exception:
+        return None
+
+
+def _run_nvidia_smi(cmd: list[str]) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(cmd, text=True, capture_output=True, check=False)
+    except FileNotFoundError:
+        return 127, "", "nvidia-smi not found"
+    except Exception as exc:
+        return 1, "", str(exc)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _nvml_driver_version() -> str | None:
+    try:
+        nvml = importlib.import_module("pynvml")
+    except Exception:
+        return None
+    try:
+        nvml.nvmlInit()
+        version = nvml.nvmlSystemGetDriverVersion()
+        if isinstance(version, bytes):
+            version = version.decode("utf-8", errors="ignore")
+        return str(version)
+    except Exception:
+        return None
+    finally:
+        with contextlib.suppress(Exception):
+            nvml.nvmlShutdown()
 
 
 def _torch_compile_check(report: dict[str, Any], torch_module: Any | None, torch_cuda_available: bool) -> None:
@@ -421,20 +801,71 @@ def _dlpack_check(
     *,
     require_gpu: bool,
 ) -> None:
+    report["dlpack_zero_copy_ok"] = "skip"
+    report["dlpack_pointer"] = {
+        "cupy_ptr": None,
+        "torch_ptr": None,
+        "equal": None,
+        "roundtrip_ptr": None,
+        "roundtrip_equal": None,
+    }
+    report["dlpack_write_through_ok"] = None
+    report["dlpack_guard_triggered"] = None
+    report["dlpack_skip_reason"] = None
+    report["dlpack_error"] = None
     if backend is None or backend.name != "cupy":
         status = "failed" if require_gpu else "skipped"
+        report["dlpack_skip_reason"] = "cupy backend unavailable"
         _set_check(report, "dlpack_roundtrip", status, "cupy backend unavailable")
         return
     if torch_module is None:
         status = "failed" if require_gpu else "skipped"
+        report["dlpack_skip_reason"] = "torch not installed"
         _set_check(report, "dlpack_roundtrip", status, "torch not installed")
         return
     try:
-        cupy_array = backend.module.arange(4)
-        torch_tensor = backends.cupy_to_torch(cupy_array)
-        _ = backends.torch_to_cupy(torch_tensor)
-        _set_check(report, "dlpack_roundtrip", "ok")
+        with backends.host_transfer_guard(fail_on_transfer=True):
+            dtype = getattr(backend.module, "float32", None) or "float32"
+            cupy_array = backend.module.arange(8, dtype=dtype)
+            torch_tensor = backends.cupy_to_torch(cupy_array)
+            pointer = report["dlpack_pointer"]
+            cupy_ptr = int(cupy_array.data.ptr)
+            torch_ptr = int(torch_tensor.data_ptr())
+            pointer["cupy_ptr"] = cupy_ptr
+            pointer["torch_ptr"] = torch_ptr
+            pointer["equal"] = cupy_ptr == torch_ptr
+            torch_tensor.add_(1)
+            torch_cuda = getattr(torch_module, "cuda", None)
+            sync = getattr(torch_cuda, "synchronize", None) if torch_cuda is not None else None
+            if callable(sync):
+                sync()
+            expected_sum = backend.module.arange(8, dtype=dtype).sum() + cupy_array.size
+            write_through_device = cupy_array.sum() == expected_sum
+            roundtrip = backends.torch_to_cupy(torch_tensor)
+            roundtrip_ptr = int(roundtrip.data.ptr)
+            pointer["roundtrip_ptr"] = roundtrip_ptr
+            pointer["roundtrip_equal"] = roundtrip_ptr == cupy_ptr
+        report["dlpack_guard_triggered"] = False
+        report["dlpack_write_through_ok"] = bool(write_through_device)
+        zero_copy_ok = bool(
+            pointer["equal"]
+            and pointer["roundtrip_equal"]
+            and report["dlpack_write_through_ok"]
+        )
+        report["dlpack_zero_copy_ok"] = zero_copy_ok
+        if zero_copy_ok:
+            _set_check(report, "dlpack_roundtrip", "ok")
+        else:
+            report["dlpack_error"] = "zero-copy validation failed"
+            _set_check(report, "dlpack_roundtrip", "failed", "zero-copy validation failed")
+    except backends.HostTransferError as exc:
+        report["dlpack_guard_triggered"] = True
+        report["dlpack_zero_copy_ok"] = False
+        report["dlpack_error"] = str(exc)
+        _set_check(report, "dlpack_roundtrip", "failed", str(exc))
     except Exception as exc:
+        report["dlpack_zero_copy_ok"] = False
+        report["dlpack_error"] = str(exc)
         _set_check(report, "dlpack_roundtrip", "failed", str(exc))
 
 

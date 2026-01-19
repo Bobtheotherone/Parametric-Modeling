@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -54,3 +55,28 @@ def test_hardware_yaml_contract() -> None:
     assert config.cpu_cores > 0
     assert config.ram_gb > 0
     assert config.vram_gb >= 0
+
+
+def test_runner_overlaps_non_overlapping_tasks() -> None:
+    hardware = runner.HardwareConfig(cpu_cores=2, ram_gb=4.0, vram_gb=1.0)
+    local_runner = runner.LocalJobRunner(hardware)
+
+    def cpu_task() -> str:
+        time.sleep(0.2)
+        return "cpu"
+
+    def gpu_task() -> str:
+        time.sleep(0.2)
+        return "gpu"
+
+    tasks = [
+        runner.TaskSpec("cpu", runner.ResourceRequest(1, 0.5, 0.0), fn=cpu_task),
+        runner.TaskSpec("gpu", runner.ResourceRequest(1, 0.5, 1.0), fn=gpu_task),
+    ]
+
+    start = time.monotonic()
+    results = local_runner.run(tasks)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.35
+    assert results == {"cpu": "cpu", "gpu": "gpu"}

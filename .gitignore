@@ -26,4 +26,5 @@ venv/
 
 # Misc
 *.log
-.verify --strict-git
+.verify*
+*.egg-info/
