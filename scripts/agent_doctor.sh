@@ -94,9 +94,8 @@ else
 fi
 
 if [[ -n "${ANTHROPIC_API_KEY:-}" || -n "${CLAUDE_API_KEY:-}" ]]; then
-  run_wrapper claude $'**Milestone:** M0\nCL-1\n'
-else
-  echo "[agent-doctor] SKIP: claude wrapper (ANTHROPIC_API_KEY/CLAUDE_API_KEY missing)"
+  echo "[agent-doctor] WARNING: ANTHROPIC_API_KEY/CLAUDE_API_KEY is set; Claude Code will use API billing instead of subscription."
 fi
+run_wrapper claude $'**Milestone:** M0\nCL-1\n'
 
 exit "$fail"

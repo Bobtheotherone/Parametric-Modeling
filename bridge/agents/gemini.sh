@@ -8,7 +8,7 @@ OUT_FILE="${3:?out_file}"
 # Gemini 3 Pro (preview). If your CLI doesn't have it enabled, set GEMINI_MODEL=gemini-2.5-pro.
 MODEL="${GEMINI_MODEL:-gemini-3-pro-preview}"
 FF_SMOKE="${FF_SMOKE:-0}"
-DEFAULT_TIMEOUT_S=21600
+DEFAULT_TIMEOUT_S=86400
 SMOKE_TIMEOUT_S=120
 if [[ "$FF_SMOKE" == "1" ]]; then
   TIMEOUT_S="${GEMINI_TIMEOUT_S:-$SMOKE_TIMEOUT_S}"

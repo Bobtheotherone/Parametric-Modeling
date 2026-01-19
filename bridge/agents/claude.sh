@@ -7,7 +7,7 @@ OUT_FILE="${3:?out_file}"
 
 MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet-latest}"
 FF_SMOKE="${FF_SMOKE:-0}"
-DEFAULT_TIMEOUT_S=21600
+DEFAULT_TIMEOUT_S=86400
 SMOKE_TIMEOUT_S=180
 if [[ "$FF_SMOKE" == "1" ]]; then
   TIMEOUT_S="${CLAUDE_TIMEOUT_S:-$SMOKE_TIMEOUT_S}"
@@ -20,14 +20,6 @@ CLAUDE_TOOLS="${CLAUDE_TOOLS:-}"
 CLAUDE_HELP_TIMEOUT_S="${CLAUDE_HELP_TIMEOUT_S:-5}"
 SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
-
-CREDS_MISSING="true"
-for var in ANTHROPIC_API_KEY CLAUDE_API_KEY; do
-  if [[ -n "${!var:-}" ]]; then
-    CREDS_MISSING="false"
-    break
-  fi
-done
 
 prompt="$(cat "$PROMPT_FILE")"
 
@@ -55,77 +47,6 @@ ERR_SCHEMA="${OUT_FILE}.stderr.schema"
 ERR_PLAIN="${OUT_FILE}.stderr.plain"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
-
-if [[ "$CREDS_MISSING" == "true" ]]; then
-  python3 - <<'PY' "$SCHEMA_FILE" "$PROMPT_FILE" "$OUT_FILE"
-import json
-import re
-import sys
-
-schema_path, prompt_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
-schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
-prompt_text = open(prompt_path, "r", encoding="utf-8").read()
-
-def extract_stats_ids(text: str) -> list[str]:
-    return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
-
-def choose_stats_ref(ids: list[str]) -> list[str]:
-    if not ids:
-        return ["CL-1"]
-    cl = [x for x in ids if x.startswith("CL-")]
-    return [cl[0] if cl else ids[0]]
-
-def extract_milestone_id(text: str) -> str:
-    m = re.search(r'"milestone_id"\s*:\s*"([^"]+)"', text)
-    if m:
-        return m.group(1)
-    m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
-    return m2.group(1) if m2 else "M0"
-
-stats_ids = extract_stats_ids(prompt_text)
-milestone_id = extract_milestone_id(prompt_text)
-
-summary = "Claude credentials missing (creds_missing=true). Diagnostics: cmd=(skipped) rc=missing_creds stderr="
-
-turn = {
-    "agent": "claude",
-    "milestone_id": milestone_id,
-    "phase": "plan",
-    "work_completed": False,
-    "project_complete": False,
-    "summary": summary,
-    "gates_passed": [],
-    "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
-    "next_agent": "codex",
-    "next_prompt": "Set ANTHROPIC_API_KEY or CLAUDE_API_KEY, then re-run claude preflight.",
-    "delegate_rationale": "creds_missing=true",
-    "stats_refs": choose_stats_ref(stats_ids),
-    "needs_write_access": True,
-    "artifacts": [],
-}
-
-required = schema.get("required", [])
-for k in required:
-    if k not in turn:
-        if k == "artifacts":
-            turn[k] = []
-        elif k == "gates_passed":
-            turn[k] = []
-        elif k == "requirement_progress":
-            turn[k] = {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}
-        elif k == "stats_refs":
-            turn[k] = choose_stats_ref(stats_ids)
-        elif k in ("work_completed", "project_complete", "needs_write_access"):
-            turn[k] = False
-        else:
-            turn[k] = ""
-
-with open(out_path, "w", encoding="utf-8") as handle:
-    json.dump(turn, handle, ensure_ascii=False, separators=(",", ":"))
-PY
-  cat "$OUT_FILE"
-  exit 0
-fi
 
 HELP_TEXT="$(python3 - <<'PY' "$CLAUDE_BIN" "$CLAUDE_HELP_TIMEOUT_S"
 import os
@@ -281,7 +202,7 @@ run_claude "json" "$WRAP_SCHEMA" "$ERR_SCHEMA"
 run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
 
 python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" "$ERR_SCHEMA" "$ERR_PLAIN" > "$OUT_FILE" || true
-import json, re, sys
+import json, os, re, sys
 
 wrap_schema, wrap_plain, schema_path, prompt_path, err_schema, err_plain = (
     sys.argv[1],
@@ -293,6 +214,15 @@ wrap_schema, wrap_plain, schema_path, prompt_path, err_schema, err_plain = (
 )
 schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
+api_vars = [name for name in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY") if os.environ.get(name)]
+auth_mode = "api_key" if api_vars else "subscription"
+auth_warning = ""
+if api_vars:
+    auth_warning = (
+        "WARNING: "
+        + ", ".join(api_vars)
+        + " set; Claude Code will use API billing instead of Pro/Max subscription."
+    )
 
 REQUIRED_KEYS = [
     "agent",
@@ -447,6 +377,16 @@ def normalize_artifacts(x):
             out.append({"path": p.strip(), "description": d.strip()})
     return out
 
+def append_wrapper_meta(summary: str, status: str) -> str:
+    parts = []
+    base = summary.strip()
+    if base:
+        parts.append(base)
+    if auth_warning:
+        parts.append(auth_warning)
+    parts.append(f"wrapper_status={status} auth_mode={auth_mode}")
+    return "\\n".join(parts)
+
 def wrapper_to_model_text(wrapper: dict) -> tuple[bool, str]:
     # Claude Code wrapper format commonly: {"type":"result", "is_error":..., "result":"..."}
     is_error = bool(wrapper.get("is_error", False)) if isinstance(wrapper, dict) else True
@@ -509,13 +449,14 @@ def synthesize(reason: str, model_text: str) -> dict:
             diagnostic_block("plain_attempt", meta_plain, read_text(err_plain)),
         ]
     )
+    summary = append_wrapper_meta(f"{reason} Diagnostics:\\n{diag}", "error")
     return {
         "agent": "claude",
         "milestone_id": milestone_id,
         "phase": "plan",
         "work_completed": False,
         "project_complete": False,
-        "summary": f"{reason} (creds_missing=false) Diagnostics:\\n{diag}",
+        "summary": summary,
         "gates_passed": [],
         "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
         "next_agent": "codex",
@@ -543,7 +484,7 @@ out["phase"] = phase if phase in ("plan", "implement", "verify", "finalize") els
 out["work_completed"] = to_bool(t.get("work_completed"), False)
 out["project_complete"] = to_bool(t.get("project_complete"), False)
 
-out["summary"] = to_str(t.get("summary"), "")
+out["summary"] = append_wrapper_meta(to_str(t.get("summary"), ""), "ok")
 out["gates_passed"] = to_str_list(t.get("gates_passed", []))
 out["requirement_progress"] = normalize_requirement_progress(t.get("requirement_progress"))
 
@@ -571,7 +512,41 @@ PY
 
 # If normalization failed for some unexpected reason, emit a minimal valid JSON turn.
 if [[ ! -s "$OUT_FILE" ]]; then
-  echo '{"agent":"claude","milestone_id":"M0","phase":"plan","work_completed":false,"project_complete":false,"summary":"Claude wrapper produced empty output; synthesized.","gates_passed":[],"requirement_progress":{"covered_req_ids":[],"tests_added_or_modified":[],"commands_run":[]},"next_agent":"codex","next_prompt":"Continue using tools.verify output; fix remaining gates and commit.","delegate_rationale":"(empty)","stats_refs":["CL-1"],"needs_write_access":true,"artifacts":[]}' > "$OUT_FILE"
+  python3 - <<'PY' "$OUT_FILE"
+import json
+import os
+import sys
+
+auth_mode = "api_key" if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") else "subscription"
+warning = ""
+if auth_mode == "api_key":
+    warning = "WARNING: ANTHROPIC_API_KEY/CLAUDE_API_KEY set; Claude Code will use API billing instead of Pro/Max subscription."
+
+summary = "Claude wrapper produced empty output; synthesized."
+if warning:
+    summary = summary + "\\n" + warning
+summary = summary + f"\\nwrapper_status=error auth_mode={auth_mode}"
+
+payload = {
+    "agent": "claude",
+    "milestone_id": "M0",
+    "phase": "plan",
+    "work_completed": False,
+    "project_complete": False,
+    "summary": summary,
+    "gates_passed": [],
+    "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
+    "next_agent": "codex",
+    "next_prompt": "Continue using tools.verify output; fix remaining gates and commit.",
+    "delegate_rationale": "(empty)",
+    "stats_refs": ["CL-1"],
+    "needs_write_access": True,
+    "artifacts": [],
+}
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+PY
 fi
 
 cat "$OUT_FILE"

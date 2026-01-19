@@ -138,9 +138,14 @@ for turn_path in sorted(calls_dir.glob("*/turn.json")):
         break
 if claude_turn is None:
     raise SystemExit("Claude turn not found in calls.")
-summary = str(claude_turn.get("summary", "")).lower()
-if "creds_missing=true" in summary or "synthesized" in summary or "did not emit" in summary:
+summary = str(claude_turn.get("summary", ""))
+summary_l = summary.lower()
+if "synthesized" in summary_l or "did not emit" in summary_l:
     raise SystemExit("Claude did not complete successfully.")
+if "wrapper_status=ok" not in summary_l:
+    raise SystemExit("Claude wrapper_status=ok missing in summary.")
+if "auth_mode=subscription" not in summary_l:
+    raise SystemExit("Claude auth_mode=subscription missing in summary.")
 PY
 
 echo "Live tri-agent smoke succeeded. Markers at $SMOKE_DIR"
