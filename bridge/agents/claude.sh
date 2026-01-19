@@ -9,6 +9,7 @@ MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet-latest}"
 TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_ARGS_JSON_MODE="${CLAUDE_ARGS_JSON_MODE:-}"
+CLAUDE_TOOLS="${CLAUDE_TOOLS:-}"
 
 prompt="$(cat "$PROMPT_FILE")"
 
@@ -27,7 +28,8 @@ SCHEMA_JSON="$(
     "$SCHEMA_FILE"
 )"
 
-ERR_FILE="${OUT_FILE}.stderr"
+ERR_SCHEMA="${OUT_FILE}.stderr.schema"
+ERR_PLAIN="${OUT_FILE}.stderr.plain"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
 
@@ -53,8 +55,8 @@ fi
 if supports_flag "--permission-mode"; then
   COMMON_ARGS+=(--permission-mode dontAsk)
 fi
-if supports_flag "--tools"; then
-  COMMON_ARGS+=(--tools "")
+if [[ -n "$CLAUDE_TOOLS" ]] && supports_flag "--tools"; then
+  COMMON_ARGS+=(--tools "$CLAUDE_TOOLS")
 fi
 
 JSON_ARGS=()
@@ -79,9 +81,10 @@ elif supports_flag "--json"; then
 fi
 
 run_claude() {
-  # args: <mode:json|plain> <wrap_path>
+  # args: <mode:json|plain> <wrap_path> <err_path>
   local mode="$1"
   local wrap_path="$2"
+  local err_path="$3"
   local -a mode_args=()
 
   if [[ "$mode" == "json" ]]; then
@@ -91,29 +94,56 @@ run_claude() {
   fi
 
   local -a cmd=("$CLAUDE_BIN" "${COMMON_ARGS[@]}" "${mode_args[@]}")
+  local rc=0
 
   if command -v timeout >/dev/null 2>&1; then
-    timeout "${TIMEOUT_S}s" "${cmd[@]}" >"$wrap_path" 2>>"$ERR_FILE" || true
+    set +e
+    timeout "${TIMEOUT_S}s" "${cmd[@]}" >"$wrap_path" 2>>"$err_path"
+    rc=$?
+    set -e
   else
-    "${cmd[@]}" >"$wrap_path" 2>>"$ERR_FILE" || true
+    set +e
+    "${cmd[@]}" >"$wrap_path" 2>>"$err_path"
+    rc=$?
+    set -e
   fi
+
+  python3 - <<'PY' "${wrap_path}.meta.json" "$rc" "${cmd[@]}"
+import json
+import sys
+
+path = sys.argv[1]
+rc = int(sys.argv[2])
+cmd = sys.argv[3:]
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump({"cmd": cmd, "rc": rc}, handle)
+PY
 }
 
-: > "$ERR_FILE"
+: > "$ERR_SCHEMA"
+: > "$ERR_PLAIN"
 : > "$WRAP_SCHEMA"
 : > "$WRAP_PLAIN"
 
 # Try schema-enforced first (best chance of correct structured output).
-run_claude "json" "$WRAP_SCHEMA"
+run_claude "json" "$WRAP_SCHEMA" "$ERR_SCHEMA"
 
 # If that produced an error wrapper or no usable result, we’ll fall back to plain.
 # Normalization logic below will choose the better wrapper automatically.
-run_claude "plain" "$WRAP_PLAIN"
+run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
 
-python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" > "$OUT_FILE" || true
+python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" "$ERR_SCHEMA" "$ERR_PLAIN" > "$OUT_FILE" || true
 import json, re, sys
 
-wrap_schema, wrap_plain, schema_path, prompt_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+wrap_schema, wrap_plain, schema_path, prompt_path, err_schema, err_plain = (
+    sys.argv[1],
+    sys.argv[2],
+    sys.argv[3],
+    sys.argv[4],
+    sys.argv[5],
+    sys.argv[6],
+)
 schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
 
@@ -146,6 +176,16 @@ def read_json(path: str):
     except Exception:
         return None
     return jload(raw) if raw else None
+
+def read_text(path: str) -> str:
+    try:
+        return open(path, "r", encoding="utf-8").read()
+    except Exception:
+        return ""
+
+def read_meta(path: str):
+    meta_path = path + ".meta.json"
+    return read_json(meta_path) or {}
 
 def strip_fences(s: str) -> str:
     s = s.strip()
@@ -202,6 +242,31 @@ def extract_milestone_id(text: str) -> str:
         return m.group(1)
     m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
     return m2.group(1) if m2 else "M0"
+
+def redact_args(cmd: list[str]) -> list[str]:
+    redacted = []
+    patterns = [
+        re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        re.compile(r"sk-ant-[A-Za-z0-9\\-]{10,}"),
+        re.compile(r"AIza[0-9A-Za-z_\\-]{20,}"),
+    ]
+    for arg in cmd:
+        clean = arg
+        for pat in patterns:
+            if pat.search(clean):
+                clean = pat.sub("***", clean)
+        redacted.append(clean)
+    return redacted
+
+def diagnostic_block(label: str, meta: dict, stderr_text: str) -> str:
+    cmd = meta.get("cmd", [])
+    if isinstance(cmd, list):
+        cmd_text = " ".join(redact_args([str(c) for c in cmd]))
+    else:
+        cmd_text = "(unknown)"
+    rc = meta.get("rc", "unknown")
+    stderr_snip = (stderr_text or "")[:4096]
+    return f"{label}: cmd={cmd_text}\\nrc={rc}\\nstderr={stderr_snip}"
 
 def to_bool(x, default=False):
     return x if isinstance(x, bool) else default
@@ -289,13 +354,21 @@ stats_ids = extract_stats_ids(prompt_text)
 milestone_id = extract_milestone_id(prompt_text)
 
 def synthesize(reason: str, model_text: str) -> dict:
+    meta_schema = read_meta(wrap_schema)
+    meta_plain = read_meta(wrap_plain)
+    diag = "\\n\\n".join(
+        [
+            diagnostic_block("schema_attempt", meta_schema, read_text(err_schema)),
+            diagnostic_block("plain_attempt", meta_plain, read_text(err_plain)),
+        ]
+    )
     return {
         "agent": "claude",
         "milestone_id": milestone_id,
         "phase": "plan",
         "work_completed": False,
         "project_complete": False,
-        "summary": reason,
+        "summary": f"{reason} Diagnostics:\\n{diag}",
         "gates_passed": [],
         "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
         "next_agent": "codex",
