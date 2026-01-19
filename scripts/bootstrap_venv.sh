@@ -20,13 +20,14 @@ export UV_PROJECT_ENVIRONMENT="$VENV_PATH"
 
 uv venv "$VENV_PATH"
 
-SYNC_FLAGS=(--frozen)
-if uv sync --help 2>/dev/null | grep -q -- "--dev"; then
-  SYNC_FLAGS+=(--dev)
-elif uv sync --help 2>/dev/null | grep -q -- "--group"; then
-  SYNC_FLAGS+=(--group dev)
-fi
+# Sync locked dependencies + optional dev extras.
+# --frozen: use the lockfile exactly (no re-lock)
+# --extra dev: install [project.optional-dependencies] dev group
+uv sync --frozen --extra dev
 
-uv sync "${SYNC_FLAGS[@]}"
+# Install the project itself in editable mode (src-layout).
+# --no-deps: dependencies already synced above; only install our package.
+# This ensures `python -m tools.*` can import formula_foundry without PYTHONPATH hacks.
+uv pip install -e . --no-deps
 
 echo "Environment ready at $VENV_PATH"

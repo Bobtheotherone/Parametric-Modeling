@@ -6,7 +6,7 @@ This is the canonical, deterministic reproduction path for M0.
 
 ```bash
 git clone <repo-url>
-cd formula-foundry-tri-agent
+cd <repo-dir>          # enter the cloned directory
 git checkout <commit-sha>
 ```
 
