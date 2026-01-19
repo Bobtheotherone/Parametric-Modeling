@@ -97,6 +97,7 @@ fi
     )
 
     assert proc.returncode == 6
+    assert "[orchestrator] TURN (agent=codex model=" in proc.stdout
     assert "[codex][stdout] stub-stdout-1" in proc.stdout
     assert "[codex][stdout] stub-stdout-2" in proc.stdout
     assert "[codex][stderr] stub-stderr-1" in proc.stderr

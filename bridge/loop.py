@@ -177,6 +177,38 @@ def _redact_stream_text(text: str) -> str:
     return redacted
 
 
+def _print_turn_audit(
+    *,
+    agent: str,
+    model: str,
+    turn_obj: dict[str, Any],
+    stdout_log: Path,
+    stderr_log: Path,
+) -> None:
+    print(f"[orchestrator] TURN (agent={agent} model={model})")
+
+    def show_multiline(label: str, text: str) -> None:
+        if "\n" in text:
+            print(f"{label}:")
+            print(textwrap.indent(text, "  "))
+        else:
+            print(f"{label}: {text}")
+
+    show_multiline("summary", str(turn_obj.get("summary", "")))
+    show_multiline("delegate_rationale", str(turn_obj.get("delegate_rationale", "")))
+    print(
+        "requirement_progress: "
+        + json.dumps(turn_obj.get("requirement_progress", {}), ensure_ascii=False, sort_keys=True)
+    )
+    print("gates_passed: " + json.dumps(turn_obj.get("gates_passed", []), ensure_ascii=False))
+    print(f"next_agent: {turn_obj.get('next_agent', '')}")
+    show_multiline("next_prompt", str(turn_obj.get("next_prompt", "")))
+    print("artifacts: " + json.dumps(turn_obj.get("artifacts", []), ensure_ascii=False))
+    print("saved logs:")
+    print(f"  stdout: {stdout_log}")
+    print(f"  stderr: {stderr_log}")
+
+
 def _run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
     proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True)
     return proc.returncode, proc.stdout, proc.stderr
@@ -959,7 +991,16 @@ def main() -> int:
         _write_text(turn_path, json.dumps(turn_obj, indent=2, sort_keys=True))
         state.history.append(turn_obj)
 
-        print(f"[orchestrator] summary: {turn_obj['summary']}")
+        if args.mode == "live":
+            _print_turn_audit(
+                agent=agent,
+                model=agent_model,
+                turn_obj=turn_obj,
+                stdout_log=stdout_log,
+                stderr_log=stderr_log,
+            )
+        else:
+            print(f"[orchestrator] summary: {turn_obj['summary']}")
 
         # Update write-access grant for next call.
         state.grant_write_access = bool(turn_obj.get("needs_write_access", False))
