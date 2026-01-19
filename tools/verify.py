@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -48,7 +49,7 @@ class GateResult:
     note: str = ""
 
 
-M0_GATE_TIMEOUT_S = 90
+DEFAULT_M0_GATE_TIMEOUT_S = 90
 
 
 def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResult:
@@ -125,18 +126,30 @@ def _detect_milestone_id(project_root: Path) -> str | None:
     return match.group(1) if match else None
 
 
-def _gate_m0_smoke(project_root: Path) -> GateResult:
+def _gate_m0_smoke(project_root: Path, *, timeout_s: int) -> GateResult:
     cmd = [sys.executable, "-m", "tools.m0", "smoke"]
-    res = _run(cmd, project_root, timeout_s=M0_GATE_TIMEOUT_S)
+    res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_smoke"
     return res
 
 
-def _gate_m0_repro_check(project_root: Path) -> GateResult:
+def _gate_m0_repro_check(project_root: Path, *, timeout_s: int) -> GateResult:
     cmd = [sys.executable, "-m", "tools.m0", "repro-check"]
-    res = _run(cmd, project_root, timeout_s=M0_GATE_TIMEOUT_S)
+    res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_repro_check"
     return res
+
+
+def _resolve_m0_timeout(args: argparse.Namespace) -> int:
+    if isinstance(getattr(args, "m0_timeout_s", None), int):
+        return int(args.m0_timeout_s)
+    env_val = os.environ.get("FF_M0_GATE_TIMEOUT_S")
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            return DEFAULT_M0_GATE_TIMEOUT_S
+    return DEFAULT_M0_GATE_TIMEOUT_S
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run M0 substrate gates even when milestone is not M0.",
     )
+    ap.add_argument(
+        "--m0-timeout-s",
+        type=int,
+        default=None,
+        help="Override M0 gate timeout in seconds (or set FF_M0_GATE_TIMEOUT_S).",
+    )
     args = ap.parse_args(argv)
 
     project_root = Path(args.project_root).resolve()
@@ -162,8 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     milestone_id = _detect_milestone_id(project_root)
     run_m0_gates = milestone_id == "M0" or args.include_m0
     if run_m0_gates:
-        results.append(_gate_m0_smoke(project_root))
-        results.append(_gate_m0_repro_check(project_root))
+        m0_timeout_s = _resolve_m0_timeout(args)
+        results.append(_gate_m0_smoke(project_root, timeout_s=m0_timeout_s))
+        results.append(_gate_m0_repro_check(project_root, timeout_s=m0_timeout_s))
 
     if not args.skip_pytest:
         results.append(_gate_pytest(project_root))

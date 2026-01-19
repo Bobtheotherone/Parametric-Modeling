@@ -105,4 +105,38 @@ def test_verify_time_budget(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     for call in m0_calls:
         timeout_s = call.get("timeout_s")
         assert isinstance(timeout_s, int)
-        assert timeout_s <= verify.M0_GATE_TIMEOUT_S
+        assert timeout_s == verify.DEFAULT_M0_GATE_TIMEOUT_S
+
+
+def test_verify_m0_timeout_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    design_doc = tmp_path / "DESIGN_DOCUMENT.md"
+    _write_design_doc(design_doc, "M0")
+
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> verify.GateResult:
+        calls.append({"cmd": cmd, "timeout_s": timeout_s, "cwd": cwd})
+        return verify.GateResult(name="fake", passed=True, cmd=cmd)
+
+    monkeypatch.setattr(verify, "_run", fake_run)
+
+    rc = verify.main(
+        [
+            "--project-root",
+            str(tmp_path),
+            "--skip-pytest",
+            "--skip-quality",
+            "--skip-git",
+            "--m0-timeout-s",
+            "42",
+        ]
+    )
+    assert rc == 0
+    m0_calls: list[dict[str, object]] = []
+    for call in calls:
+        cmd = call.get("cmd")
+        if isinstance(cmd, list) and "tools.m0" in cmd:
+            m0_calls.append(call)
+    assert m0_calls
+    for call in m0_calls:
+        assert call.get("timeout_s") == 42
