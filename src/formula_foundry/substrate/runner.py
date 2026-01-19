@@ -169,7 +169,12 @@ class LocalJobRunner:
                 log_event(task, "finish", status=status, detail=detail)
 
         first_error: Exception | None = None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(scheduled)) as executor:
+        # Cap max_workers to prevent thread explosion for large task lists.
+        # Resource semaphores (CPU/RAM/VRAM) govern actual parallelism; the thread
+        # pool only needs enough workers to saturate hardware. Using cpu_cores
+        # ensures we don't spawn 1000s of threads for large batches.
+        max_workers = min(len(scheduled), max(4, self.hardware.cpu_cores))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {executor.submit(run_task, task): task for task in scheduled}
             for future in concurrent.futures.as_completed(future_map):
                 task = future_map[future]
