@@ -48,3 +48,22 @@ def test_bootstrap_venv_script_contract() -> None:
     assert "--frozen" in content
     assert ".venv" in content or "UV_PROJECT_ENVIRONMENT" in content
     assert script_path.stat().st_mode & stat.S_IXUSR
+
+
+def test_bootstrap_venv_installs_dev_extras_and_project() -> None:
+    """Regression: bootstrap must use --extra dev and install project editably."""
+    script_path = ROOT / "scripts" / "bootstrap_venv.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    # Must use --extra dev (or --all-extras) for optional dev dependencies
+    assert "--extra dev" in content or "--all-extras" in content, (
+        "bootstrap_venv.sh must install dev extras via --extra dev or --all-extras"
+    )
+
+    # Must have a line that installs the project in editable mode
+    # Acceptable patterns: "uv pip install -e ." or similar
+    import re
+    editable_install_pattern = re.compile(r"uv\s+pip\s+install\s+-e\s+\.")
+    assert editable_install_pattern.search(content), (
+        "bootstrap_venv.sh must install project in editable mode (uv pip install -e .)"
+    )

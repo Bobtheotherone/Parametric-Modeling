@@ -31,3 +31,15 @@ def test_determinism_limitations_documented() -> None:
     assert "nondeterminism" in content
     assert "cublas" in content
     assert "cudnn" in content
+
+
+def test_reproduction_md_no_hardcoded_repo_name() -> None:
+    """Regression: reproduction.md must not hardcode 'formula-foundry-tri-agent' in cd command."""
+    doc_path = ROOT / "docs" / "reproduction.md"
+    content = doc_path.read_text(encoding="utf-8")
+
+    # The outdated pattern we want to prevent
+    assert "cd formula-foundry-tri-agent" not in content, (
+        "reproduction.md should use a repo-agnostic placeholder like <repo-dir> "
+        "instead of hardcoding 'cd formula-foundry-tri-agent'"
+    )
