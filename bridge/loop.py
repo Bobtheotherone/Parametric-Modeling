@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Formula Foundry tri-agent orchestration loop.
+"""Formula Foundry two-agent orchestration loop.
 
 What this loop enforces (by design):
 - Milestone specs are *normative* and live in DESIGN_DOCUMENT.md.
@@ -7,24 +7,11 @@ What this loop enforces (by design):
 - Agents must iterate until `python -m tools.verify --strict-git` passes.
 - The run is not considered complete unless the repo is committed and clean.
 
-This loop drives 3 coding agents:
+This loop drives 2 coding agents:
 - Codex CLI (writes code)
-- Gemini CLI (spec engineer / advisory)
 - Claude Code (writes code)
 
 All agent handoffs are strict JSON validated against bridge/turn.schema.json.
-
-NOTE on prompt size:
-The DESIGN_DOCUMENT.md for later milestones can become large. To keep the most
-important information visible to *all* agents (including those without repo
-filesystem access), the orchestrator injects a "spec excerpt" that always
-includes:
-- milestone header + preamble
-- Normative Requirements
-- Definition of Done
-- Test Matrix
-
-The excerpt is truncated only after these critical sections are included.
 """
 
 from __future__ import annotations
@@ -36,11 +23,11 @@ import json
 import os
 import re
 import subprocess
+import threading
 import sys
 import textwrap
-import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # When run as `python bridge/loop.py`, Python sets sys.path[0] to the `bridge/`
 # directory. We want to import sibling packages (e.g., `tools`) from the repo root.
@@ -48,23 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-AGENTS = ("codex", "gemini", "claude")
-MODEL_ENV_VARS = {
-    "codex": "CODEX_MODEL",
-    "gemini": "GEMINI_MODEL",
-    "claude": "CLAUDE_MODEL",
-}
-DEFAULT_AGENT_MODELS = {
-    "codex": "gpt-5.2-codex",
-    "gemini": "gemini-3-pro-preview",
-    "claude": "claude-opus-4-5",
-}
-STREAM_MODES = {"off", "stdout", "stderr", "both"}
-REDACT_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
-    re.compile(r"sk-ant-[A-Za-z0-9\\-]{10,}"),
-    re.compile(r"AIza[0-9A-Za-z_\\-]{20,}"),
-]
+AGENTS = ("codex", "claude")
 
 
 @dataclasses.dataclass
@@ -73,11 +44,10 @@ class RunConfig:
     quota_retry_attempts: int
     max_total_calls: int
     max_json_correction_attempts: int
-    fallback_order: list[str]
-    agent_scripts: dict[str, str]
-    agent_models: dict[str, str]
-    quota_error_patterns: dict[str, list[str]]
-    supports_write_access: dict[str, bool]
+    fallback_order: List[str]
+    agent_scripts: Dict[str, str]
+    quota_error_patterns: Dict[str, List[str]]
+    supports_write_access: Dict[str, bool]
 
 
 @dataclasses.dataclass
@@ -90,10 +60,10 @@ class RunState:
     design_doc_path: Path
 
     total_calls: int = 0
-    call_counts: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
-    quota_failures: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
-    disabled_by_quota: dict[str, bool] = dataclasses.field(default_factory=lambda: {a: False for a in AGENTS})
-    history: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    call_counts: Dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
+    quota_failures: Dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
+    disabled_by_quota: Dict[str, bool] = dataclasses.field(default_factory=lambda: {a: False for a in AGENTS})
+    history: List[Dict[str, Any]] = dataclasses.field(default_factory=list)
 
     # dynamic write access policy (set by previous turn)
     grant_write_access: bool = False
@@ -108,18 +78,14 @@ def load_config(config_path: Path) -> RunConfig:
     limits = data["limits"]
     agents = data["agents"]
 
-    agent_scripts: dict[str, str] = {}
-    agent_models: dict[str, str] = {}
-    quota_pats: dict[str, list[str]] = {}
-    supports_write: dict[str, bool] = {}
+    agent_scripts: Dict[str, str] = {}
+    quota_pats: Dict[str, List[str]] = {}
+    supports_write: Dict[str, bool] = {}
 
     for a in AGENTS:
         if a not in agents:
             raise ValueError(f"Missing agent in config: {a}")
         agent_scripts[a] = agents[a]["script"]
-        model = str(agents[a].get("model", "")).strip()
-        if model:
-            agent_models[a] = model
         quota_pats[a] = list(agents[a].get("quota_error_patterns", []))
         supports_write[a] = bool(agents[a].get("supports_write_access", False))
 
@@ -130,130 +96,65 @@ def load_config(config_path: Path) -> RunConfig:
         max_json_correction_attempts=int(limits.get("max_json_correction_attempts", 2)),
         fallback_order=list(data["fallback_order"]),
         agent_scripts=agent_scripts,
-        agent_models=agent_models,
         quota_error_patterns=quota_pats,
         supports_write_access=supports_write,
     )
 
 
-def _effective_model(agent: str, config: RunConfig, env: dict[str, str]) -> str:
-    cfg = config.agent_models.get(agent, "")
-    if cfg:
-        return cfg
-    env_var = MODEL_ENV_VARS.get(agent, "")
-    if env_var:
-        env_val = env.get(env_var, "").strip()
-        if env_val:
-            return env_val
-    return DEFAULT_AGENT_MODELS.get(agent, "unknown")
-
-
-def _resolve_stream_mode(
-    cli_value: str | None, env_value: str | None, run_mode: str
-) -> str:
-    default = "both" if run_mode == "live" else "off"
-    raw = cli_value if cli_value is not None else (env_value or "")
-    if not raw:
-        return default
-    val = raw.strip().lower()
-    if val in ("1", "true", "yes", "on"):
-        val = "both"
-    elif val in ("0", "false", "no", "off"):
-        val = "off"
-    if val not in STREAM_MODES:
-        print(f"[orchestrator] WARNING: invalid stream mode '{raw}', defaulting to {default}")
-        return default
-    return val
-
-
-def _stream_enabled(stream_mode: str, stream_name: str) -> bool:
-    return stream_mode in ("both", stream_name)
-
-
-def _redact_stream_text(text: str) -> str:
-    redacted = text
-    for pattern in REDACT_PATTERNS:
-        redacted = pattern.sub("***", redacted)
-    return redacted
-
-
-def _print_turn_audit(
+def _run_cmd(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str],
     *,
-    agent: str,
-    model: str,
-    turn_obj: dict[str, Any],
-    stdout_log: Path,
-    stderr_log: Path,
-) -> None:
-    print(f"[orchestrator] TURN (agent={agent} model={model})")
+    stream: bool = False,
+) -> tuple[int, str, str]:
+    """Run a subprocess.
 
-    def show_multiline(label: str, text: str) -> None:
-        if "\n" in text:
-            print(f"{label}:")
-            print(textwrap.indent(text, "  "))
-        else:
-            print(f"{label}: {text}")
+    When stream=True, stdout/stderr are forwarded to the terminal live while also
+    being captured and returned. This restores verbose agent output in live mode
+    without losing the ability to persist raw logs.
+    """
 
-    show_multiline("summary", str(turn_obj.get("summary", "")))
-    show_multiline("delegate_rationale", str(turn_obj.get("delegate_rationale", "")))
-    print(
-        "requirement_progress: "
-        + json.dumps(turn_obj.get("requirement_progress", {}), ensure_ascii=False, sort_keys=True)
-    )
-    print("gates_passed: " + json.dumps(turn_obj.get("gates_passed", []), ensure_ascii=False))
-    print(f"next_agent: {turn_obj.get('next_agent', '')}")
-    show_multiline("next_prompt", str(turn_obj.get("next_prompt", "")))
-    print("artifacts: " + json.dumps(turn_obj.get("artifacts", []), ensure_ascii=False))
-    print("saved logs:")
-    print(f"  stdout: {stdout_log}")
-    print(f"  stderr: {stderr_log}")
+    if not stream:
+        proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True)
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
 
-
-def _run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
-    proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True)
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-def _git_try(cmd: list[str], cwd: Path) -> str:
-    try:
-        rc, out, err = _run_cmd(cmd, cwd=cwd, env=os.environ.copy())
-        if rc != 0:
-            return f"$ {' '.join(cmd)}\n<nonzero exit {rc}>\n{err.strip()}\n"
-        return f"$ {' '.join(cmd)}\n{out.strip()}\n"
-    except Exception as e:
-        return f"$ {' '.join(cmd)}\n<error> {e}\n"
-
-
-def _git_snapshot(cwd: Path) -> str:
-    return "\n".join(
-        [
-            _git_try(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd),
-            _git_try(["git", "rev-parse", "HEAD"], cwd),
-            _git_try(["git", "status", "--porcelain=v1"], cwd),
-            _git_try(["git", "diff", "--stat"], cwd),
-        ]
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
     )
 
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
 
-def _extract_stats_ids(stats_md: str) -> list[str]:
-    found = set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", stats_md))
-    return sorted(found)
+    def _pump(src, sink, chunks: list[str]) -> None:
+        try:
+            for line in iter(src.readline, ""):
+                sink.write(line)
+                sink.flush()
+                chunks.append(line)
+        finally:
+            try:
+                src.close()
+            except Exception:
+                pass
 
+    t_out = threading.Thread(target=_pump, args=(proc.stdout, sys.stdout, out_chunks), daemon=True)
+    t_err = threading.Thread(target=_pump, args=(proc.stderr, sys.stderr, err_chunks), daemon=True)
+    t_out.start()
+    t_err.start()
 
-def _parse_smoke_route(raw: str) -> list[str]:
-    if not raw:
-        return []
-    items = [item.strip() for item in raw.split(",") if item.strip()]
-    for item in items:
-        if item not in AGENTS:
-            raise ValueError(f"Invalid smoke-route agent: {item}")
-    return items
+    rc = proc.wait()
+    t_out.join(timeout=1)
+    t_err.join(timeout=1)
 
+    return rc, "".join(out_chunks), "".join(err_chunks)
 
-def _truncate(s: str, limit: int) -> str:
-    if len(s) <= limit:
-        return s
-    return s[:limit] + f"\n\n<TRUNCATED: {len(s) - limit} chars>\n"
 
 
 def _read_text(path: Path) -> str:
@@ -265,97 +166,11 @@ def _parse_milestone_id(design_doc_text: str) -> str:
     return m.group(1) if m else "M?"
 
 
-def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[int, str, str]:
+def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> Tuple[int, str, str]:
     cmd = [sys.executable, "-m", "tools.verify", "--json", str(out_json)]
     if strict_git:
         cmd.append("--strict-git")
     return _run_cmd(cmd, cwd=project_root, env=os.environ.copy())
-
-
-def _extract_section(lines: list[str], header_prefix: str) -> list[str]:
-    """Extract a markdown section by prefix.
-
-    Example header_prefix values:
-      - "## Normative Requirements"
-      - "## Definition of Done"
-      - "## Test Matrix"
-
-    The function:
-      - finds the first line whose stripped lowercase startswith(header_prefix.lower())
-      - returns lines until the next '## ' header (exclusive)
-    """
-
-    hp = header_prefix.strip().lower()
-    start: int | None = None
-    for i, line in enumerate(lines):
-        if line.strip().lower().startswith(hp):
-            start = i
-            break
-    if start is None:
-        return []
-
-    out: list[str] = [lines[start]]
-    for j in range(start + 1, len(lines)):
-        if lines[j].startswith("## "):
-            break
-        out.append(lines[j])
-    return out
-
-
-def _design_doc_excerpt(design_doc_text: str, max_chars: int = 60000) -> str:
-    """Return a prompt-safe excerpt that always includes critical spec sections."""
-
-    text = design_doc_text.strip()
-    if not text:
-        return ""
-
-    lines = text.splitlines()
-
-    # Preamble: everything up to (but excluding) Normative Requirements, if present.
-    preamble: list[str] = []
-    nr_idx: int | None = None
-    for i, line in enumerate(lines):
-        if line.strip().lower().startswith("## normative requirements"):
-            nr_idx = i
-            break
-    if nr_idx is None:
-        preamble = lines[:120]
-    else:
-        preamble = lines[:nr_idx]
-
-    sections: list[list[str]] = []
-    sections.append(_extract_section(lines, "## Normative Requirements"))
-    sections.append(_extract_section(lines, "## Definition of Done"))
-    sections.append(_extract_section(lines, "## Test Matrix"))
-
-    # Optional but often useful.
-    sections.append(_extract_section(lines, "## References"))
-
-    # Compose with clear separators.
-    parts: list[str] = []
-    parts.extend(preamble)
-
-    seen = set()
-    for sec in sections:
-        if not sec:
-            continue
-        key = "\n".join(sec[:1])
-        if key in seen:
-            continue
-        seen.add(key)
-        if parts and parts[-1].strip() != "":
-            parts.append("")
-        parts.extend(sec)
-
-    excerpt = "\n".join(parts).strip() + "\n"
-    if len(excerpt) > max_chars:
-        excerpt = _truncate(excerpt, max_chars)
-
-    # Add an explicit note so agents know the excerpt may not contain everything.
-    if len(text) > len(excerpt):
-        excerpt += "\n[NOTE] Full DESIGN_DOCUMENT.md is longer; excerpt includes the normative contract sections.\n"
-
-    return excerpt
 
 
 def build_prompt(
@@ -366,11 +181,11 @@ def build_prompt(
     milestone_id: str,
     repo_info: str,
     verify_report_text: str,
-    history: list[dict[str, Any]],
+    history: List[Dict[str, Any]],
     next_prompt: str,
-    call_counts: dict[str, int],
-    disabled_by_quota: dict[str, bool],
-    stats_ids: list[str],
+    call_counts: Dict[str, int],
+    disabled_by_quota: Dict[str, bool],
+    stats_ids: List[str],
 ) -> str:
     last_summaries = "\n".join([f"- ({h['agent']}) {h['summary']}" for h in history[-4:]])
 
@@ -391,7 +206,7 @@ def build_prompt(
         "\n\n---\n\n# Orchestrator State (read-only)\n",
         state_blob,
         "\n\n---\n\n# Milestone Spec (DESIGN_DOCUMENT.md)\n",
-        _design_doc_excerpt(design_doc_text, max_chars=60000),
+        _truncate(design_doc_text.strip(), 20000),
         "\n\n---\n\n# Verification Report (tools.verify)\n",
         _truncate(verify_report_text.strip(), 20000),
         "\n\n---\n\n# Repo Snapshot\n",
@@ -434,7 +249,7 @@ def _try_parse_json(text: str) -> Any:
     raise ValueError("unbalanced braces in output")
 
 
-def _validate_turn(obj: Any, expected_agent: str, stats_id_set: set[str], milestone_id: str) -> tuple[bool, str]:
+def _validate_turn(obj: Any, expected_agent: str, stats_id_set: set[str], milestone_id: str) -> Tuple[bool, str]:
     if not isinstance(obj, dict):
         return False, "turn is not an object"
 
@@ -526,32 +341,73 @@ def _is_quota_error(agent: str, text: str, config: RunConfig) -> bool:
     return any(re.search(p, text, flags=re.IGNORECASE) for p in pats)
 
 
-def _pick_fallback(config: RunConfig, state: RunState) -> str | None:
+def _pick_fallback(config: RunConfig, state: RunState, current_agent: Optional[str]) -> str:
+    """Pick the next agent to try, avoiding the current agent when possible."""
+
+    enabled = [
+        a
+        for a in config.enable_agents
+        if (a in AGENTS)
+        and (not state.disabled_by_quota.get(a, False))
+        and (state.call_counts.get(a, 0) < config.max_calls_per_agent)
+    ]
+
+    if not enabled:
+        # As a last resort, fall back to any known agent name.
+        return current_agent or AGENTS[0]
+
+    # Prefer not to immediately retry the same agent unless it's the only option.
+    enabled_others = [a for a in enabled if a != current_agent] or enabled
+
     for a in config.fallback_order:
-        if a not in AGENTS:
-            continue
-        if state.disabled_by_quota.get(a, False):
-            continue
-        if state.call_counts.get(a, 0) >= config.max_calls_per_agent:
-            continue
-        return a
+        if a in enabled_others:
+            return a
+
+    return enabled_others[0]
+
+
+def _other_agent(agent: str) -> Optional[str]:
+    """Return the other agent in a two-agent codex/claude workflow."""
+    if agent not in AGENTS:
+        return None
+    for a in AGENTS:
+        if a != agent:
+            return a
     return None
 
 
-def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> tuple[str, str | None]:
-    if requested not in AGENTS:
-        fb = _pick_fallback(config, state)
-        return fb or requested, f"requested invalid agent '{requested}'"
+def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> Tuple[str, Optional[str]]:
+    """Clamp the next agent to the enabled two-agent round-robin when possible."""
 
-    if state.disabled_by_quota.get(requested, False):
-        fb = _pick_fallback(config, state)
-        return fb or requested, f"requested agent '{requested}' disabled by quota"
+    enabled = [
+        a
+        for a in config.enable_agents
+        if (a in AGENTS)
+        and (not state.disabled_by_quota.get(a, False))
+        and (state.call_counts.get(a, 0) < config.max_calls_per_agent)
+    ]
 
-    if state.call_counts.get(requested, 0) >= config.max_calls_per_agent:
-        fb = _pick_fallback(config, state)
-        return fb or requested, f"requested agent '{requested}' exceeded call cap"
+    if not enabled:
+        return requested, None
 
-    return requested, None
+    current_agent = None
+    if state.history:
+        current_agent = state.history[-1].get("agent")
+
+    # Enforce codex <-> claude alternation when both are available.
+    if current_agent:
+        other = _other_agent(current_agent)
+        if other and other in enabled:
+            if requested != other:
+                return other, "two-agent alternation (codex <-> claude)"
+            return other, None
+
+    # No current agent (first turn) or no alternation possible.
+    if requested in enabled:
+        return requested, None
+
+    # Requested agent not enabled: pick any enabled agent.
+    return enabled[0], f"requested agent '{requested}' disabled or unknown"
 
 
 def _ensure_dir(p: Path) -> None:
@@ -579,15 +435,11 @@ def _checkout_agent_branch(project_root: Path, run_id: str) -> None:
         _run_cmd(["git", "checkout", branch], cwd=project_root, env=os.environ.copy())
 
 
-def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
-    from tools.completion_gates import CompletionGateInputs, evaluate_completion_gates, verify_args_for_completion
-
-    design_doc = project_root / "DESIGN_DOCUMENT.md"
-    design_text = _read_text(design_doc) if design_doc.exists() else ""
-    milestone_id = _parse_milestone_id(design_text)
+def _completion_gates_ok(project_root: Path) -> Tuple[bool, str]:
+    from tools.completion_gates import CompletionGateInputs, evaluate_completion_gates
 
     rc, out, err = _run_cmd(
-        verify_args_for_completion(milestone_id),
+        [sys.executable, "-m", "tools.verify", "--strict-git"],
         cwd=project_root,
         env=os.environ.copy(),
     )
@@ -612,102 +464,50 @@ def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
 
 
 def _run_agent_live(
-    *,
-    agent: str,
-    prompt_path: Path,
-    schema_path: Path,
-    out_path: Path,
-    agent_model: str,
-    stream_mode: str,
-    stdout_log: Path,
-    stderr_log: Path,
+    agent_name: str,
+    prompt: str,
     config: RunConfig,
     state: RunState,
-) -> tuple[int, str, str]:
-    script_rel = config.agent_scripts[agent]
-    script = (state.project_root / script_rel).resolve()
+    out_file: pathlib.Path,
+) -> Tuple[int, str, str]:
+    script = config.agents.get(agent_name).script
+    if not script:
+        return 1, "", f"No script configured for agent {agent_name}"
 
-    env = os.environ.copy()
-    model_env = MODEL_ENV_VARS.get(agent)
-    if model_env:
-        env[model_env] = agent_model
-    force_write = agent in ("gemini", "claude", "codex")
-    wants_write = state.grant_write_access or force_write
-    env["WRITE_ACCESS"] = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
+    script_path = state.project_root / script
+    if not script_path.exists():
+        return 1, "", f"Agent script not found: {script_path}"
 
-    cmd = [str(script), str(prompt_path), str(schema_path), str(out_path)]
+    # Ensure destination dir exists (normally created by caller).
+    _ensure_dir(out_file.parent)
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(state.project_root),
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=1,
-        encoding="utf-8",
-        errors="replace",
-    )
+    with tempfile.TemporaryDirectory(prefix="orchestrator-") as td:
+        prompt_path = pathlib.Path(td) / "prompt.txt"
+        schema_path = state.project_root / "bridge" / "turn.schema.json"
 
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
+        _write_text(prompt_path, prompt)
 
-    def _reader(
-        stream: Any,
-        sink: list[str],
-        log_path: Path,
-        prefix: str,
-        allow_stream: bool,
-        dest: Any,
-    ) -> None:
-        with log_path.open("w", encoding="utf-8") as handle:
-            for line in iter(stream.readline, ""):
-                sink.append(line)
-                handle.write(line)
-                if allow_stream:
-                    dest.write(prefix + _redact_stream_text(line))
-                    dest.flush()
-            stream.close()
+        cmd = [
+            str(script_path),
+            str(prompt_path),
+            str(schema_path),
+            str(out_file),
+        ]
 
-    t_out = threading.Thread(
-        target=_reader,
-        args=(
-            proc.stdout,
-            stdout_lines,
-            stdout_log,
-            f"[{agent}][stdout] ",
-            _stream_enabled(stream_mode, "stdout"),
-            sys.stdout,
-        ),
-        daemon=True,
-    )
-    t_err = threading.Thread(
-        target=_reader,
-        args=(
-            proc.stderr,
-            stderr_lines,
-            stderr_log,
-            f"[{agent}][stderr] ",
-            _stream_enabled(stream_mode, "stderr"),
-            sys.stderr,
-        ),
-        daemon=True,
-    )
-    t_out.start()
-    t_err.start()
+        env = dict(os.environ)
+        env["ORCH_WRITE_ACCESS"] = "1" if state.write_access else "0"
 
-    rc = proc.wait()
-    t_out.join()
-    t_err.join()
-    return rc, "".join(stdout_lines), "".join(stderr_lines)
+        # Stream agent stdout/stderr live to terminal (and capture for logs).
+        return _run_cmd(cmd, cwd=state.project_root, env=env, stream=True)
+
 
 
 def _run_agent_mock(
     *,
     agent: str,
-    scenario: dict[str, Any],
-    mock_indices: dict[str, int],
-) -> tuple[int, str, str]:
+    scenario: Dict[str, Any],
+    mock_indices: Dict[str, int],
+) -> Tuple[int, str, str]:
     block = scenario["agents"].get(agent, [])
     idx = mock_indices.get(agent, 0)
     if idx >= len(block):
@@ -735,22 +535,11 @@ def main() -> int:
     ap.add_argument("--schema", default="bridge/turn.schema.json")
     ap.add_argument("--system-prompt", default="bridge/prompts/system.md")
     ap.add_argument("--design-doc", default="DESIGN_DOCUMENT.md")
-    ap.add_argument("--start-agent", choices=AGENTS, default="gemini")
+    ap.add_argument("--start-agent", choices=AGENTS, default="codex")
     ap.add_argument("--mode", choices=["live", "mock"], default="mock")
     ap.add_argument("--mock-scenario", default="bridge/mock_scenarios/milestone_demo.json")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-agent-branch", action="store_true")
-    ap.add_argument(
-        "--stream-agent-output",
-        choices=["off", "stdout", "stderr", "both"],
-        default=None,
-        help="Stream agent wrapper stdout/stderr to the terminal (live mode default: both).",
-    )
-    ap.add_argument(
-        "--smoke-route",
-        default="",
-        help="Force a fixed agent sequence for smoke tests (comma-separated).",
-    )
 
     args = ap.parse_args()
 
@@ -764,8 +553,6 @@ def main() -> int:
     run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     runs_dir = project_root / "runs" / run_id
     _ensure_dir(runs_dir)
-    calls_dir = runs_dir / "calls"
-    _ensure_dir(calls_dir)
 
     _git_init_if_needed(project_root)
     if not args.no_agent_branch:
@@ -785,13 +572,10 @@ def main() -> int:
     stats_id_set = set(stats_ids)
 
     system_prompt = system_prompt_path.read_text(encoding="utf-8")
-    stream_mode = _resolve_stream_mode(
-        args.stream_agent_output, os.environ.get("FF_STREAM_AGENT_OUTPUT"), args.mode
-    )
 
     # Mock scenario support.
-    scenario: dict[str, Any] = {}
-    mock_indices: dict[str, int] = {a: 0 for a in AGENTS}
+    scenario: Dict[str, Any] = {}
+    mock_indices: Dict[str, int] = {a: 0 for a in AGENTS}
     if args.mode == "mock":
         scenario = _load_json(project_root / args.mock_scenario)
 
@@ -808,14 +592,7 @@ def main() -> int:
         """
     ).strip()
 
-    try:
-        smoke_route = _parse_smoke_route(args.smoke_route)
-    except ValueError as exc:
-        print(f"[orchestrator] ERROR: {exc}")
-        return 2
-
-    smoke_index = 0
-    agent = smoke_route[0] if smoke_route else args.start_agent
+    agent = args.start_agent
 
     print(f"[orchestrator] run_id={state.run_id} mode={args.mode} project_root={project_root}")
     print(
@@ -824,9 +601,15 @@ def main() -> int:
     )
 
     call_no = 0
+
+    # Tracks consecutive JSON parse/validation failures for the current agent so we can
+    # ask the SAME agent to re-emit valid JSON a few times before failing over.
+    correction_agent: Optional[str] = None
+    correction_attempts = 0
+
     while state.total_calls < config.max_total_calls:
         if state.call_counts.get(agent, 0) >= config.max_calls_per_agent:
-            fb = _pick_fallback(config, state)
+            fb = _pick_fallback(config, state, current_agent=agent)
             if not fb:
                 print("[orchestrator] ERROR: all agents exhausted call cap; stopping.")
                 return 2
@@ -837,7 +620,7 @@ def main() -> int:
         state.total_calls += 1
         state.call_counts[agent] += 1
 
-        call_dir = calls_dir / f"call_{call_no:04d}"
+        call_dir = runs_dir / f"call_{call_no:04d}"
         _ensure_dir(call_dir)
 
         design_doc_text = _read_text(design_doc_path) if design_doc_path.exists() else ""
@@ -845,11 +628,8 @@ def main() -> int:
 
         # Run verify (non-strict by default) and embed the report into the prompt.
         verify_json = call_dir / "verify.json"
-        if os.environ.get("FF_SKIP_VERIFY") == "1":
-            verify_report_text = "{}"
-        else:
-            _run_verify(project_root, verify_json, strict_git=False)
-            verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
+        _run_verify(project_root, verify_json, strict_git=False)
+        verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
 
         repo_info = _git_snapshot(project_root)
 
@@ -870,18 +650,13 @@ def main() -> int:
         prompt_path = call_dir / "prompt.txt"
         raw_path = call_dir / "raw.txt"
         out_path = call_dir / "out.json"
-        stdout_log = call_dir / "agent_stdout.log"
-        stderr_log = call_dir / "agent_stderr.log"
         _write_text(prompt_path, prompt_text)
 
-        agent_model = _effective_model(agent, config, os.environ.copy())
         print("=" * 88)
-        wants_write = state.grant_write_access or agent in AGENTS
-        write_access = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
         print(
-            f"CALL {call_no:04d} | agent={agent} | model={agent_model} | total_calls={state.total_calls} | "
+            f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
-            f"write_access={write_access}"
+            f"write_access={'1' if state.grant_write_access else '0'}"
         )
 
         if args.mode == "mock":
@@ -892,20 +667,11 @@ def main() -> int:
                 prompt_path=prompt_path,
                 schema_path=schema_path,
                 out_path=out_path,
-                agent_model=agent_model,
-                stream_mode=stream_mode,
-                stdout_log=stdout_log,
-                stderr_log=stderr_log,
                 config=config,
                 state=state,
             )
 
         _write_text(raw_path, (out or "") + ("\n" if out and err else "") + (err or ""))
-        parse_text = out
-        if out_path.exists():
-            file_text = out_path.read_text(encoding="utf-8").strip()
-            if file_text:
-                parse_text = file_text
 
         if args.verbose and err.strip():
             print("[orchestrator] stderr:\n" + err.strip())
@@ -928,7 +694,7 @@ def main() -> int:
 
                 print(f"[orchestrator] DISABLE: agent '{agent}' marked disabled_by_quota=true")
                 state.disabled_by_quota[agent] = True
-                fb = _pick_fallback(config, state)
+                fb = _pick_fallback(config, state, current_agent=agent)
                 if not fb:
                     print("[orchestrator] ERROR: no fallback agents available; stopping.")
                     return 3
@@ -936,7 +702,7 @@ def main() -> int:
                 agent = fb
                 continue
 
-            fb = _pick_fallback(config, state)
+            fb = _pick_fallback(config, state, current_agent=agent)
             if not fb:
                 print("[orchestrator] ERROR: no fallback agents available; stopping.")
                 return 4
@@ -945,45 +711,51 @@ def main() -> int:
             continue
 
         # Parse and validate JSON.
-        parse_ok = False
-        correction_attempts = 0
-        last_err = ""
-        turn_obj: Any = None
+        # Parse the canonical JSON output from the agent wrapper.
+        # The wrapper writes a cleaned/normalized JSON object to out_path.
+        try:
+            out_for_parse = out
+            if out_path.exists() and out_path.stat().st_size > 0:
+                out_for_parse = _read_text(out_path)
 
-        while not parse_ok and correction_attempts <= config.max_json_correction_attempts:
-            try:
-                turn_obj = _try_parse_json(parse_text)
-                ok, msg = _validate_turn(
-                    turn_obj, expected_agent=agent, stats_id_set=stats_id_set, milestone_id=milestone_id
-                )
-                if not ok:
-                    raise ValueError(msg)
-                parse_ok = True
-            except Exception as e:
-                last_err = str(e)
-                correction_attempts += 1
-                if correction_attempts > config.max_json_correction_attempts:
-                    break
+            turn_obj = _try_parse_json(out_for_parse)
+            _validate_turn(turn_obj, agent_name=agent, stats_ids=stats_ids)
+        except Exception as e:
+            print(f"[orchestrator] JSON INVALID: {e}")
 
-                print(f"[orchestrator] JSON INVALID: {last_err}")
+            # Track consecutive JSON failures per-agent so we can ask the SAME agent to
+            # re-emit valid JSON a few times before failing over.
+            if correction_agent != agent:
+                correction_agent = agent
+                correction_attempts = 0
+            correction_attempts += 1
+
+            if correction_attempts <= config.max_json_correction_attempts:
                 print(
                     f"[orchestrator] correction attempt {correction_attempts}/{config.max_json_correction_attempts} (same agent)"
                 )
-
+                prev_prompt = next_prompt
                 next_prompt = textwrap.dedent(
                     f"""
-                    Your previous output was invalid JSON for the required schema.
+                    Your previous response could not be parsed/validated as a single JSON object that matches bridge/turn.schema.json.
 
-                    Error: {last_err}
+                    Error: {e}
 
-                    Re-emit the JSON object ONLY, matching the schema exactly.
+                    Return ONLY one JSON object (no prose, no markdown, no code fences) that satisfies the schema.
+                    Re-answer the ORIGINAL PROMPT below:
+
+                    --- ORIGINAL PROMPT START ---
+                    {prev_prompt}
+                    --- ORIGINAL PROMPT END ---
                     """
                 ).strip()
-                break
+                continue
 
-        if not parse_ok:
-            print(f"[orchestrator] ERROR: could not parse/validate JSON: {last_err}")
-            fb = _pick_fallback(config, state)
+            print(f"[orchestrator] ERROR: could not parse/validate JSON: {e}")
+            correction_agent = None
+            correction_attempts = 0
+
+            fb = _pick_fallback(config, state, current_agent=agent)
             if not fb:
                 print("[orchestrator] ERROR: no fallback agents available; stopping.")
                 return 5
@@ -991,45 +763,25 @@ def main() -> int:
             agent = fb
             continue
 
+        # Successful parse/validate: reset correction tracking.
+        correction_agent = None
+        correction_attempts = 0
         turn_path = call_dir / "turn.json"
         _write_text(turn_path, json.dumps(turn_obj, indent=2, sort_keys=True))
         state.history.append(turn_obj)
 
-        if args.mode == "live":
-            _print_turn_audit(
-                agent=agent,
-                model=agent_model,
-                turn_obj=turn_obj,
-                stdout_log=stdout_log,
-                stderr_log=stderr_log,
-            )
-        else:
-            print(f"[orchestrator] summary: {turn_obj['summary']}")
+        print(f"[orchestrator] summary: {turn_obj['summary']}")
 
         # Update write-access grant for next call.
         state.grant_write_access = bool(turn_obj.get("needs_write_access", False))
 
         # Completion gates: only stop if they actually pass.
         if bool(turn_obj["project_complete"]):
-            if smoke_route and smoke_index + 1 < len(smoke_route):
-                print("[orchestrator] PROJECT_COMPLETE ignored due to smoke_route")
-                requested = str(turn_obj["next_agent"])
-                effective, override_reason = _override_next_agent(requested, config, state)
-                smoke_index += 1
-                forced = smoke_route[smoke_index]
-                print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
-                next_prompt = str(turn_obj["next_prompt"]).strip()
-                agent = forced
-                continue
-
             ok, msg = _completion_gates_ok(project_root)
             if ok:
                 print("[orchestrator] PROJECT COMPLETE (gates passed)")
                 state_path = runs_dir / "state.json"
-                _write_text(
-                    state_path,
-                    json.dumps(dataclasses.asdict(state), indent=2, sort_keys=True, default=str),
-                )
+                _write_text(state_path, json.dumps(dataclasses.asdict(state), indent=2, sort_keys=True, default=str))
                 return 0
 
             print("[orchestrator] PROJECT_COMPLETE rejected: completion gates failed")
@@ -1057,16 +809,7 @@ def main() -> int:
         # Decide next agent.
         requested = str(turn_obj["next_agent"])
         effective, override_reason = _override_next_agent(requested, config, state)
-        if smoke_route and smoke_index + 1 < len(smoke_route):
-            smoke_index += 1
-            forced = smoke_route[smoke_index]
-            print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
-            effective = forced
-            override_reason = "smoke_route"
-
-        if override_reason == "smoke_route":
-            print(f"[orchestrator] next_agent={effective} (smoke_route)")
-        elif override_reason:
+        if override_reason:
             print(f"[orchestrator] OVERRIDE next_agent: {requested} -> {effective} ({override_reason})")
         else:
             print(f"[orchestrator] next_agent={effective} (as requested)")

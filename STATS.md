@@ -1,72 +1,41 @@
-# Agent Stats + Selection Guide (Formula Foundry)
+# Agent Strengths & Collaboration Notes
 
-This file is **part of the protocol**.
+This orchestrator is configured for a **two-agent** workflow: **Codex** and **Claude**.
 
-Before choosing `next_agent`, the current agent must:
-1. Read this file.
-2. Choose the best agent for the next subtask.
-3. Output `stats_refs` that cite the relevant **IDs** below (e.g., `CX-2`, `GM-3`, `CL-4`).
+The intended pattern is simple:
+- **Always hand off to the other agent** after each successful turn (unless `project_complete=true`).
+- Use the handoff to get a second set of eyes: review, test-plan, edge cases, and prompt/schema compliance.
 
-If you do not cite IDs, the orchestrator may treat the handoff as invalid.
+## Codex
 
----
+**Best at:**
+- Fast, accurate code changes (Python, shell, glue code)
+- Refactors, bug fixes, keeping diffs tight
+- Implementing CLI behavior and maintaining backward-compatible flags
 
-## Codex (OpenAI) — agent id: `codex`
+**When to hand off to Claude:**
+- After implementing a change, for review and edge-case analysis
+- When you need a careful spec check against prompt/schema/validation rules
 
-Role in this repo: **Implementer + TDD loop driver**.
+## Claude
 
-### Strength IDs
-- **CX-1**: Turn a crisp requirement into code with correct interfaces and solid typing.
-- **CX-2**: Iterate fast using commands/tests; fixes failures without thrashing.
-- **CX-3**: Large mechanical edits and multi-file refactors while keeping the repo consistent.
-- **CX-4**: GPU-first numerics: can refactor hot paths to CuPy/PyTorch and avoid CPU fallback.
+**Best at:**
+- Careful review, reasoning about edge cases and failure modes
+- Making prompts/system instructions robust and consistent with schema
+- Writing or validating test plans and safety checks
 
-### Best for
-- Implementing milestone features, writing/adjusting pytest, fixing `tools/verify.py` failures.
+**When to hand off to Codex:**
+- After review/analysis, for implementation
+- When changes require multi-file edits or tricky code surgery
 
-### Not ideal for
-- Turning ambiguous prose into a complete set of normative requirements + test matrix (delegate to Gemini).
+## Handoff heuristics
 
----
+In this repo, **collaboration is enforced**:
+- If you are Codex, set `next_agent` to `claude`.
+- If you are Claude, set `next_agent` to `codex`.
 
-## Gemini (Google) — agent id: `gemini`
+If you believe the other agent is out of budget or repeatedly failing, note that in `delegate_rationale` and still propose the best alternate plan.
 
-Role in this repo: **Spec engineer + adversarial reviewer**.
+## Stats references
 
-### Strength IDs
-- **GM-1**: Convert DESIGN_DOCUMENT.md into precise requirement IDs + measurable acceptance criteria.
-- **GM-2**: Build a rigorous test matrix (Req → pytest node IDs) and identify missing gates.
-- **GM-3**: Threat-modeling and adversarial thinking: corner cases, failure modes, non-functional constraints.
-- **GM-4**: Delegation discipline: choose the next agent to minimize cost and maximize progress.
-
-### Best for
-- First pass on a milestone doc: normalize it to the required format, define gates, plan TDD.
-
-### Not ideal for
-- Large code edits (delegate to Codex/Claude).
-
----
-
-## Claude Code (Anthropic) — agent id: `claude`
-
-Role in this repo: **Verifier + refactor/polish + test hardening**.
-
-### Strength IDs
-- **CL-1**: Improves API ergonomics and readability without breaking behavior.
-- **CL-2**: Writes robust tests (good assertions, parametrization, meaningful fixtures).
-- **CL-3**: Consistency audits: naming, docs, edge-case coverage, and removing footguns.
-- **CL-4**: Finalization pass: ensures gates pass, commits are clean, docs are accurate.
-
-### Best for
-- A verification/polish pass after Codex implementation, plus hardening tests and docs.
-
-### Not ideal for
-- Early architecture exploration when specs are unclear (delegate to Gemini first).
-
----
-
-## Quick selection heuristics
-
-- “Normalize a messy DESIGN_DOCUMENT into requirement IDs + test matrix” → `gemini` (GM-1..GM-3)
-- “Implement the requirements and make tests pass” → `codex` (CX-1..CX-3)
-- “Harden tests, refactor, final commit/cleanup” → `claude` (CL-2..CL-4)
+Use `stats_refs` to cite which section you relied on (e.g., `"STATS.md#Codex"`).

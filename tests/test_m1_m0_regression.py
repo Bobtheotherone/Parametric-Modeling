@@ -33,7 +33,7 @@ def test_orchestrator_completion_gate_includes_m0(
         return 0, "", ""
 
     monkeypatch.setattr(loop, "_run_cmd", fake_run_cmd)
-    ok, _ = loop._completion_gates_ok(tmp_path)  # noqa: SLF001
+    ok, _ = loop._completion_gates_ok(tmp_path, "M1")  # noqa: SLF001
     assert ok
     verify_calls = [cmd for cmd in calls if cmd[:3] == [sys.executable, "-m", "tools.verify"]]
     assert verify_calls

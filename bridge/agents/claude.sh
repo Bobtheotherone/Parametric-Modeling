@@ -509,7 +509,7 @@ out["gates_passed"] = to_str_list(t.get("gates_passed", []))
 out["requirement_progress"] = normalize_requirement_progress(t.get("requirement_progress"))
 
 na = t.get("next_agent")
-out["next_agent"] = na if na in ("codex", "gemini", "claude") else "codex"
+out["next_agent"] = na if na in ("codex", "claude") else "codex"
 out["next_prompt"] = to_str(t.get("next_prompt"), "")
 out["delegate_rationale"] = to_str(t.get("delegate_rationale"), "")
 
