@@ -22,6 +22,7 @@ CODEX_SANDBOX="${CODEX_SANDBOX:-}"
 CODEX_ASK_FOR_APPROVAL="${CODEX_ASK_FOR_APPROVAL:-}"
 CODEX_EXTRA_GLOBAL_FLAGS="${CODEX_EXTRA_GLOBAL_FLAGS:-}"
 CODEX_EXTRA_EXEC_FLAGS="${CODEX_EXTRA_EXEC_FLAGS:-}"
+CODEX_TIMEOUT_S="${CODEX_TIMEOUT_S:-180}"
 
 cmd=(codex)
 
@@ -62,6 +63,10 @@ fi
 
 cmd+=(--output-schema "$SCHEMA_FILE" -o "$OUT_FILE" -)
 
-"${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
+if command -v timeout >/dev/null 2>&1; then
+  timeout "${CODEX_TIMEOUT_S}s" "${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
+else
+  "${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
+fi
 
 cat "$OUT_FILE"

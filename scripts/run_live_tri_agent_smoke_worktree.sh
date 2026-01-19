@@ -31,6 +31,7 @@ set +e
 FF_AGENT_SMOKE_DIR="$SMOKE_DIR" \
 GEMINI_TIMEOUT_S="${GEMINI_TIMEOUT_S:-60}" \
 CLAUDE_TIMEOUT_S="${CLAUDE_TIMEOUT_S:-60}" \
+CODEX_TIMEOUT_S="${CODEX_TIMEOUT_S:-60}" \
 CODEX_ASK_FOR_APPROVAL="${CODEX_ASK_FOR_APPROVAL:-never}" \
 python3 -u bridge/loop.py \
   --mode live \
@@ -42,6 +43,11 @@ set -e
 
 if [[ "$rc" -ne 0 ]]; then
   echo "Live tri-agent smoke failed (rc=$rc)." >&2
+  exit 1
+fi
+
+if grep -q "\\[orchestrator\\] ERROR" "$LOG_FILE" || grep -q "\\[orchestrator\\] QUOTA" "$LOG_FILE"; then
+  echo "Agent invocation failed during live run." >&2
   exit 1
 fi
 
