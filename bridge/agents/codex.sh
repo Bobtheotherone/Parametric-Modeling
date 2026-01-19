@@ -63,10 +63,29 @@ fi
 
 cmd+=(--output-schema "$SCHEMA_FILE" -o "$OUT_FILE" -)
 
-if command -v timeout >/dev/null 2>&1; then
-  timeout "${CODEX_TIMEOUT_S}s" "${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
-else
-  "${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
-fi
+python3 - <<'PY' "$CODEX_TIMEOUT_S" "$PROMPT_FILE" "${cmd[@]}" 1>/dev/null
+import subprocess
+import sys
+
+timeout_s = int(sys.argv[1])
+prompt_path = sys.argv[2]
+cmd = sys.argv[3:]
+
+prompt = open(prompt_path, "r", encoding="utf-8").read()
+
+try:
+    proc = subprocess.run(
+        cmd,
+        input=prompt,
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=sys.stderr,
+        timeout=timeout_s,
+    )
+    raise SystemExit(proc.returncode)
+except subprocess.TimeoutExpired:
+    sys.stderr.write(f"CODEX_TIMEOUT after {timeout_s}s\\n")
+    raise SystemExit(124)
+PY
 
 cat "$OUT_FILE"
