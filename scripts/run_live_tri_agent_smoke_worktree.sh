@@ -28,17 +28,33 @@ mkdir -p "$SMOKE_DIR"
 LOG_FILE="$SMOKE_DIR/loop.log"
 
 set +e
-FF_AGENT_SMOKE_DIR="$SMOKE_DIR" \
-GEMINI_TIMEOUT_S=60 \
-CLAUDE_TIMEOUT_S=60 \
-CLAUDE_HELP_TIMEOUT_S=5 \
-CODEX_TIMEOUT_S=60 \
-CODEX_ASK_FOR_APPROVAL=never \
-python3 -u bridge/loop.py \
-  --mode live \
-  --smoke-route gemini,codex,claude \
-  --start-agent gemini \
-  --no-agent-branch | tee "$LOG_FILE"
+LOOP_TIMEOUT_S=180
+
+if command -v timeout >/dev/null 2>&1; then
+  FF_AGENT_SMOKE_DIR="$SMOKE_DIR" \
+  GEMINI_TIMEOUT_S=60 \
+  CLAUDE_TIMEOUT_S=60 \
+  CLAUDE_HELP_TIMEOUT_S=5 \
+  CODEX_TIMEOUT_S=60 \
+  CODEX_ASK_FOR_APPROVAL=never \
+  timeout "${LOOP_TIMEOUT_S}s" python3 -u bridge/loop.py \
+    --mode live \
+    --smoke-route gemini,codex,claude \
+    --start-agent gemini \
+    --no-agent-branch | tee "$LOG_FILE"
+else
+  FF_AGENT_SMOKE_DIR="$SMOKE_DIR" \
+  GEMINI_TIMEOUT_S=60 \
+  CLAUDE_TIMEOUT_S=60 \
+  CLAUDE_HELP_TIMEOUT_S=5 \
+  CODEX_TIMEOUT_S=60 \
+  CODEX_ASK_FOR_APPROVAL=never \
+  python3 -u bridge/loop.py \
+    --mode live \
+    --smoke-route gemini,codex,claude \
+    --start-agent gemini \
+    --no-agent-branch | tee "$LOG_FILE"
+fi
 rc=${PIPESTATUS[0]}
 set -e
 
