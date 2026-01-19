@@ -7,9 +7,23 @@ OUT_FILE="${3:?out_file}"
 
 # Gemini 3 Pro (preview). If your CLI doesn't have it enabled, set GEMINI_MODEL=gemini-2.5-pro.
 MODEL="${GEMINI_MODEL:-gemini-3-pro-preview}"
-TIMEOUT_S="${GEMINI_TIMEOUT_S:-120}"
+FF_SMOKE="${FF_SMOKE:-0}"
+DEFAULT_TIMEOUT_S=86400
+SMOKE_TIMEOUT_S=120
+if [[ "$FF_SMOKE" == "1" ]]; then
+  TIMEOUT_S="${GEMINI_TIMEOUT_S:-$SMOKE_TIMEOUT_S}"
+else
+  TIMEOUT_S="${GEMINI_TIMEOUT_S:-$DEFAULT_TIMEOUT_S}"
+fi
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
+WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
 prompt="$(cat "$PROMPT_FILE")"
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "gemini" > "$SMOKE_DIR/gemini.txt"
+fi
 
 # Keep Gemini laser-focused on the orchestrator schema.
 PREAMBLE=$'SYSTEM CONSTRAINTS (NON-NEGOTIABLE)\n- Output EXACTLY ONE JSON object matching the provided schema.\n- Do NOT wrap output in markdown/code fences (no ``` blocks).\n- No extra text before/after the JSON.\n'
@@ -19,16 +33,51 @@ ERR_FILE="${OUT_FILE}.stderr"
 WRAP_JSON="${OUT_FILE}.wrapper.json"
 
 python3 - <<'PY' "$MODEL" "$TIMEOUT_S" "$FULL_PROMPT" "$WRAP_JSON" "$ERR_FILE"
-import subprocess, sys
+import os
+import signal
+import subprocess
+import sys
+import threading
 
 model, timeout_s, full_prompt, out_path, err_path = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 
 def run(cmd):
+    stdout_lines = []
+    stderr_lines = []
+
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        bufsize=1,
+    )
+
+    def reader(stream, sink, dest):
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            dest.write(line)
+            dest.flush()
+        stream.close()
+
+    t_out = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, sys.stdout), daemon=True)
+    t_err = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, sys.stderr), daemon=True)
+    t_out.start()
+    t_err.start()
+
     try:
-        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout_s)
-        return (p.stdout or ""), (p.stderr or "")
+        proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        return "", f"TIMEOUT after {timeout_s}s\nCMD: {cmd}\n"
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+        stderr_lines.append(f"TIMEOUT after {timeout_s}s\nCMD: {cmd}\n")
+
+    t_out.join()
+    t_err.join()
+    return "".join(stdout_lines), "".join(stderr_lines)
 
 # Attempt #1: positional prompt (preferred)
 cmd1 = [
@@ -71,13 +120,13 @@ allowed = set(schema.get("properties", {}).keys())
 required = list(schema.get("required", []))
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
 
-def jload(s):
+def jload(s: str):
     try:
         return json.loads(s)
     except Exception:
         return None
 
-def salvage_json(s):
+def salvage_json(s: str):
     i = s.find("{")
     return jload(s[i:]) if i != -1 else None
 
@@ -95,49 +144,70 @@ def strip_fences(s: str) -> str:
 def extract_stats_ids(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
 
+def choose_stats_ref(ids: list[str]) -> list[str]:
+    if not ids:
+        return ["GM-1"]
+    gm = [x for x in ids if x.startswith("GM-")]
+    return [gm[0] if gm else ids[0]]
+
 def extract_milestone_id(text: str) -> str | None:
     m = re.search(r'"milestone_id"\s*:\s*"([^"]+)"', text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
+    return m2.group(1) if m2 else None
+
+stats_ids = extract_stats_ids(prompt_text)
+milestone_id = extract_milestone_id(prompt_text) or "M0"
+
+def synthesize(reason: str, model_text: str) -> dict:
+    return {
+        "agent": "gemini",
+        "milestone_id": milestone_id,
+        "phase": "plan",
+        "work_completed": False,
+        "project_complete": False,
+        "summary": reason,
+        "gates_passed": [],
+        "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
+        "next_agent": "codex",
+        "next_prompt": "Use tools.verify output; fix remaining gates, then commit + re-run verify.",
+        "delegate_rationale": (strip_fences(model_text)[:4000] if model_text else "(empty model output)"),
+        "stats_refs": choose_stats_ref(stats_ids),
+        "needs_write_access": True,
+        "artifacts": [],
+    }
 
 wrapper = jload(raw) or salvage_json(raw)
-if not isinstance(wrapper, dict):
-    print(raw if raw else "{}")
-    raise SystemExit(0)
-
-resp = (wrapper.get("response") or "").strip()
-if not resp:
-    print("{}")
-    raise SystemExit(0)
-
-resp = strip_fences(resp)
-
-turn = jload(resp)
-if turn is None:
-    l, r = resp.find("{"), resp.rfind("}")
-    if l != -1 and r != -1 and r > l:
-        turn = jload(resp[l:r+1].strip())
+model_text = ""
+turn = None
+if isinstance(wrapper, dict):
+    resp = (wrapper.get("response") or "").strip()
+    if resp:
+        model_text = strip_fences(resp)
+        turn = jload(model_text)
+        if turn is None:
+            l, r = model_text.find("{"), model_text.rfind("}")
+            if l != -1 and r != -1 and r > l:
+                turn = jload(model_text[l : r + 1].strip())
 
 if not isinstance(turn, dict):
-    print(resp if resp else "{}")
-    raise SystemExit(0)
+    turn = synthesize("Gemini did not emit a parseable JSON turn; synthesized.", model_text or raw)
 
 # --- Normalize to schema ---
 turn = {k: v for k, v in turn.items() if k in allowed}
 
-# Enforce required fields and types expected by orchestrator validator.
 turn["agent"] = "gemini"
 
-if not isinstance(turn.get("milestone_id"), str) or not turn["milestone_id"].strip():
-    mid = extract_milestone_id(prompt_text)
-    if mid:
-        turn["milestone_id"] = mid
+mid = turn.get("milestone_id")
+if not isinstance(mid, str) or not re.fullmatch(r"M\d+", mid.strip()):
+    turn["milestone_id"] = milestone_id
 
 if turn.get("phase") not in ("plan", "implement", "verify", "finalize"):
     turn["phase"] = "plan"
 
 for b in ("work_completed", "project_complete", "needs_write_access"):
     if not isinstance(turn.get(b), bool):
-        # Default to True for needs_write_access so codex/claude can work immediately.
         turn[b] = (b == "needs_write_access")
 
 for s in ("summary", "next_prompt", "delegate_rationale"):
@@ -153,13 +223,8 @@ def str_list(x):
 turn["gates_passed"] = str_list(turn.get("gates_passed", []))
 turn["stats_refs"] = str_list(turn.get("stats_refs", []))
 
-# stats_refs must be non-empty and must match STATS ids; pick one from prompt if missing.
 if not turn["stats_refs"]:
-    ids = extract_stats_ids(prompt_text)
-    if ids:
-        # Prefer GM-* if present
-        gm = [x for x in ids if x.startswith("GM-")]
-        turn["stats_refs"] = [gm[0] if gm else ids[0]]
+    turn["stats_refs"] = choose_stats_ref(stats_ids)
 
 rp = turn.get("requirement_progress")
 if not isinstance(rp, dict):
@@ -178,12 +243,10 @@ if isinstance(arts, list):
             d = a.get("description")
             if isinstance(p, str) and isinstance(d, str):
                 clean.append({"path": p, "description": d})
-turn["artifacts"] = clean  # guarantees presence (empty list OK)
+turn["artifacts"] = clean
 
-# Output only schema keys (prevents "unexpected keys present")
 turn = {k: turn.get(k) for k in allowed if k in turn}
 
-# Ensure all required keys exist (final safety)
 for k in required:
     if k not in turn:
         if k == "artifacts":
@@ -193,7 +256,9 @@ for k in required:
         elif k == "requirement_progress":
             turn[k] = {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}
         elif k == "stats_refs":
-            turn[k] = extract_stats_ids(prompt_text)[:1] or ["GM-1"]
+            turn[k] = choose_stats_ref(stats_ids)
+        elif k == "milestone_id":
+            turn[k] = milestone_id
         elif k in ("work_completed", "project_complete", "needs_write_access"):
             turn[k] = False
         else:
@@ -203,7 +268,7 @@ print(json.dumps(turn, ensure_ascii=False, separators=(",", ":")))
 PY
 
 if [[ ! -s "$OUT_FILE" ]]; then
-  echo "{}" > "$OUT_FILE"
+  echo '{"agent":"gemini","milestone_id":"M0","phase":"plan","work_completed":false,"project_complete":false,"summary":"Gemini wrapper produced empty output; synthesized.","gates_passed":[],"requirement_progress":{"covered_req_ids":[],"tests_added_or_modified":[],"commands_run":[]},"next_agent":"codex","next_prompt":"Use tools.verify output; fix remaining gates, then commit + re-run verify.","delegate_rationale":"(empty)","stats_refs":["GM-1"],"needs_write_access":true,"artifacts":[]}' > "$OUT_FILE"
 fi
 
 cat "$OUT_FILE"

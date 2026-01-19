@@ -1,0 +1,79 @@
+{
+  "agents": {
+    "gemini": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "gemini",
+          "milestone_id": "M0",
+          "phase": "plan",
+          "work_completed": false,
+          "project_complete": false,
+          "summary": "Mock tri-agent start: hand off to Codex.",
+          "gates_passed": ["read_stats", "read_design_document"],
+          "requirement_progress": {
+            "covered_req_ids": ["REQ-M0-001"],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "codex",
+          "next_prompt": "Proceed with the next implementation step.",
+          "delegate_rationale": "Handing off to Codex for implementation.",
+          "stats_refs": ["GM-4"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ],
+    "codex": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "codex",
+          "milestone_id": "M0",
+          "phase": "implement",
+          "work_completed": true,
+          "project_complete": false,
+          "summary": "Mock implementation step completed.",
+          "gates_passed": ["pytest"],
+          "requirement_progress": {
+            "covered_req_ids": ["REQ-M0-002"],
+            "tests_added_or_modified": [],
+            "commands_run": ["python -m pytest -q"]
+          },
+          "next_agent": "claude",
+          "next_prompt": "Review the changes and confirm completion gates.",
+          "delegate_rationale": "Handing off to Claude for verification.",
+          "stats_refs": ["CX-2"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ],
+    "claude": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "claude",
+          "milestone_id": "M0",
+          "phase": "finalize",
+          "work_completed": true,
+          "project_complete": true,
+          "summary": "Mock tri-agent completion; request gates.",
+          "gates_passed": ["tools.verify"],
+          "requirement_progress": {
+            "covered_req_ids": ["REQ-M0-003"],
+            "tests_added_or_modified": [],
+            "commands_run": ["python -m tools.verify --strict-git"]
+          },
+          "next_agent": "codex",
+          "next_prompt": "(mock run complete)",
+          "delegate_rationale": "Completion gates should pass; end run.",
+          "stats_refs": ["CL-4"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ]
+  }
+}

@@ -28,12 +28,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from tools import spec_lint
 
 
 @dataclass
@@ -46,16 +49,37 @@ class GateResult:
     note: str = ""
 
 
-def _run(cmd: list[str], cwd: Path) -> GateResult:
-    proc = subprocess.run(cmd, cwd=str(cwd), text=True, capture_output=True)
-    return GateResult(
-        name="",
-        passed=(proc.returncode == 0),
-        cmd=cmd,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
-        note=f"rc={proc.returncode}",
-    )
+DEFAULT_M0_GATE_TIMEOUT_S = 90
+
+
+def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResult:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            text=True,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        return GateResult(
+            name="",
+            passed=(proc.returncode == 0),
+            cmd=cmd,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            note=f"rc={proc.returncode}",
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        return GateResult(
+            name="",
+            passed=False,
+            cmd=cmd,
+            stdout=stdout,
+            stderr=stderr,
+            note=f"timeout after {timeout_s}s",
+        )
 
 
 def _gate_spec_lint(project_root: Path) -> GateResult:
@@ -93,7 +117,42 @@ def _gate_git_guard(project_root: Path, strict: bool) -> GateResult:
     return res
 
 
-def main() -> int:
+def _detect_milestone_id(project_root: Path) -> str | None:
+    doc_path = project_root / "DESIGN_DOCUMENT.md"
+    if not doc_path.exists():
+        return None
+    text = doc_path.read_text(encoding="utf-8")
+    match = spec_lint.MILESTONE_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _gate_m0_smoke(project_root: Path, *, timeout_s: int) -> GateResult:
+    cmd = [sys.executable, "-m", "tools.m0", "smoke"]
+    res = _run(cmd, project_root, timeout_s=timeout_s)
+    res.name = "m0_smoke"
+    return res
+
+
+def _gate_m0_repro_check(project_root: Path, *, timeout_s: int) -> GateResult:
+    cmd = [sys.executable, "-m", "tools.m0", "repro-check"]
+    res = _run(cmd, project_root, timeout_s=timeout_s)
+    res.name = "m0_repro_check"
+    return res
+
+
+def _resolve_m0_timeout(args: argparse.Namespace) -> int:
+    if isinstance(getattr(args, "m0_timeout_s", None), int):
+        return int(args.m0_timeout_s)
+    env_val = os.environ.get("FF_M0_GATE_TIMEOUT_S")
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            return DEFAULT_M0_GATE_TIMEOUT_S
+    return DEFAULT_M0_GATE_TIMEOUT_S
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-root", default=".")
     ap.add_argument("--json", dest="json_path", default="")
@@ -101,12 +160,30 @@ def main() -> int:
     ap.add_argument("--skip-pytest", action="store_true")
     ap.add_argument("--skip-quality", action="store_true")
     ap.add_argument("--skip-git", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--include-m0",
+        action="store_true",
+        help="Run M0 substrate gates even when milestone is not M0.",
+    )
+    ap.add_argument(
+        "--m0-timeout-s",
+        type=int,
+        default=None,
+        help="Override M0 gate timeout in seconds (or set FF_M0_GATE_TIMEOUT_S).",
+    )
+    args = ap.parse_args(argv)
 
     project_root = Path(args.project_root).resolve()
 
     results: list[GateResult] = []
     results.append(_gate_spec_lint(project_root))
+
+    milestone_id = _detect_milestone_id(project_root)
+    run_m0_gates = milestone_id == "M0" or args.include_m0
+    if run_m0_gates:
+        m0_timeout_s = _resolve_m0_timeout(args)
+        results.append(_gate_m0_smoke(project_root, timeout_s=m0_timeout_s))
+        results.append(_gate_m0_repro_check(project_root, timeout_s=m0_timeout_s))
 
     if not args.skip_pytest:
         results.append(_gate_pytest(project_root))

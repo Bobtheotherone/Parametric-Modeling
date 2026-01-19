@@ -38,6 +38,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,22 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 AGENTS = ("codex", "gemini", "claude")
+MODEL_ENV_VARS = {
+    "codex": "CODEX_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "claude": "CLAUDE_MODEL",
+}
+DEFAULT_AGENT_MODELS = {
+    "codex": "gpt-5.2-codex",
+    "gemini": "gemini-3-pro-preview",
+    "claude": "claude-opus-4-5",
+}
+STREAM_MODES = {"off", "stdout", "stderr", "both"}
+REDACT_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9\\-]{10,}"),
+    re.compile(r"AIza[0-9A-Za-z_\\-]{20,}"),
+]
 
 
 @dataclasses.dataclass
@@ -58,6 +75,7 @@ class RunConfig:
     max_json_correction_attempts: int
     fallback_order: list[str]
     agent_scripts: dict[str, str]
+    agent_models: dict[str, str]
     quota_error_patterns: dict[str, list[str]]
     supports_write_access: dict[str, bool]
 
@@ -91,6 +109,7 @@ def load_config(config_path: Path) -> RunConfig:
     agents = data["agents"]
 
     agent_scripts: dict[str, str] = {}
+    agent_models: dict[str, str] = {}
     quota_pats: dict[str, list[str]] = {}
     supports_write: dict[str, bool] = {}
 
@@ -98,6 +117,9 @@ def load_config(config_path: Path) -> RunConfig:
         if a not in agents:
             raise ValueError(f"Missing agent in config: {a}")
         agent_scripts[a] = agents[a]["script"]
+        model = str(agents[a].get("model", "")).strip()
+        if model:
+            agent_models[a] = model
         quota_pats[a] = list(agents[a].get("quota_error_patterns", []))
         supports_write[a] = bool(agents[a].get("supports_write_access", False))
 
@@ -108,9 +130,83 @@ def load_config(config_path: Path) -> RunConfig:
         max_json_correction_attempts=int(limits.get("max_json_correction_attempts", 2)),
         fallback_order=list(data["fallback_order"]),
         agent_scripts=agent_scripts,
+        agent_models=agent_models,
         quota_error_patterns=quota_pats,
         supports_write_access=supports_write,
     )
+
+
+def _effective_model(agent: str, config: RunConfig, env: dict[str, str]) -> str:
+    cfg = config.agent_models.get(agent, "")
+    if cfg:
+        return cfg
+    env_var = MODEL_ENV_VARS.get(agent, "")
+    if env_var:
+        env_val = env.get(env_var, "").strip()
+        if env_val:
+            return env_val
+    return DEFAULT_AGENT_MODELS.get(agent, "unknown")
+
+
+def _resolve_stream_mode(
+    cli_value: str | None, env_value: str | None, run_mode: str
+) -> str:
+    default = "both" if run_mode == "live" else "off"
+    raw = cli_value if cli_value is not None else (env_value or "")
+    if not raw:
+        return default
+    val = raw.strip().lower()
+    if val in ("1", "true", "yes", "on"):
+        val = "both"
+    elif val in ("0", "false", "no", "off"):
+        val = "off"
+    if val not in STREAM_MODES:
+        print(f"[orchestrator] WARNING: invalid stream mode '{raw}', defaulting to {default}")
+        return default
+    return val
+
+
+def _stream_enabled(stream_mode: str, stream_name: str) -> bool:
+    return stream_mode in ("both", stream_name)
+
+
+def _redact_stream_text(text: str) -> str:
+    redacted = text
+    for pattern in REDACT_PATTERNS:
+        redacted = pattern.sub("***", redacted)
+    return redacted
+
+
+def _print_turn_audit(
+    *,
+    agent: str,
+    model: str,
+    turn_obj: dict[str, Any],
+    stdout_log: Path,
+    stderr_log: Path,
+) -> None:
+    print(f"[orchestrator] TURN (agent={agent} model={model})")
+
+    def show_multiline(label: str, text: str) -> None:
+        if "\n" in text:
+            print(f"{label}:")
+            print(textwrap.indent(text, "  "))
+        else:
+            print(f"{label}: {text}")
+
+    show_multiline("summary", str(turn_obj.get("summary", "")))
+    show_multiline("delegate_rationale", str(turn_obj.get("delegate_rationale", "")))
+    print(
+        "requirement_progress: "
+        + json.dumps(turn_obj.get("requirement_progress", {}), ensure_ascii=False, sort_keys=True)
+    )
+    print("gates_passed: " + json.dumps(turn_obj.get("gates_passed", []), ensure_ascii=False))
+    print(f"next_agent: {turn_obj.get('next_agent', '')}")
+    show_multiline("next_prompt", str(turn_obj.get("next_prompt", "")))
+    print("artifacts: " + json.dumps(turn_obj.get("artifacts", []), ensure_ascii=False))
+    print("saved logs:")
+    print(f"  stdout: {stdout_log}")
+    print(f"  stderr: {stderr_log}")
 
 
 def _run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
@@ -142,6 +238,16 @@ def _git_snapshot(cwd: Path) -> str:
 def _extract_stats_ids(stats_md: str) -> list[str]:
     found = set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", stats_md))
     return sorted(found)
+
+
+def _parse_smoke_route(raw: str) -> list[str]:
+    if not raw:
+        return []
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    for item in items:
+        if item not in AGENTS:
+            raise ValueError(f"Invalid smoke-route agent: {item}")
+    return items
 
 
 def _truncate(s: str, limit: int) -> str:
@@ -507,6 +613,10 @@ def _run_agent_live(
     prompt_path: Path,
     schema_path: Path,
     out_path: Path,
+    agent_model: str,
+    stream_mode: str,
+    stdout_log: Path,
+    stderr_log: Path,
     config: RunConfig,
     state: RunState,
 ) -> tuple[int, str, str]:
@@ -514,12 +624,78 @@ def _run_agent_live(
     script = (state.project_root / script_rel).resolve()
 
     env = os.environ.copy()
+    model_env = MODEL_ENV_VARS.get(agent)
+    if model_env:
+        env[model_env] = agent_model
     force_write = agent in ("gemini", "claude", "codex")
     wants_write = state.grant_write_access or force_write
     env["WRITE_ACCESS"] = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
 
     cmd = [str(script), str(prompt_path), str(schema_path), str(out_path)]
-    return _run_cmd(cmd, cwd=state.project_root, env=env)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(state.project_root),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    def _reader(
+        stream: Any,
+        sink: list[str],
+        log_path: Path,
+        prefix: str,
+        allow_stream: bool,
+        dest: Any,
+    ) -> None:
+        with log_path.open("w", encoding="utf-8") as handle:
+            for line in iter(stream.readline, ""):
+                sink.append(line)
+                handle.write(line)
+                if allow_stream:
+                    dest.write(prefix + _redact_stream_text(line))
+                    dest.flush()
+            stream.close()
+
+    t_out = threading.Thread(
+        target=_reader,
+        args=(
+            proc.stdout,
+            stdout_lines,
+            stdout_log,
+            f"[{agent}][stdout] ",
+            _stream_enabled(stream_mode, "stdout"),
+            sys.stdout,
+        ),
+        daemon=True,
+    )
+    t_err = threading.Thread(
+        target=_reader,
+        args=(
+            proc.stderr,
+            stderr_lines,
+            stderr_log,
+            f"[{agent}][stderr] ",
+            _stream_enabled(stream_mode, "stderr"),
+            sys.stderr,
+        ),
+        daemon=True,
+    )
+    t_out.start()
+    t_err.start()
+
+    rc = proc.wait()
+    t_out.join()
+    t_err.join()
+    return rc, "".join(stdout_lines), "".join(stderr_lines)
 
 
 def _run_agent_mock(
@@ -560,6 +736,17 @@ def main() -> int:
     ap.add_argument("--mock-scenario", default="bridge/mock_scenarios/milestone_demo.json")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-agent-branch", action="store_true")
+    ap.add_argument(
+        "--stream-agent-output",
+        choices=["off", "stdout", "stderr", "both"],
+        default=None,
+        help="Stream agent wrapper stdout/stderr to the terminal (live mode default: both).",
+    )
+    ap.add_argument(
+        "--smoke-route",
+        default="",
+        help="Force a fixed agent sequence for smoke tests (comma-separated).",
+    )
 
     args = ap.parse_args()
 
@@ -573,6 +760,8 @@ def main() -> int:
     run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     runs_dir = project_root / "runs" / run_id
     _ensure_dir(runs_dir)
+    calls_dir = runs_dir / "calls"
+    _ensure_dir(calls_dir)
 
     _git_init_if_needed(project_root)
     if not args.no_agent_branch:
@@ -592,6 +781,9 @@ def main() -> int:
     stats_id_set = set(stats_ids)
 
     system_prompt = system_prompt_path.read_text(encoding="utf-8")
+    stream_mode = _resolve_stream_mode(
+        args.stream_agent_output, os.environ.get("FF_STREAM_AGENT_OUTPUT"), args.mode
+    )
 
     # Mock scenario support.
     scenario: dict[str, Any] = {}
@@ -612,7 +804,14 @@ def main() -> int:
         """
     ).strip()
 
-    agent = args.start_agent
+    try:
+        smoke_route = _parse_smoke_route(args.smoke_route)
+    except ValueError as exc:
+        print(f"[orchestrator] ERROR: {exc}")
+        return 2
+
+    smoke_index = 0
+    agent = smoke_route[0] if smoke_route else args.start_agent
 
     print(f"[orchestrator] run_id={state.run_id} mode={args.mode} project_root={project_root}")
     print(
@@ -634,7 +833,7 @@ def main() -> int:
         state.total_calls += 1
         state.call_counts[agent] += 1
 
-        call_dir = runs_dir / f"call_{call_no:04d}"
+        call_dir = calls_dir / f"call_{call_no:04d}"
         _ensure_dir(call_dir)
 
         design_doc_text = _read_text(design_doc_path) if design_doc_path.exists() else ""
@@ -642,8 +841,11 @@ def main() -> int:
 
         # Run verify (non-strict by default) and embed the report into the prompt.
         verify_json = call_dir / "verify.json"
-        _run_verify(project_root, verify_json, strict_git=False)
-        verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
+        if os.environ.get("FF_SKIP_VERIFY") == "1":
+            verify_report_text = "{}"
+        else:
+            _run_verify(project_root, verify_json, strict_git=False)
+            verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
 
         repo_info = _git_snapshot(project_root)
 
@@ -664,13 +866,18 @@ def main() -> int:
         prompt_path = call_dir / "prompt.txt"
         raw_path = call_dir / "raw.txt"
         out_path = call_dir / "out.json"
+        stdout_log = call_dir / "agent_stdout.log"
+        stderr_log = call_dir / "agent_stderr.log"
         _write_text(prompt_path, prompt_text)
 
+        agent_model = _effective_model(agent, config, os.environ.copy())
         print("=" * 88)
+        wants_write = state.grant_write_access or agent in AGENTS
+        write_access = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
         print(
-            f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
+            f"CALL {call_no:04d} | agent={agent} | model={agent_model} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
-            f"write_access={'1' if (state.grant_write_access or agent == 'gemini') else '0'}"
+            f"write_access={write_access}"
         )
 
         if args.mode == "mock":
@@ -681,11 +888,20 @@ def main() -> int:
                 prompt_path=prompt_path,
                 schema_path=schema_path,
                 out_path=out_path,
+                agent_model=agent_model,
+                stream_mode=stream_mode,
+                stdout_log=stdout_log,
+                stderr_log=stderr_log,
                 config=config,
                 state=state,
             )
 
         _write_text(raw_path, (out or "") + ("\n" if out and err else "") + (err or ""))
+        parse_text = out
+        if out_path.exists():
+            file_text = out_path.read_text(encoding="utf-8").strip()
+            if file_text:
+                parse_text = file_text
 
         if args.verbose and err.strip():
             print("[orchestrator] stderr:\n" + err.strip())
@@ -732,7 +948,7 @@ def main() -> int:
 
         while not parse_ok and correction_attempts <= config.max_json_correction_attempts:
             try:
-                turn_obj = _try_parse_json(out)
+                turn_obj = _try_parse_json(parse_text)
                 ok, msg = _validate_turn(
                     turn_obj, expected_agent=agent, stats_id_set=stats_id_set, milestone_id=milestone_id
                 )
@@ -775,13 +991,33 @@ def main() -> int:
         _write_text(turn_path, json.dumps(turn_obj, indent=2, sort_keys=True))
         state.history.append(turn_obj)
 
-        print(f"[orchestrator] summary: {turn_obj['summary']}")
+        if args.mode == "live":
+            _print_turn_audit(
+                agent=agent,
+                model=agent_model,
+                turn_obj=turn_obj,
+                stdout_log=stdout_log,
+                stderr_log=stderr_log,
+            )
+        else:
+            print(f"[orchestrator] summary: {turn_obj['summary']}")
 
         # Update write-access grant for next call.
         state.grant_write_access = bool(turn_obj.get("needs_write_access", False))
 
         # Completion gates: only stop if they actually pass.
         if bool(turn_obj["project_complete"]):
+            if smoke_route and smoke_index + 1 < len(smoke_route):
+                print("[orchestrator] PROJECT_COMPLETE ignored due to smoke_route")
+                requested = str(turn_obj["next_agent"])
+                effective, override_reason = _override_next_agent(requested, config, state)
+                smoke_index += 1
+                forced = smoke_route[smoke_index]
+                print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
+                next_prompt = str(turn_obj["next_prompt"]).strip()
+                agent = forced
+                continue
+
             ok, msg = _completion_gates_ok(project_root)
             if ok:
                 print("[orchestrator] PROJECT COMPLETE (gates passed)")
@@ -817,7 +1053,16 @@ def main() -> int:
         # Decide next agent.
         requested = str(turn_obj["next_agent"])
         effective, override_reason = _override_next_agent(requested, config, state)
-        if override_reason:
+        if smoke_route and smoke_index + 1 < len(smoke_route):
+            smoke_index += 1
+            forced = smoke_route[smoke_index]
+            print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
+            effective = forced
+            override_reason = "smoke_route"
+
+        if override_reason == "smoke_route":
+            print(f"[orchestrator] next_agent={effective} (smoke_route)")
+        elif override_reason:
             print(f"[orchestrator] OVERRIDE next_agent: {requested} -> {effective} ({override_reason})")
         else:
             print(f"[orchestrator] next_agent={effective} (as requested)")

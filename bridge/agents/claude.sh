@@ -5,10 +5,28 @@ PROMPT_FILE="${1:?prompt_file}"
 SCHEMA_FILE="${2:?schema_file}"
 OUT_FILE="${3:?out_file}"
 
-MODEL="${CLAUDE_MODEL:-claude-3-7-sonnet-latest}"
-TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
+MODEL="${CLAUDE_MODEL:-claude-opus-4-5}"
+FF_SMOKE="${FF_SMOKE:-0}"
+DEFAULT_TIMEOUT_S=86400
+SMOKE_TIMEOUT_S=180
+if [[ "$FF_SMOKE" == "1" ]]; then
+  TIMEOUT_S="${CLAUDE_TIMEOUT_S:-$SMOKE_TIMEOUT_S}"
+else
+  TIMEOUT_S="${CLAUDE_TIMEOUT_S:-$DEFAULT_TIMEOUT_S}"
+fi
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CLAUDE_ARGS_JSON_MODE="${CLAUDE_ARGS_JSON_MODE:-}"
+CLAUDE_TOOLS="${CLAUDE_TOOLS:-}"
+CLAUDE_HELP_TIMEOUT_S="${CLAUDE_HELP_TIMEOUT_S:-5}"
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
+WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
 prompt="$(cat "$PROMPT_FILE")"
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "claude" > "$SMOKE_DIR/claude.txt"
+fi
 
 # Headless/orchestrator safety: tools are disabled in this wrapper invocation.
 # Prevent Claude Code from emitting tool-markup (<task>, <read>, <edit>, <bash>).
@@ -25,77 +43,206 @@ SCHEMA_JSON="$(
     "$SCHEMA_FILE"
 )"
 
-ERR_FILE="${OUT_FILE}.stderr"
+ERR_SCHEMA="${OUT_FILE}.stderr.schema"
+ERR_PLAIN="${OUT_FILE}.stderr.plain"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
 
-run_claude() {
-  # args: <use_schema:0|1> <wrap_path>
-  local use_schema="$1"
-  local wrap_path="$2"
+HELP_TEXT="$(python3 - <<'PY' "$CLAUDE_BIN" "$CLAUDE_HELP_TIMEOUT_S"
+import os
+import signal
+import subprocess
+import sys
 
-  if command -v timeout >/dev/null 2>&1; then
-    if [[ "$use_schema" == "1" ]]; then
-      timeout "${TIMEOUT_S}s" claude \
-        -p "$prompt" \
-        --output-format json \
-        --json-schema "$SCHEMA_JSON" \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    else
-      timeout "${TIMEOUT_S}s" claude \
-        -p "$prompt" \
-        --output-format json \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    fi
-  else
-    if [[ "$use_schema" == "1" ]]; then
-      claude \
-        -p "$prompt" \
-        --output-format json \
-        --json-schema "$SCHEMA_JSON" \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    else
-      claude \
-        -p "$prompt" \
-        --output-format json \
-        --model "$MODEL" \
-        --no-session-persistence \
-        --permission-mode dontAsk \
-        --tools "" \
-        >"$wrap_path" 2>>"$ERR_FILE" || true
-    fi
-  fi
+bin_path = sys.argv[1]
+timeout_s = int(sys.argv[2])
+out = ""
+try:
+    proc = subprocess.Popen(
+        [bin_path, "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    stdout, stderr = proc.communicate(timeout=timeout_s)
+    out = stdout or stderr or ""
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    out = ""
+except Exception:
+    out = ""
+print(out)
+PY
+)"
+
+supports_flag() {
+  local flag="$1"
+  [[ "$HELP_TEXT" == *"$flag"* ]]
 }
 
-: > "$ERR_FILE"
+PROMPT_FLAG="-p"
+if supports_flag "--prompt"; then
+  PROMPT_FLAG="--prompt"
+fi
+
+COMMON_ARGS=("$PROMPT_FLAG" "$prompt")
+if [[ -n "$MODEL" ]] && supports_flag "--model"; then
+  COMMON_ARGS+=(--model "$MODEL")
+fi
+if supports_flag "--no-session-persistence"; then
+  COMMON_ARGS+=(--no-session-persistence)
+fi
+if supports_flag "--permission-mode"; then
+  COMMON_ARGS+=(--permission-mode dontAsk)
+fi
+if [[ -n "$CLAUDE_TOOLS" ]] && supports_flag "--tools"; then
+  COMMON_ARGS+=(--tools "$CLAUDE_TOOLS")
+fi
+
+JSON_ARGS=()
+if [[ -n "$CLAUDE_ARGS_JSON_MODE" ]]; then
+  read -r -a JSON_ARGS <<< "$CLAUDE_ARGS_JSON_MODE"
+else
+  if supports_flag "--output-format"; then
+    JSON_ARGS+=(--output-format json)
+  fi
+  if supports_flag "--json-schema"; then
+    JSON_ARGS+=(--json-schema "$SCHEMA_JSON")
+  elif supports_flag "--json"; then
+    JSON_ARGS+=(--json)
+  fi
+fi
+
+PLAIN_ARGS=()
+if supports_flag "--output-format"; then
+  PLAIN_ARGS+=(--output-format json)
+elif supports_flag "--json"; then
+  PLAIN_ARGS+=(--json)
+fi
+
+run_claude() {
+  # args: <mode:json|plain> <wrap_path> <err_path>
+  local mode="$1"
+  local wrap_path="$2"
+  local err_path="$3"
+  local -a mode_args=()
+
+  if [[ "$mode" == "json" ]]; then
+    mode_args=("${JSON_ARGS[@]}")
+  else
+    mode_args=("${PLAIN_ARGS[@]}")
+  fi
+
+  local -a cmd=("$CLAUDE_BIN" "${COMMON_ARGS[@]}" "${mode_args[@]}")
+  local rc=0
+
+  python3 - <<'PY' "$TIMEOUT_S" "$wrap_path" "$err_path" "${wrap_path}.meta.json" "${cmd[@]}"
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+
+timeout_s = int(sys.argv[1])
+wrap_path = sys.argv[2]
+err_path = sys.argv[3]
+meta_path = sys.argv[4]
+cmd = sys.argv[5:]
+
+out = ""
+err = ""
+rc = 0
+
+stdout_lines = []
+stderr_lines = []
+
+proc = subprocess.Popen(
+    cmd,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    start_new_session=True,
+    bufsize=1,
+)
+
+def reader(stream, sink, dest):
+    for line in iter(stream.readline, ""):
+        sink.append(line)
+        dest.write(line)
+        dest.flush()
+    stream.close()
+
+t_out = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, sys.stdout), daemon=True)
+t_err = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, sys.stderr), daemon=True)
+t_out.start()
+t_err.start()
+
+try:
+    proc.wait(timeout=timeout_s)
+    rc = proc.returncode
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    rc = 124
+    stderr_lines.append(f"\\nTIMEOUT after {timeout_s}s\\n")
+
+t_out.join()
+t_err.join()
+out = "".join(stdout_lines)
+err = "".join(stderr_lines)
+
+with open(wrap_path, "w", encoding="utf-8") as handle:
+    handle.write(out)
+
+with open(err_path, "a", encoding="utf-8") as handle:
+    handle.write(err)
+
+with open(meta_path, "w", encoding="utf-8") as handle:
+    json.dump({"cmd": cmd, "rc": rc}, handle)
+PY
+}
+
+: > "$ERR_SCHEMA"
+: > "$ERR_PLAIN"
 : > "$WRAP_SCHEMA"
 : > "$WRAP_PLAIN"
 
 # Try schema-enforced first (best chance of correct structured output).
-run_claude "1" "$WRAP_SCHEMA"
+run_claude "json" "$WRAP_SCHEMA" "$ERR_SCHEMA"
 
 # If that produced an error wrapper or no usable result, we’ll fall back to plain.
 # Normalization logic below will choose the better wrapper automatically.
-run_claude "0" "$WRAP_PLAIN"
+run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
 
-python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" > "$OUT_FILE" || true
-import json, re, sys
+python3 - <<'PY' "$WRAP_SCHEMA" "$WRAP_PLAIN" "$SCHEMA_FILE" "$PROMPT_FILE" "$ERR_SCHEMA" "$ERR_PLAIN" > "$OUT_FILE" || true
+import json, os, re, sys
 
-wrap_schema, wrap_plain, schema_path, prompt_path = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+wrap_schema, wrap_plain, schema_path, prompt_path, err_schema, err_plain = (
+    sys.argv[1],
+    sys.argv[2],
+    sys.argv[3],
+    sys.argv[4],
+    sys.argv[5],
+    sys.argv[6],
+)
 schema = json.loads(open(schema_path, "r", encoding="utf-8").read())
 prompt_text = open(prompt_path, "r", encoding="utf-8").read()
+api_vars = [name for name in ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY") if os.environ.get(name)]
+auth_mode = "api_key" if api_vars else "subscription"
+auth_warning = ""
+if api_vars:
+    auth_warning = (
+        "WARNING: "
+        + ", ".join(api_vars)
+        + " set; Claude Code will use API billing instead of Pro/Max subscription."
+    )
 
 REQUIRED_KEYS = [
     "agent",
@@ -126,6 +273,16 @@ def read_json(path: str):
     except Exception:
         return None
     return jload(raw) if raw else None
+
+def read_text(path: str) -> str:
+    try:
+        return open(path, "r", encoding="utf-8").read()
+    except Exception:
+        return ""
+
+def read_meta(path: str):
+    meta_path = path + ".meta.json"
+    return read_json(meta_path) or {}
 
 def strip_fences(s: str) -> str:
     s = s.strip()
@@ -183,6 +340,31 @@ def extract_milestone_id(text: str) -> str:
     m2 = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
     return m2.group(1) if m2 else "M0"
 
+def redact_args(cmd: list[str]) -> list[str]:
+    redacted = []
+    patterns = [
+        re.compile(r"sk-[A-Za-z0-9]{20,}"),
+        re.compile(r"sk-ant-[A-Za-z0-9\\-]{10,}"),
+        re.compile(r"AIza[0-9A-Za-z_\\-]{20,}"),
+    ]
+    for arg in cmd:
+        clean = arg
+        for pat in patterns:
+            if pat.search(clean):
+                clean = pat.sub("***", clean)
+        redacted.append(clean)
+    return redacted
+
+def diagnostic_block(label: str, meta: dict, stderr_text: str) -> str:
+    cmd = meta.get("cmd", [])
+    if isinstance(cmd, list):
+        cmd_text = " ".join(redact_args([str(c) for c in cmd]))
+    else:
+        cmd_text = "(unknown)"
+    rc = meta.get("rc", "unknown")
+    stderr_snip = (stderr_text or "")[:4096]
+    return f"{label}: cmd={cmd_text}\\nrc={rc}\\nstderr={stderr_snip}"
+
 def to_bool(x, default=False):
     return x if isinstance(x, bool) else default
 
@@ -214,6 +396,16 @@ def normalize_artifacts(x):
         if isinstance(p, str) and p.strip() and isinstance(d, str) and d.strip():
             out.append({"path": p.strip(), "description": d.strip()})
     return out
+
+def append_wrapper_meta(summary: str, status: str) -> str:
+    parts = []
+    base = summary.strip()
+    if base:
+        parts.append(base)
+    if auth_warning:
+        parts.append(auth_warning)
+    parts.append(f"wrapper_status={status} auth_mode={auth_mode}")
+    return "\\n".join(parts)
 
 def wrapper_to_model_text(wrapper: dict) -> tuple[bool, str]:
     # Claude Code wrapper format commonly: {"type":"result", "is_error":..., "result":"..."}
@@ -269,13 +461,22 @@ stats_ids = extract_stats_ids(prompt_text)
 milestone_id = extract_milestone_id(prompt_text)
 
 def synthesize(reason: str, model_text: str) -> dict:
+    meta_schema = read_meta(wrap_schema)
+    meta_plain = read_meta(wrap_plain)
+    diag = "\\n\\n".join(
+        [
+            diagnostic_block("schema_attempt", meta_schema, read_text(err_schema)),
+            diagnostic_block("plain_attempt", meta_plain, read_text(err_plain)),
+        ]
+    )
+    summary = append_wrapper_meta(f"{reason} Diagnostics:\\n{diag}", "error")
     return {
         "agent": "claude",
         "milestone_id": milestone_id,
         "phase": "plan",
         "work_completed": False,
         "project_complete": False,
-        "summary": reason,
+        "summary": summary,
         "gates_passed": [],
         "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
         "next_agent": "codex",
@@ -303,7 +504,7 @@ out["phase"] = phase if phase in ("plan", "implement", "verify", "finalize") els
 out["work_completed"] = to_bool(t.get("work_completed"), False)
 out["project_complete"] = to_bool(t.get("project_complete"), False)
 
-out["summary"] = to_str(t.get("summary"), "")
+out["summary"] = append_wrapper_meta(to_str(t.get("summary"), ""), "ok")
 out["gates_passed"] = to_str_list(t.get("gates_passed", []))
 out["requirement_progress"] = normalize_requirement_progress(t.get("requirement_progress"))
 
@@ -331,7 +532,41 @@ PY
 
 # If normalization failed for some unexpected reason, emit a minimal valid JSON turn.
 if [[ ! -s "$OUT_FILE" ]]; then
-  echo '{"agent":"claude","milestone_id":"M0","phase":"plan","work_completed":false,"project_complete":false,"summary":"Claude wrapper produced empty output; synthesized.","gates_passed":[],"requirement_progress":{"covered_req_ids":[],"tests_added_or_modified":[],"commands_run":[]},"next_agent":"codex","next_prompt":"Continue using tools.verify output; fix remaining gates and commit.","delegate_rationale":"(empty)","stats_refs":["CL-1"],"needs_write_access":true,"artifacts":[]}' > "$OUT_FILE"
+  python3 - <<'PY' "$OUT_FILE"
+import json
+import os
+import sys
+
+auth_mode = "api_key" if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") else "subscription"
+warning = ""
+if auth_mode == "api_key":
+    warning = "WARNING: ANTHROPIC_API_KEY/CLAUDE_API_KEY set; Claude Code will use API billing instead of Pro/Max subscription."
+
+summary = "Claude wrapper produced empty output; synthesized."
+if warning:
+    summary = summary + "\\n" + warning
+summary = summary + f"\\nwrapper_status=error auth_mode={auth_mode}"
+
+payload = {
+    "agent": "claude",
+    "milestone_id": "M0",
+    "phase": "plan",
+    "work_completed": False,
+    "project_complete": False,
+    "summary": summary,
+    "gates_passed": [],
+    "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
+    "next_agent": "codex",
+    "next_prompt": "Continue using tools.verify output; fix remaining gates and commit.",
+    "delegate_rationale": "(empty)",
+    "stats_refs": ["CL-1"],
+    "needs_write_access": True,
+    "artifacts": [],
+}
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+PY
 fi
 
 cat "$OUT_FILE"

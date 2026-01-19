@@ -8,6 +8,8 @@ OUT_FILE="${3:?out_file}"
 MODEL="${CODEX_MODEL:-gpt-5.2-codex}"
 REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
+FF_SMOKE="${FF_SMOKE:-0}"
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 
 # Different Codex CLI versions use either `-c key=value` or a dedicated flag.
 # Official docs call out `-c` for per-invocation overrides.
@@ -21,8 +23,20 @@ CODEX_SANDBOX="${CODEX_SANDBOX:-}"
 CODEX_ASK_FOR_APPROVAL="${CODEX_ASK_FOR_APPROVAL:-}"
 CODEX_EXTRA_GLOBAL_FLAGS="${CODEX_EXTRA_GLOBAL_FLAGS:-}"
 CODEX_EXTRA_EXEC_FLAGS="${CODEX_EXTRA_EXEC_FLAGS:-}"
+DEFAULT_TIMEOUT_S=86400
+SMOKE_TIMEOUT_S=180
+if [[ "$FF_SMOKE" == "1" ]]; then
+  CODEX_TIMEOUT_S="${CODEX_TIMEOUT_S:-$SMOKE_TIMEOUT_S}"
+else
+  CODEX_TIMEOUT_S="${CODEX_TIMEOUT_S:-$DEFAULT_TIMEOUT_S}"
+fi
 
 cmd=(codex)
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "codex" > "$SMOKE_DIR/codex.txt"
+fi
 
 # These global flags are supported by many Codex CLI versions.
 if [[ -n "$MODEL" ]]; then
@@ -56,6 +70,36 @@ fi
 
 cmd+=(--output-schema "$SCHEMA_FILE" -o "$OUT_FILE" -)
 
-"${cmd[@]}" < "$PROMPT_FILE" 1>/dev/null
+python3 - <<'PY' "$CODEX_TIMEOUT_S" "$PROMPT_FILE" "${cmd[@]}"
+import os
+import signal
+import subprocess
+import sys
+
+timeout_s = int(sys.argv[1])
+prompt_path = sys.argv[2]
+cmd = sys.argv[3:]
+
+prompt = open(prompt_path, "r", encoding="utf-8").read()
+
+try:
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        start_new_session=True,
+    )
+    proc.communicate(input=prompt, timeout=timeout_s)
+    raise SystemExit(proc.returncode)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    sys.stderr.write(f"CODEX_TIMEOUT after {timeout_s}s\\n")
+    raise SystemExit(124)
+PY
 
 cat "$OUT_FILE"
