@@ -26,6 +26,20 @@ cd "$WORKTREE"
 SMOKE_DIR="$WORKTREE/agent_smoke"
 mkdir -p "$SMOKE_DIR"
 LOG_FILE="$SMOKE_DIR/loop.log"
+CONFIG_PATH="$SMOKE_DIR/smoke_config.json"
+
+python3 - <<'PY' "$WORKTREE/bridge/config.json" "$CONFIG_PATH"
+import json
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+config = json.loads(open(src, "r", encoding="utf-8").read())
+config["limits"]["max_total_calls"] = 3
+config["limits"]["max_calls_per_agent"] = 1
+config["limits"]["quota_retry_attempts"] = 1
+with open(dst, "w", encoding="utf-8") as handle:
+    json.dump(config, handle)
+PY
 
 set +e
 LOOP_TIMEOUT_S=180
@@ -40,14 +54,16 @@ export CODEX_ASK_FOR_APPROVAL=never
 if command -v timeout >/dev/null 2>&1; then
   timeout "${LOOP_TIMEOUT_S}s" python3 -u bridge/loop.py \
     --mode live \
-    --smoke-route gemini,codex,claude \
-    --start-agent gemini \
+    --config "$CONFIG_PATH" \
+    --smoke-route claude,codex,gemini \
+    --start-agent claude \
     --no-agent-branch | tee "$LOG_FILE"
 else
   python3 -u bridge/loop.py \
     --mode live \
-    --smoke-route gemini,codex,claude \
-    --start-agent gemini \
+    --config "$CONFIG_PATH" \
+    --smoke-route claude,codex,gemini \
+    --start-agent claude \
     --no-agent-branch | tee "$LOG_FILE"
 fi
 rc=${PIPESTATUS[0]}
@@ -92,5 +108,32 @@ if ! awk '/CALL / && $0 !~ /write_access=1/ {exit 1}' "$LOG_FILE"; then
   echo "One or more calls ran without write_access=1." >&2
   exit 1
 fi
+
+python3 - <<'PY' "$WORKTREE" "$LOG_FILE"
+import json
+import re
+import sys
+from pathlib import Path
+
+worktree = Path(sys.argv[1])
+log_path = Path(sys.argv[2])
+text = log_path.read_text(encoding="utf-8")
+m = re.search(r"run_id=([0-9A-Za-zTZ]+)", text)
+if not m:
+    raise SystemExit("Failed to determine run_id from log.")
+run_id = m.group(1)
+calls_dir = worktree / "runs" / run_id / "calls"
+claude_turn = None
+for turn_path in sorted(calls_dir.glob("*/turn.json")):
+    data = json.loads(turn_path.read_text(encoding="utf-8"))
+    if data.get("agent") == "claude":
+        claude_turn = data
+        break
+if claude_turn is None:
+    raise SystemExit("Claude turn not found in calls.")
+summary = str(claude_turn.get("summary", "")).lower()
+if "creds_missing=true" in summary or "synthesized" in summary or "did not emit" in summary:
+    raise SystemExit("Claude did not complete successfully.")
+PY
 
 echo "Live tri-agent smoke succeeded. Markers at $SMOKE_DIR"
