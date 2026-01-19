@@ -8,6 +8,7 @@ OUT_FILE="${3:?out_file}"
 MODEL="${CODEX_MODEL:-gpt-5.2-codex}"
 REASONING_EFFORT="${CODEX_REASONING_EFFORT:-xhigh}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 
 # Different Codex CLI versions use either `-c key=value` or a dedicated flag.
 # Official docs call out `-c` for per-invocation overrides.
@@ -23,6 +24,11 @@ CODEX_EXTRA_GLOBAL_FLAGS="${CODEX_EXTRA_GLOBAL_FLAGS:-}"
 CODEX_EXTRA_EXEC_FLAGS="${CODEX_EXTRA_EXEC_FLAGS:-}"
 
 cmd=(codex)
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "codex" > "$SMOKE_DIR/codex.txt"
+fi
 
 # These global flags are supported by many Codex CLI versions.
 if [[ -n "$MODEL" ]]; then

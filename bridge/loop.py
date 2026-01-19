@@ -144,6 +144,16 @@ def _extract_stats_ids(stats_md: str) -> list[str]:
     return sorted(found)
 
 
+def _parse_smoke_route(raw: str) -> list[str]:
+    if not raw:
+        return []
+    items = [item.strip() for item in raw.split(",") if item.strip()]
+    for item in items:
+        if item not in AGENTS:
+            raise ValueError(f"Invalid smoke-route agent: {item}")
+    return items
+
+
 def _truncate(s: str, limit: int) -> str:
     if len(s) <= limit:
         return s
@@ -560,6 +570,11 @@ def main() -> int:
     ap.add_argument("--mock-scenario", default="bridge/mock_scenarios/milestone_demo.json")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-agent-branch", action="store_true")
+    ap.add_argument(
+        "--smoke-route",
+        default="",
+        help="Force a fixed agent sequence for smoke tests (comma-separated).",
+    )
 
     args = ap.parse_args()
 
@@ -612,7 +627,14 @@ def main() -> int:
         """
     ).strip()
 
-    agent = args.start_agent
+    try:
+        smoke_route = _parse_smoke_route(args.smoke_route)
+    except ValueError as exc:
+        print(f"[orchestrator] ERROR: {exc}")
+        return 2
+
+    smoke_index = 0
+    agent = smoke_route[0] if smoke_route else args.start_agent
 
     print(f"[orchestrator] run_id={state.run_id} mode={args.mode} project_root={project_root}")
     print(
@@ -642,8 +664,11 @@ def main() -> int:
 
         # Run verify (non-strict by default) and embed the report into the prompt.
         verify_json = call_dir / "verify.json"
-        _run_verify(project_root, verify_json, strict_git=False)
-        verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
+        if os.environ.get("FF_SKIP_VERIFY") == "1":
+            verify_report_text = "{}"
+        else:
+            _run_verify(project_root, verify_json, strict_git=False)
+            verify_report_text = verify_json.read_text(encoding="utf-8") if verify_json.exists() else "{}"
 
         repo_info = _git_snapshot(project_root)
 
@@ -667,10 +692,12 @@ def main() -> int:
         _write_text(prompt_path, prompt_text)
 
         print("=" * 88)
+        wants_write = state.grant_write_access or agent in AGENTS
+        write_access = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
         print(
             f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
-            f"write_access={'1' if (state.grant_write_access or agent == 'gemini') else '0'}"
+            f"write_access={write_access}"
         )
 
         if args.mode == "mock":
@@ -782,6 +809,17 @@ def main() -> int:
 
         # Completion gates: only stop if they actually pass.
         if bool(turn_obj["project_complete"]):
+            if smoke_route and smoke_index + 1 < len(smoke_route):
+                print("[orchestrator] PROJECT_COMPLETE ignored due to smoke_route")
+                requested = str(turn_obj["next_agent"])
+                effective, override_reason = _override_next_agent(requested, config, state)
+                smoke_index += 1
+                forced = smoke_route[smoke_index]
+                print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
+                next_prompt = str(turn_obj["next_prompt"]).strip()
+                agent = forced
+                continue
+
             ok, msg = _completion_gates_ok(project_root)
             if ok:
                 print("[orchestrator] PROJECT COMPLETE (gates passed)")
@@ -817,7 +855,16 @@ def main() -> int:
         # Decide next agent.
         requested = str(turn_obj["next_agent"])
         effective, override_reason = _override_next_agent(requested, config, state)
-        if override_reason:
+        if smoke_route and smoke_index + 1 < len(smoke_route):
+            smoke_index += 1
+            forced = smoke_route[smoke_index]
+            print(f"[orchestrator] SMOKE_ROUTE next_agent={forced} (override {effective})")
+            effective = forced
+            override_reason = "smoke_route"
+
+        if override_reason == "smoke_route":
+            print(f"[orchestrator] next_agent={effective} (smoke_route)")
+        elif override_reason:
             print(f"[orchestrator] OVERRIDE next_agent: {requested} -> {effective} ({override_reason})")
         else:
             print(f"[orchestrator] next_agent={effective} (as requested)")

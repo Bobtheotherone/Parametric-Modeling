@@ -8,8 +8,15 @@ OUT_FILE="${3:?out_file}"
 # Gemini 3 Pro (preview). If your CLI doesn't have it enabled, set GEMINI_MODEL=gemini-2.5-pro.
 MODEL="${GEMINI_MODEL:-gemini-3-pro-preview}"
 TIMEOUT_S="${GEMINI_TIMEOUT_S:-120}"
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
+WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
 prompt="$(cat "$PROMPT_FILE")"
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "gemini" > "$SMOKE_DIR/gemini.txt"
+fi
 
 # Keep Gemini laser-focused on the orchestrator schema.
 PREAMBLE=$'SYSTEM CONSTRAINTS (NON-NEGOTIABLE)\n- Output EXACTLY ONE JSON object matching the provided schema.\n- Do NOT wrap output in markdown/code fences (no ``` blocks).\n- No extra text before/after the JSON.\n'

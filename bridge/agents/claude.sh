@@ -10,8 +10,15 @@ TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_ARGS_JSON_MODE="${CLAUDE_ARGS_JSON_MODE:-}"
 CLAUDE_TOOLS="${CLAUDE_TOOLS:-}"
+SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
+WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
 prompt="$(cat "$PROMPT_FILE")"
+
+if [[ -n "$SMOKE_DIR" && "$WRITE_ACCESS" == "1" ]]; then
+  mkdir -p "$SMOKE_DIR"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "claude" > "$SMOKE_DIR/claude.txt"
+fi
 
 # Headless/orchestrator safety: tools are disabled in this wrapper invocation.
 # Prevent Claude Code from emitting tool-markup (<task>, <read>, <edit>, <bash>).
