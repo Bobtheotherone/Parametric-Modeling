@@ -159,9 +159,10 @@ def _cupy_cuda_available(cupy_module: Any | None) -> bool:
 
 
 def _get_cupy_from_dlpack(cupy_module: Any) -> Any | None:
-    from_dlpack = getattr(cupy_module, "fromDlpack", None)
+    # Prefer the modern from_dlpack API; fall back to deprecated fromDlpack.
+    from_dlpack = getattr(cupy_module, "from_dlpack", None)
     if from_dlpack is None:
-        from_dlpack = getattr(cupy_module, "from_dlpack", None)
+        from_dlpack = getattr(cupy_module, "fromDlpack", None)
     return from_dlpack
 
 

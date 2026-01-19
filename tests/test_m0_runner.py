@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import concurrent.futures
 import threading
 import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -80,3 +82,43 @@ def test_runner_overlaps_non_overlapping_tasks() -> None:
 
     assert elapsed < 0.35
     assert results == {"cpu": "cpu", "gpu": "gpu"}
+
+
+def test_runner_thread_pool_cap() -> None:
+    """Verify that ThreadPoolExecutor max_workers is capped.
+
+    For a large task list (e.g., 200 tasks), the runner must NOT attempt to create
+    more threads than max(4, cpu_cores). This prevents thread explosion when
+    scheduling thousands of tasks.
+    """
+    captured_max_workers: list[int] = []
+    original_executor = concurrent.futures.ThreadPoolExecutor
+
+    class CapturingExecutor(original_executor):  # type: ignore[valid-type,misc]
+        def __init__(self, *args: object, max_workers: int | None = None, **kwargs: object) -> None:
+            if max_workers is not None:
+                captured_max_workers.append(max_workers)
+            super().__init__(*args, max_workers=max_workers, **kwargs)
+
+    hardware = runner.HardwareConfig(cpu_cores=4, ram_gb=32.0, vram_gb=0.0)
+    local_runner = runner.LocalJobRunner(hardware)
+
+    tasks = [
+        runner.TaskSpec(f"task-{i}", runner.ResourceRequest(1, 0.1, 0.0), fn=lambda: "ok")
+        for i in range(200)
+    ]
+
+    with mock.patch(
+        "formula_foundry.substrate.runner.concurrent.futures.ThreadPoolExecutor",
+        CapturingExecutor,
+    ):
+        local_runner.run(tasks)
+
+    assert len(captured_max_workers) == 1, "Expected exactly one ThreadPoolExecutor instantiation"
+    actual_cap = captured_max_workers[0]
+    expected_cap = max(4, hardware.cpu_cores)
+    assert actual_cap == expected_cap, (
+        f"ThreadPoolExecutor max_workers={actual_cap}, expected {expected_cap} "
+        f"(capped by max(4, cpu_cores={hardware.cpu_cores}))"
+    )
+    assert actual_cap < 200, "max_workers must NOT equal len(tasks) for large task lists"
