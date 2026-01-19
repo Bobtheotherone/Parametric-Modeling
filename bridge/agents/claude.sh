@@ -156,6 +156,14 @@ cmd = sys.argv[5:]
 out = ""
 err = ""
 rc = 0
+
+def to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
 try:
     proc = subprocess.Popen(
         cmd,
@@ -165,16 +173,16 @@ try:
         start_new_session=True,
     )
     stdout, stderr = proc.communicate(timeout=timeout_s)
-    out = stdout or ""
-    err = stderr or ""
+    out = to_text(stdout)
+    err = to_text(stderr)
     rc = proc.returncode
 except subprocess.TimeoutExpired as exc:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except Exception:
         pass
-    out = (exc.stdout or "")
-    err = (exc.stderr or "")
+    out = to_text(exc.stdout)
+    err = to_text(exc.stderr)
     rc = 124
     err = (err or "") + f"\\nTIMEOUT after {timeout_s}s\\n"
 
