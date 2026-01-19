@@ -48,6 +48,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 AGENTS = ("codex", "gemini", "claude")
+MODEL_ENV_VARS = {
+    "codex": "CODEX_MODEL",
+    "gemini": "GEMINI_MODEL",
+    "claude": "CLAUDE_MODEL",
+}
+DEFAULT_AGENT_MODELS = {
+    "codex": "gpt-5.2-codex",
+    "gemini": "gemini-3-pro-preview",
+    "claude": "claude-3-7-sonnet-latest",
+}
 
 
 @dataclasses.dataclass
@@ -58,6 +68,7 @@ class RunConfig:
     max_json_correction_attempts: int
     fallback_order: list[str]
     agent_scripts: dict[str, str]
+    agent_models: dict[str, str]
     quota_error_patterns: dict[str, list[str]]
     supports_write_access: dict[str, bool]
 
@@ -91,6 +102,7 @@ def load_config(config_path: Path) -> RunConfig:
     agents = data["agents"]
 
     agent_scripts: dict[str, str] = {}
+    agent_models: dict[str, str] = {}
     quota_pats: dict[str, list[str]] = {}
     supports_write: dict[str, bool] = {}
 
@@ -98,6 +110,9 @@ def load_config(config_path: Path) -> RunConfig:
         if a not in agents:
             raise ValueError(f"Missing agent in config: {a}")
         agent_scripts[a] = agents[a]["script"]
+        model = str(agents[a].get("model", "")).strip()
+        if model:
+            agent_models[a] = model
         quota_pats[a] = list(agents[a].get("quota_error_patterns", []))
         supports_write[a] = bool(agents[a].get("supports_write_access", False))
 
@@ -108,9 +123,22 @@ def load_config(config_path: Path) -> RunConfig:
         max_json_correction_attempts=int(limits.get("max_json_correction_attempts", 2)),
         fallback_order=list(data["fallback_order"]),
         agent_scripts=agent_scripts,
+        agent_models=agent_models,
         quota_error_patterns=quota_pats,
         supports_write_access=supports_write,
     )
+
+
+def _effective_model(agent: str, config: RunConfig, env: dict[str, str]) -> str:
+    cfg = config.agent_models.get(agent, "")
+    if cfg:
+        return cfg
+    env_var = MODEL_ENV_VARS.get(agent, "")
+    if env_var:
+        env_val = env.get(env_var, "").strip()
+        if env_val:
+            return env_val
+    return DEFAULT_AGENT_MODELS.get(agent, "unknown")
 
 
 def _run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
@@ -517,6 +545,7 @@ def _run_agent_live(
     prompt_path: Path,
     schema_path: Path,
     out_path: Path,
+    agent_model: str,
     config: RunConfig,
     state: RunState,
 ) -> tuple[int, str, str]:
@@ -524,6 +553,9 @@ def _run_agent_live(
     script = (state.project_root / script_rel).resolve()
 
     env = os.environ.copy()
+    model_env = MODEL_ENV_VARS.get(agent)
+    if model_env:
+        env[model_env] = agent_model
     force_write = agent in ("gemini", "claude", "codex")
     wants_write = state.grant_write_access or force_write
     env["WRITE_ACCESS"] = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
@@ -691,11 +723,12 @@ def main() -> int:
         out_path = call_dir / "out.json"
         _write_text(prompt_path, prompt_text)
 
+        agent_model = _effective_model(agent, config, os.environ.copy())
         print("=" * 88)
         wants_write = state.grant_write_access or agent in AGENTS
         write_access = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
         print(
-            f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
+            f"CALL {call_no:04d} | agent={agent} | model={agent_model} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
             f"write_access={write_access}"
         )
@@ -708,6 +741,7 @@ def main() -> int:
                 prompt_path=prompt_path,
                 schema_path=schema_path,
                 out_path=out_path,
+                agent_model=agent_model,
                 config=config,
                 state=state,
             )

@@ -14,6 +14,7 @@
   "agents": {
     "codex": {
       "script": "bridge/agents/codex.sh",
+      "model": "gpt-5.2-codex",
       "role": "implementer",
       "supports_write_access": true,
       "quota_error_patterns": [
@@ -24,6 +25,7 @@
     },
     "gemini": {
       "script": "bridge/agents/gemini.sh",
+      "model": "gemini-3-pro-preview",
       "role": "spec_engineer",
       "supports_write_access": true,
       "quota_error_patterns": [
@@ -34,6 +36,7 @@
     },
     "claude": {
       "script": "bridge/agents/claude.sh",
+      "model": "claude-3-7-sonnet-latest",
       "role": "verifier",
       "supports_write_access": true,
       "quota_error_patterns": [

@@ -20,6 +20,9 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
     config["limits"]["max_total_calls"] = 3
     config["limits"]["max_calls_per_agent"] = 3
     config["limits"]["quota_retry_attempts"] = 1
+    config["agents"]["gemini"]["model"] = "gemini-test-model"
+    config["agents"]["codex"]["model"] = "codex-test-model"
+    config["agents"]["claude"]["model"] = "claude-test-model"
 
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -131,5 +134,9 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
     )
 
     assert proc.returncode == 6
-    calls = re.findall(r"CALL \d+ \| agent=([a-z]+)", proc.stdout)
-    assert calls == ["gemini", "codex", "claude"]
+    calls = re.findall(r"CALL \d+ \| agent=([a-z]+) \| model=([^\s|]+)", proc.stdout)
+    assert calls == [
+        ("gemini", "gemini-test-model"),
+        ("codex", "codex-test-model"),
+        ("claude", "claude-test-model"),
+    ]
