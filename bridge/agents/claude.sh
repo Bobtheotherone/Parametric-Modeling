@@ -10,6 +10,7 @@ TIMEOUT_S="${CLAUDE_TIMEOUT_S:-180}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_ARGS_JSON_MODE="${CLAUDE_ARGS_JSON_MODE:-}"
 CLAUDE_TOOLS="${CLAUDE_TOOLS:-}"
+CLAUDE_HELP_TIMEOUT_S="${CLAUDE_HELP_TIMEOUT_S:-5}"
 SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
@@ -40,7 +41,21 @@ ERR_PLAIN="${OUT_FILE}.stderr.plain"
 WRAP_SCHEMA="${OUT_FILE}.wrapper_schema.json"
 WRAP_PLAIN="${OUT_FILE}.wrapper_plain.json"
 
-HELP_TEXT="$("$CLAUDE_BIN" --help 2>/dev/null || true)"
+HELP_TEXT="$(python3 - <<'PY' "$CLAUDE_BIN" "$CLAUDE_HELP_TIMEOUT_S"
+import subprocess
+import sys
+
+bin_path = sys.argv[1]
+timeout_s = int(sys.argv[2])
+out = ""
+try:
+    proc = subprocess.run([bin_path, "--help"], text=True, capture_output=True, timeout=timeout_s)
+    out = proc.stdout or proc.stderr or ""
+except Exception:
+    out = ""
+print(out)
+PY
+)"
 
 supports_flag() {
   local flag="$1"
