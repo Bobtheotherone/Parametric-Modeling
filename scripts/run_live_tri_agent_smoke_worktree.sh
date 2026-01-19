@@ -29,6 +29,9 @@ LOG_FILE="$SMOKE_DIR/loop.log"
 
 set +e
 FF_AGENT_SMOKE_DIR="$SMOKE_DIR" \
+GEMINI_TIMEOUT_S="${GEMINI_TIMEOUT_S:-60}" \
+CLAUDE_TIMEOUT_S="${CLAUDE_TIMEOUT_S:-60}" \
+CODEX_ASK_FOR_APPROVAL="${CODEX_ASK_FOR_APPROVAL:-never}" \
 python3 -u bridge/loop.py \
   --mode live \
   --smoke-route gemini,codex,claude \
