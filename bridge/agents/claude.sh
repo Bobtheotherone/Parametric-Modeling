@@ -146,6 +146,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 
 timeout_s = int(sys.argv[1])
 wrap_path = sys.argv[2]
@@ -157,34 +158,45 @@ out = ""
 err = ""
 rc = 0
 
-def to_text(value):
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", "replace")
-    return str(value)
+stdout_lines = []
+stderr_lines = []
+
+proc = subprocess.Popen(
+    cmd,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    start_new_session=True,
+    bufsize=1,
+)
+
+def reader(stream, sink, dest):
+    for line in iter(stream.readline, ""):
+        sink.append(line)
+        dest.write(line)
+        dest.flush()
+    stream.close()
+
+t_out = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, sys.stdout), daemon=True)
+t_err = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, sys.stderr), daemon=True)
+t_out.start()
+t_err.start()
 
 try:
-    proc = subprocess.Popen(
-        cmd,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    stdout, stderr = proc.communicate(timeout=timeout_s)
-    out = to_text(stdout)
-    err = to_text(stderr)
+    proc.wait(timeout=timeout_s)
     rc = proc.returncode
-except subprocess.TimeoutExpired as exc:
+except subprocess.TimeoutExpired:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except Exception:
         pass
-    out = to_text(exc.stdout)
-    err = to_text(exc.stderr)
     rc = 124
-    err = (err or "") + f"\\nTIMEOUT after {timeout_s}s\\n"
+    stderr_lines.append(f"\\nTIMEOUT after {timeout_s}s\\n")
+
+t_out.join()
+t_err.join()
+out = "".join(stdout_lines)
+err = "".join(stderr_lines)
 
 with open(wrap_path, "w", encoding="utf-8") as handle:
     handle.write(out)

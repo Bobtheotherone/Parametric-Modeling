@@ -37,26 +37,47 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 
 model, timeout_s, full_prompt, out_path, err_path = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 
 def run(cmd):
+    stdout_lines = []
+    stderr_lines = []
+
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        bufsize=1,
+    )
+
+    def reader(stream, sink, dest):
+        for line in iter(stream.readline, ""):
+            sink.append(line)
+            dest.write(line)
+            dest.flush()
+        stream.close()
+
+    t_out = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, sys.stdout), daemon=True)
+    t_err = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, sys.stderr), daemon=True)
+    t_out.start()
+    t_err.start()
+
     try:
-        proc = subprocess.Popen(
-            cmd,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
-        stdout, stderr = proc.communicate(timeout=timeout_s)
-        return (stdout or ""), (stderr or "")
+        proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except Exception:
             pass
-        return "", f"TIMEOUT after {timeout_s}s\nCMD: {cmd}\n"
+        stderr_lines.append(f"TIMEOUT after {timeout_s}s\nCMD: {cmd}\n")
+
+    t_out.join()
+    t_err.join()
+    return "".join(stdout_lines), "".join(stderr_lines)
 
 # Attempt #1: positional prompt (preferred)
 cmd1 = [

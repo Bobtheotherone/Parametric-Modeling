@@ -70,7 +70,7 @@ fi
 
 cmd+=(--output-schema "$SCHEMA_FILE" -o "$OUT_FILE" -)
 
-python3 - <<'PY' "$CODEX_TIMEOUT_S" "$PROMPT_FILE" "${cmd[@]}" 1>/dev/null
+python3 - <<'PY' "$CODEX_TIMEOUT_S" "$PROMPT_FILE" "${cmd[@]}"
 import os
 import signal
 import subprocess
@@ -87,7 +87,7 @@ try:
         cmd,
         text=True,
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
+        stdout=sys.stdout,
         stderr=sys.stderr,
         start_new_session=True,
     )

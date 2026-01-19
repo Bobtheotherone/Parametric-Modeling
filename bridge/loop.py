@@ -38,6 +38,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,12 @@ DEFAULT_AGENT_MODELS = {
     "gemini": "gemini-3-pro-preview",
     "claude": "claude-3-7-sonnet-latest",
 }
+STREAM_MODES = {"off", "stdout", "stderr", "both"}
+REDACT_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9\\-]{10,}"),
+    re.compile(r"AIza[0-9A-Za-z_\\-]{20,}"),
+]
 
 
 @dataclasses.dataclass
@@ -139,6 +146,35 @@ def _effective_model(agent: str, config: RunConfig, env: dict[str, str]) -> str:
         if env_val:
             return env_val
     return DEFAULT_AGENT_MODELS.get(agent, "unknown")
+
+
+def _resolve_stream_mode(
+    cli_value: str | None, env_value: str | None, run_mode: str
+) -> str:
+    default = "both" if run_mode == "live" else "off"
+    raw = cli_value if cli_value is not None else (env_value or "")
+    if not raw:
+        return default
+    val = raw.strip().lower()
+    if val in ("1", "true", "yes", "on"):
+        val = "both"
+    elif val in ("0", "false", "no", "off"):
+        val = "off"
+    if val not in STREAM_MODES:
+        print(f"[orchestrator] WARNING: invalid stream mode '{raw}', defaulting to {default}")
+        return default
+    return val
+
+
+def _stream_enabled(stream_mode: str, stream_name: str) -> bool:
+    return stream_mode in ("both", stream_name)
+
+
+def _redact_stream_text(text: str) -> str:
+    redacted = text
+    for pattern in REDACT_PATTERNS:
+        redacted = pattern.sub("***", redacted)
+    return redacted
 
 
 def _run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
@@ -546,6 +582,9 @@ def _run_agent_live(
     schema_path: Path,
     out_path: Path,
     agent_model: str,
+    stream_mode: str,
+    stdout_log: Path,
+    stderr_log: Path,
     config: RunConfig,
     state: RunState,
 ) -> tuple[int, str, str]:
@@ -561,7 +600,70 @@ def _run_agent_live(
     env["WRITE_ACCESS"] = "1" if (wants_write and config.supports_write_access.get(agent, False)) else "0"
 
     cmd = [str(script), str(prompt_path), str(schema_path), str(out_path)]
-    return _run_cmd(cmd, cwd=state.project_root, env=env)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(state.project_root),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+
+    def _reader(
+        stream: Any,
+        sink: list[str],
+        log_path: Path,
+        prefix: str,
+        allow_stream: bool,
+        dest: Any,
+    ) -> None:
+        with log_path.open("w", encoding="utf-8") as handle:
+            for line in iter(stream.readline, ""):
+                sink.append(line)
+                handle.write(line)
+                if allow_stream:
+                    dest.write(prefix + _redact_stream_text(line))
+                    dest.flush()
+            stream.close()
+
+    t_out = threading.Thread(
+        target=_reader,
+        args=(
+            proc.stdout,
+            stdout_lines,
+            stdout_log,
+            f"[{agent}][stdout] ",
+            _stream_enabled(stream_mode, "stdout"),
+            sys.stdout,
+        ),
+        daemon=True,
+    )
+    t_err = threading.Thread(
+        target=_reader,
+        args=(
+            proc.stderr,
+            stderr_lines,
+            stderr_log,
+            f"[{agent}][stderr] ",
+            _stream_enabled(stream_mode, "stderr"),
+            sys.stderr,
+        ),
+        daemon=True,
+    )
+    t_out.start()
+    t_err.start()
+
+    rc = proc.wait()
+    t_out.join()
+    t_err.join()
+    return rc, "".join(stdout_lines), "".join(stderr_lines)
 
 
 def _run_agent_mock(
@@ -603,6 +705,12 @@ def main() -> int:
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--no-agent-branch", action="store_true")
     ap.add_argument(
+        "--stream-agent-output",
+        choices=["off", "stdout", "stderr", "both"],
+        default=None,
+        help="Stream agent wrapper stdout/stderr to the terminal (live mode default: both).",
+    )
+    ap.add_argument(
         "--smoke-route",
         default="",
         help="Force a fixed agent sequence for smoke tests (comma-separated).",
@@ -620,6 +728,8 @@ def main() -> int:
     run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     runs_dir = project_root / "runs" / run_id
     _ensure_dir(runs_dir)
+    calls_dir = runs_dir / "calls"
+    _ensure_dir(calls_dir)
 
     _git_init_if_needed(project_root)
     if not args.no_agent_branch:
@@ -639,6 +749,9 @@ def main() -> int:
     stats_id_set = set(stats_ids)
 
     system_prompt = system_prompt_path.read_text(encoding="utf-8")
+    stream_mode = _resolve_stream_mode(
+        args.stream_agent_output, os.environ.get("FF_STREAM_AGENT_OUTPUT"), args.mode
+    )
 
     # Mock scenario support.
     scenario: dict[str, Any] = {}
@@ -688,7 +801,7 @@ def main() -> int:
         state.total_calls += 1
         state.call_counts[agent] += 1
 
-        call_dir = runs_dir / f"call_{call_no:04d}"
+        call_dir = calls_dir / f"call_{call_no:04d}"
         _ensure_dir(call_dir)
 
         design_doc_text = _read_text(design_doc_path) if design_doc_path.exists() else ""
@@ -721,6 +834,8 @@ def main() -> int:
         prompt_path = call_dir / "prompt.txt"
         raw_path = call_dir / "raw.txt"
         out_path = call_dir / "out.json"
+        stdout_log = call_dir / "agent_stdout.log"
+        stderr_log = call_dir / "agent_stderr.log"
         _write_text(prompt_path, prompt_text)
 
         agent_model = _effective_model(agent, config, os.environ.copy())
@@ -742,11 +857,19 @@ def main() -> int:
                 schema_path=schema_path,
                 out_path=out_path,
                 agent_model=agent_model,
+                stream_mode=stream_mode,
+                stdout_log=stdout_log,
+                stderr_log=stderr_log,
                 config=config,
                 state=state,
             )
 
         _write_text(raw_path, (out or "") + ("\n" if out and err else "") + (err or ""))
+        parse_text = out
+        if out_path.exists():
+            file_text = out_path.read_text(encoding="utf-8").strip()
+            if file_text:
+                parse_text = file_text
 
         if args.verbose and err.strip():
             print("[orchestrator] stderr:\n" + err.strip())
@@ -793,7 +916,7 @@ def main() -> int:
 
         while not parse_ok and correction_attempts <= config.max_json_correction_attempts:
             try:
-                turn_obj = _try_parse_json(out)
+                turn_obj = _try_parse_json(parse_text)
                 ok, msg = _validate_turn(
                     turn_obj, expected_agent=agent, stats_id_set=stats_id_set, milestone_id=milestone_id
                 )
