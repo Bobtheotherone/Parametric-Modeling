@@ -103,27 +103,38 @@ run_claude() {
   local -a cmd=("$CLAUDE_BIN" "${COMMON_ARGS[@]}" "${mode_args[@]}")
   local rc=0
 
-  if command -v timeout >/dev/null 2>&1; then
-    set +e
-    timeout "${TIMEOUT_S}s" "${cmd[@]}" >"$wrap_path" 2>>"$err_path"
-    rc=$?
-    set -e
-  else
-    set +e
-    "${cmd[@]}" >"$wrap_path" 2>>"$err_path"
-    rc=$?
-    set -e
-  fi
-
-  python3 - <<'PY' "${wrap_path}.meta.json" "$rc" "${cmd[@]}"
+  python3 - <<'PY' "$TIMEOUT_S" "$wrap_path" "$err_path" "${wrap_path}.meta.json" "${cmd[@]}"
 import json
+import subprocess
 import sys
 
-path = sys.argv[1]
-rc = int(sys.argv[2])
-cmd = sys.argv[3:]
+timeout_s = int(sys.argv[1])
+wrap_path = sys.argv[2]
+err_path = sys.argv[3]
+meta_path = sys.argv[4]
+cmd = sys.argv[5:]
 
-with open(path, "w", encoding="utf-8") as handle:
+out = ""
+err = ""
+rc = 0
+try:
+    proc = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout_s)
+    out = proc.stdout or ""
+    err = proc.stderr or ""
+    rc = proc.returncode
+except subprocess.TimeoutExpired as exc:
+    out = exc.stdout or ""
+    err = exc.stderr or ""
+    rc = 124
+    err = (err or "") + f"\\nTIMEOUT after {timeout_s}s\\n"
+
+with open(wrap_path, "w", encoding="utf-8") as handle:
+    handle.write(out)
+
+with open(err_path, "a", encoding="utf-8") as handle:
+    handle.write(err)
+
+with open(meta_path, "w", encoding="utf-8") as handle:
     json.dump({"cmd": cmd, "rc": rc}, handle)
 PY
 }
