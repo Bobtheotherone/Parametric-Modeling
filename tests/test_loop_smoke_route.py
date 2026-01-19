@@ -15,6 +15,13 @@ def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
+def _milestone_id() -> str:
+    text = (ROOT / "DESIGN_DOCUMENT.md").read_text(encoding="utf-8")
+    match = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
+    assert match is not None
+    return match.group(1)
+
+
 def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
     config = _read_json(ROOT / "bridge" / "config.json")
     config["limits"]["max_total_calls"] = 3
@@ -27,6 +34,7 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
+    milestone_id = _milestone_id()
     scenario = {
         "agents": {
             "gemini": [
@@ -34,7 +42,7 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
                     "type": "ok",
                     "response": {
                         "agent": "gemini",
-                        "milestone_id": "M0",
+                        "milestone_id": milestone_id,
                         "phase": "plan",
                         "work_completed": False,
                         "project_complete": False,
@@ -59,7 +67,7 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
                     "type": "ok",
                     "response": {
                         "agent": "codex",
-                        "milestone_id": "M0",
+                        "milestone_id": milestone_id,
                         "phase": "plan",
                         "work_completed": False,
                         "project_complete": False,
@@ -84,7 +92,7 @@ def test_smoke_route_forces_sequence(tmp_path: Path) -> None:
                     "type": "ok",
                     "response": {
                         "agent": "claude",
-                        "milestone_id": "M0",
+                        "milestone_id": milestone_id,
                         "phase": "plan",
                         "work_completed": False,
                         "project_complete": False,

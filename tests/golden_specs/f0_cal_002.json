@@ -1,0 +1,91 @@
+{
+  "board": {
+    "origin": {
+      "mode": "EDGE_L_CENTER"
+    },
+    "outline": {
+      "corner_radius_nm": 2000000,
+      "length_nm": 80000000,
+      "width_nm": 20000000
+    },
+    "text": {
+      "coupon_id": "${COUPON_ID}",
+      "include_manifest_hash": true
+    }
+  },
+  "connectors": {
+    "left": {
+      "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
+      "position_nm": [
+        5000000,
+        0
+      ],
+      "rotation_deg": 180
+    },
+    "right": {
+      "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
+      "position_nm": [
+        75000000,
+        0
+      ],
+      "rotation_deg": 0
+    }
+  },
+  "constraints": {
+    "allow_unconnected_copper": false,
+    "drc": {
+      "must_pass": true,
+      "severity": "all"
+    },
+    "mode": "REJECT",
+    "symmetry": {
+      "enforce": true
+    }
+  },
+  "coupon_family": "F0_CAL_THRU_LINE",
+  "discontinuity": null,
+  "export": {
+    "drill": {
+      "enabled": true,
+      "format": "excellon"
+    },
+    "gerbers": {
+      "enabled": true,
+      "format": "gerbers"
+    },
+    "outputs_dir": "artifacts/"
+  },
+  "fab_profile": {
+    "id": "oshpark_4layer",
+    "overrides": {}
+  },
+  "schema_version": 1,
+  "stackup": {
+    "copper_layers": 4,
+    "materials": {
+      "er": 4.1,
+      "loss_tangent": 0.02
+    },
+    "thicknesses_nm": {
+      "L1_to_L2": 180000,
+      "L2_to_L3": 800000,
+      "L3_to_L4": 180000
+    }
+  },
+  "toolchain": {
+    "kicad": {
+      "docker_image": "kicad/kicad:9.0.7@sha256:deadbeef",
+      "version": "9.0.7"
+    }
+  },
+  "transmission_line": {
+    "gap_nm": 180000,
+    "ground_via_fence": null,
+    "layer": "F.Cu",
+    "length_left_nm": 24100000,
+    "length_right_nm": 24100000,
+    "type": "CPWG",
+    "w_nm": 260000
+  },
+  "units": "nm"
+}

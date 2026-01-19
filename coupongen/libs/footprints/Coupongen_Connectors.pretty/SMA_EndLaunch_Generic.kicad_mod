@@ -1,0 +1,7 @@
+(footprint "SMA_EndLaunch_Generic" (version 20240101) (generator coupongen)
+  (layer "F.Cu")
+  (at 0 0)
+  (attr through_hole)
+  (fp_text reference "REF**" (at 0 0) (layer "F.SilkS"))
+  (fp_text value "SMA_EndLaunch_Generic" (at 0 1.5) (layer "F.Fab"))
+)

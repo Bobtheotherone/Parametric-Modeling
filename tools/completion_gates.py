@@ -10,6 +10,7 @@ We expose a pure predicate so pytest can validate the logic without relying on g
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 
@@ -34,3 +35,20 @@ def evaluate_completion_gates(inp: CompletionGateInputs) -> CompletionGateResult
     if not inp.head_sha.strip():
         return CompletionGateResult(False, "no commit found")
     return CompletionGateResult(True, "ok")
+
+
+def verify_args_for_completion(milestone_id: str) -> list[str]:
+    cmd = [sys.executable, "-m", "tools.verify", "--strict-git"]
+    if _milestone_requires_m0(milestone_id):
+        cmd.append("--include-m0")
+    return cmd
+
+
+def _milestone_requires_m0(milestone_id: str) -> bool:
+    if not milestone_id.startswith("M"):
+        return False
+    try:
+        value = int(milestone_id[1:])
+    except ValueError:
+        return False
+    return value >= 1

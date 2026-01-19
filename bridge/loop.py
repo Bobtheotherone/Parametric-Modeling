@@ -580,10 +580,14 @@ def _checkout_agent_branch(project_root: Path, run_id: str) -> None:
 
 
 def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
-    from tools.completion_gates import CompletionGateInputs, evaluate_completion_gates
+    from tools.completion_gates import CompletionGateInputs, evaluate_completion_gates, verify_args_for_completion
+
+    design_doc = project_root / "DESIGN_DOCUMENT.md"
+    design_text = _read_text(design_doc) if design_doc.exists() else ""
+    milestone_id = _parse_milestone_id(design_text)
 
     rc, out, err = _run_cmd(
-        [sys.executable, "-m", "tools.verify", "--strict-git"],
+        verify_args_for_completion(milestone_id),
         cwd=project_root,
         env=os.environ.copy(),
     )

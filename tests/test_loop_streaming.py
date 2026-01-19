@@ -22,11 +22,17 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(mode | stat.S_IXUSR)
 
 
+def _milestone_id() -> str:
+    text = (ROOT / "DESIGN_DOCUMENT.md").read_text(encoding="utf-8")
+    match = re.search(r"\*\*Milestone:\*\*\s*(M\d+)\b", text)
+    assert match is not None
+    return match.group(1)
+
+
 def test_streamed_agent_output_is_logged_and_prefixed(tmp_path: Path) -> None:
     wrapper = tmp_path / "wrapper.sh"
-    _write_executable(
-        wrapper,
-        """#!/usr/bin/env bash
+    milestone_id = _milestone_id()
+    wrapper_content = """#!/usr/bin/env bash
 set -euo pipefail
 
 echo "stub-stdout-1"
@@ -59,8 +65,12 @@ JSON
 if [[ "${FF_EMIT_JSON_STDOUT:-1}" == "1" ]]; then
   cat "$3"
 fi
-""",
+"""
+    wrapper_content = wrapper_content.replace(
+        '"milestone_id": "M0"',
+        f'"milestone_id": "{milestone_id}"',
     )
+    _write_executable(wrapper, wrapper_content)
 
     config = _read_json(ROOT / "bridge" / "config.json")
     config["limits"]["max_total_calls"] = 1
