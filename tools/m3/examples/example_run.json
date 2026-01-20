@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "run_id": "run_20260120_091500_abc123",
+  "run_type": "em_simulation",
+  "name": "EM Simulation - Coupon F1_001",
+  "description": "Full-wave EM simulation of via transition coupon F1_001",
+  "status": "completed",
+  "started_utc": "2026-01-20T09:15:00Z",
+  "finished_utc": "2026-01-20T09:45:30Z",
+  "duration_seconds": 1830.5,
+  "provenance": {
+    "hostname": "sim-server-01",
+    "username": "ci-runner",
+    "git_commit": "49cc85450e89614e59124901d37f34be03fc6077",
+    "git_branch": "task/20260120T091327Z/M3-SCHEMAS",
+    "git_dirty": false,
+    "toolchain": [
+      {
+        "name": "openems",
+        "version": "0.0.36"
+      },
+      {
+        "name": "python",
+        "version": "3.11.5"
+      }
+    ],
+    "python_version": "3.11.5",
+    "command": "python -m m3 run em_simulation --coupon coupon_F1_001",
+    "resource_usage": {
+      "cpu_seconds": 3600.0,
+      "peak_memory_bytes": 8589934592,
+      "disk_read_bytes": 104857600,
+      "disk_write_bytes": 52428800
+    }
+  },
+  "inputs": {
+    "artifacts": [
+      {
+        "artifact_id": "coupon_F1_001_board_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        },
+        "role": "geometry",
+        "required": true
+      },
+      {
+        "artifact_id": "mesh_config_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "bbbbccccddddeeeeffffaaaabbbbccccddddeeeeffffaaaabbbbccccddddeeee"
+        },
+        "role": "config",
+        "required": true
+      }
+    ],
+    "config_hash": {
+      "algorithm": "sha256",
+      "digest": "ccccddddeeeeffffaaaabbbbccccddddeeeeffffaaaabbbbccccddddeeeeaaaa"
+    }
+  },
+  "outputs": {
+    "artifacts": [
+      {
+        "artifact_id": "coupon_F1_001_touchstone_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "1111222233334444555566667777888899990000aaaabbbbccccddddeeeefffff"
+        },
+        "artifact_type": "touchstone",
+        "role": "oracle_output",
+        "byte_size": 524288,
+        "storage_path": "artifacts/touchstone/coupon_F1_001.s2p"
+      },
+      {
+        "artifact_id": "coupon_F1_001_sim_result_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "ddddeeeeffffaaaabbbbccccddddeeeeffffaaaabbbbccccddddeeeeffffaaaa"
+        },
+        "artifact_type": "em_simulation_result",
+        "role": "intermediate",
+        "byte_size": 10485760,
+        "storage_path": "artifacts/sim_results/coupon_F1_001/"
+      }
+    ],
+    "total_bytes": 11010048
+  },
+  "stages": [
+    {
+      "stage_name": "mesh_generation",
+      "status": "completed",
+      "started_utc": "2026-01-20T09:15:00Z",
+      "finished_utc": "2026-01-20T09:17:30Z",
+      "duration_seconds": 150.0,
+      "cached": false,
+      "inputs": ["coupon_F1_001_board_v1", "mesh_config_v1"],
+      "outputs": ["coupon_F1_001_mesh_v1"]
+    },
+    {
+      "stage_name": "fdtd_simulation",
+      "status": "completed",
+      "started_utc": "2026-01-20T09:17:30Z",
+      "finished_utc": "2026-01-20T09:43:00Z",
+      "duration_seconds": 1530.0,
+      "cached": false,
+      "inputs": ["coupon_F1_001_mesh_v1"],
+      "outputs": ["coupon_F1_001_sim_result_v1"],
+      "resource_usage": {
+        "cpu_seconds": 3400.0,
+        "peak_memory_bytes": 8589934592
+      }
+    },
+    {
+      "stage_name": "sparam_extraction",
+      "status": "completed",
+      "started_utc": "2026-01-20T09:43:00Z",
+      "finished_utc": "2026-01-20T09:45:30Z",
+      "duration_seconds": 150.0,
+      "cached": false,
+      "inputs": ["coupon_F1_001_sim_result_v1"],
+      "outputs": ["coupon_F1_001_touchstone_v1"]
+    }
+  ],
+  "parameters": {
+    "frequency_start_hz": 1000000,
+    "frequency_stop_hz": 20000000000,
+    "frequency_points": 1001,
+    "boundary_conditions": "pml",
+    "excitation_type": "gaussian_pulse"
+  },
+  "metrics": {
+    "metrics": [
+      {
+        "name": "simulation_timesteps",
+        "value": 125000,
+        "unit": "steps",
+        "stage_name": "fdtd_simulation"
+      },
+      {
+        "name": "convergence_energy_decay",
+        "value": -60.0,
+        "unit": "dB",
+        "stage_name": "fdtd_simulation"
+      }
+    ],
+    "artifacts_produced": 3,
+    "artifacts_from_cache": 0,
+    "stages_executed": 3,
+    "stages_cached": 0
+  },
+  "tags": {
+    "coupon_family": "F1",
+    "study": "via_transition"
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "dataset_id": "em_simulation_dataset_001",
+  "version": "v1.0",
+  "name": "EM Simulation Dataset - Via Transition Study",
+  "description": "Dataset containing EM simulation results for via transition coupon parameter sweep",
+  "created_utc": "2026-01-20T10:00:00Z",
+  "members": {
+    "count": 3,
+    "total_bytes": 1572864,
+    "artifacts": [
+      {
+        "artifact_id": "coupon_F1_001_touchstone_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "1111222233334444555566667777888899990000aaaabbbbccccddddeeeefffff"
+        },
+        "artifact_type": "touchstone",
+        "role": "oracle_output",
+        "byte_size": 524288,
+        "storage_path": "artifacts/touchstone/coupon_F1_001.s2p"
+      },
+      {
+        "artifact_id": "coupon_F1_002_touchstone_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "2222333344445555666677778888999900001111aaaabbbbccccddddeeeefffff"
+        },
+        "artifact_type": "touchstone",
+        "role": "oracle_output",
+        "byte_size": 524288,
+        "storage_path": "artifacts/touchstone/coupon_F1_002.s2p"
+      },
+      {
+        "artifact_id": "coupon_F1_003_touchstone_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "3333444455556666777788889999000011112222aaaabbbbccccddddeeeefffff"
+        },
+        "artifact_type": "touchstone",
+        "role": "oracle_output",
+        "byte_size": 524288,
+        "storage_path": "artifacts/touchstone/coupon_F1_003.s2p"
+      }
+    ]
+  },
+  "content_hash": {
+    "algorithm": "sha256",
+    "digest": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+  },
+  "provenance": {
+    "generator": "m3-dataset-builder",
+    "generator_version": "0.1.0",
+    "source_runs": [
+      "run_20260120_091500_abc123",
+      "run_20260120_092000_def456",
+      "run_20260120_092500_ghi789"
+    ],
+    "pipeline_stage": "dataset_aggregation",
+    "git_commit": "49cc85450e89614e59124901d37f34be03fc6077"
+  },
+  "statistics": {
+    "by_artifact_type": {
+      "touchstone": {
+        "count": 3,
+        "total_bytes": 1572864
+      }
+    },
+    "unique_coupons": 3,
+    "frequency_range_hz": {
+      "min": 1000000,
+      "max": 20000000000
+    },
+    "parameter_ranges": {
+      "via_drill_nm": {
+        "min": 200000,
+        "max": 400000,
+        "mean": 300000,
+        "std": 81650
+      }
+    }
+  },
+  "splits": {
+    "seed": 42,
+    "split_method": "random",
+    "splits": [
+      {
+        "name": "train",
+        "artifact_ids": ["coupon_F1_001_touchstone_v1", "coupon_F1_002_touchstone_v1"],
+        "count": 2,
+        "fraction": 0.67
+      },
+      {
+        "name": "test",
+        "artifact_ids": ["coupon_F1_003_touchstone_v1"],
+        "count": 1,
+        "fraction": 0.33
+      }
+    ]
+  },
+  "tags": {
+    "study": "via_transition",
+    "coupon_family": "F1"
+  }
+}

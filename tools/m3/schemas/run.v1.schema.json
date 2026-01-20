@@ -1,0 +1,595 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/run.v1.json",
+  "title": "Run",
+  "description": "Run schema version 1 - Describes an execution run of a pipeline or stage in the Formula Foundry system",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "run_type",
+    "status",
+    "started_utc",
+    "provenance",
+    "inputs",
+    "outputs"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version identifier; must be 1 for this schema version"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Unique identifier for this run (alphanumeric with underscores and hyphens)"
+    },
+    "run_type": {
+      "$ref": "#/$defs/RunType",
+      "description": "Type classification of the run"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Human-readable name for the run"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Detailed description of what this run does"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus",
+      "description": "Current status of the run"
+    },
+    "started_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the run started (UTC)"
+    },
+    "finished_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the run finished (UTC)"
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total duration of the run in seconds"
+    },
+    "provenance": {
+      "$ref": "#/$defs/RunProvenance",
+      "description": "Information about how and where this run was executed"
+    },
+    "inputs": {
+      "$ref": "#/$defs/RunInputs",
+      "description": "Input artifacts and parameters for this run"
+    },
+    "outputs": {
+      "$ref": "#/$defs/RunOutputs",
+      "description": "Output artifacts and results from this run"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StageExecution"
+      },
+      "description": "Individual stage executions within this run"
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {},
+      "description": "Parameters used for this run"
+    },
+    "metrics": {
+      "$ref": "#/$defs/RunMetrics",
+      "description": "Metrics collected during the run"
+    },
+    "error": {
+      "$ref": "#/$defs/RunError",
+      "description": "Error information if the run failed"
+    },
+    "parent_run_id": {
+      "type": "string",
+      "description": "ID of the parent run if this is a nested/child run"
+    },
+    "child_run_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "IDs of child runs spawned by this run"
+    },
+    "mlflow_run_id": {
+      "type": "string",
+      "description": "MLflow run ID for integration with MLflow tracking"
+    },
+    "dvc_stage_hash": {
+      "type": "string",
+      "description": "DVC stage hash for pipeline reproducibility"
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "User-defined key-value tags for filtering and organization"
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {},
+      "description": "Free-form metadata annotations for extensibility"
+    },
+    "log_paths": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Paths to log files generated during the run"
+    }
+  },
+  "$defs": {
+    "RunType": {
+      "type": "string",
+      "enum": [
+        "coupon_generation",
+        "drc_validation",
+        "em_simulation",
+        "dataset_build",
+        "dataset_validation",
+        "model_training",
+        "model_evaluation",
+        "formula_discovery",
+        "formula_validation",
+        "full_pipeline",
+        "gc_sweep",
+        "integrity_check",
+        "export",
+        "other"
+      ],
+      "description": "Enumeration of run types supported by the system"
+    },
+    "RunStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "skipped"
+      ],
+      "description": "Possible states of a run"
+    },
+    "HashAlgorithm": {
+      "type": "string",
+      "enum": ["sha256", "sha384", "sha512", "blake3"],
+      "description": "Supported cryptographic hash algorithms"
+    },
+    "ContentHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": {
+          "$ref": "#/$defs/HashAlgorithm",
+          "description": "Hash algorithm used"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]+$",
+          "minLength": 64,
+          "description": "Hexadecimal hash digest"
+        }
+      }
+    },
+    "ToolVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the tool or software"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version string of the tool"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA if applicable"
+        },
+        "docker_image": {
+          "type": "string",
+          "description": "Docker image reference with optional digest"
+        }
+      }
+    },
+    "ResourceUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total CPU time consumed in seconds"
+        },
+        "peak_memory_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Peak memory usage in bytes"
+        },
+        "gpu_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total GPU time consumed in seconds"
+        },
+        "peak_gpu_memory_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Peak GPU memory usage in bytes"
+        },
+        "disk_read_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total bytes read from disk"
+        },
+        "disk_write_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total bytes written to disk"
+        }
+      }
+    },
+    "RunProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostname", "git_commit"],
+      "properties": {
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hostname of the machine that executed the run"
+        },
+        "username": {
+          "type": "string",
+          "description": "Username of the account that executed the run"
+        },
+        "git_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA of the repo when run was executed"
+        },
+        "git_branch": {
+          "type": "string",
+          "description": "Git branch name when run was executed"
+        },
+        "git_dirty": {
+          "type": "boolean",
+          "description": "Whether the working directory had uncommitted changes"
+        },
+        "toolchain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolVersion"
+          },
+          "description": "List of tools used in this run"
+        },
+        "python_version": {
+          "type": "string",
+          "description": "Python version used"
+        },
+        "environment_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Hash of relevant environment variables"
+        },
+        "ci_run_id": {
+          "type": "string",
+          "description": "CI/CD run identifier if executed in CI"
+        },
+        "ci_job_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL to the CI job"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command line invocation that started this run"
+        },
+        "working_directory": {
+          "type": "string",
+          "description": "Working directory when the run was executed"
+        },
+        "resource_usage": {
+          "$ref": "#/$defs/ResourceUsage",
+          "description": "Resource usage statistics for this run"
+        }
+      }
+    },
+    "InputArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "content_hash"],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the input artifact"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Content hash of the artifact when used as input"
+        },
+        "role": {
+          "type": "string",
+          "description": "Role of this artifact in the run input"
+        },
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this input was required"
+        }
+      }
+    },
+    "RunInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputArtifactRef"
+          },
+          "description": "List of input artifacts"
+        },
+        "dataset_id": {
+          "type": "string",
+          "description": "ID of input dataset if applicable"
+        },
+        "dataset_version": {
+          "type": "string",
+          "description": "Version of input dataset if applicable"
+        },
+        "config_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Hash of the combined configuration"
+        }
+      }
+    },
+    "OutputArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "content_hash", "artifact_type"],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the output artifact"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Content hash of the produced artifact"
+        },
+        "artifact_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type of the output artifact"
+        },
+        "role": {
+          "type": "string",
+          "description": "Role of this artifact in the run output"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of the artifact in bytes"
+        },
+        "storage_path": {
+          "type": "string",
+          "description": "Relative path where artifact was stored"
+        }
+      }
+    },
+    "RunOutputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OutputArtifactRef"
+          },
+          "description": "List of output artifacts produced"
+        },
+        "dataset_id": {
+          "type": "string",
+          "description": "ID of output dataset if this run produces one"
+        },
+        "dataset_version": {
+          "type": "string",
+          "description": "Version of output dataset"
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total size of all outputs in bytes"
+        }
+      }
+    },
+    "StageStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "skipped",
+        "cached"
+      ],
+      "description": "Possible states of a stage"
+    },
+    "StageExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage_name", "status", "started_utc"],
+      "properties": {
+        "stage_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the pipeline stage"
+        },
+        "status": {
+          "$ref": "#/$defs/StageStatus",
+          "description": "Status of this stage execution"
+        },
+        "started_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when stage started"
+        },
+        "finished_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when stage finished"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Duration of stage execution in seconds"
+        },
+        "cached": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this stage used cached outputs"
+        },
+        "cache_hit_reason": {
+          "type": "string",
+          "description": "Reason for cache hit if applicable"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of input artifact IDs"
+        },
+        "outputs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of output artifact IDs"
+        },
+        "resource_usage": {
+          "$ref": "#/$defs/ResourceUsage",
+          "description": "Resource usage for this stage"
+        },
+        "error_message": {
+          "type": "string",
+          "description": "Error message if stage failed"
+        }
+      }
+    },
+    "MetricValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the metric"
+        },
+        "value": {
+          "type": "number",
+          "description": "Numeric value of the metric"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Unit of measurement"
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the metric was recorded"
+        },
+        "stage_name": {
+          "type": "string",
+          "description": "Stage that produced this metric"
+        }
+      }
+    },
+    "RunMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MetricValue"
+          },
+          "description": "List of metrics collected during the run"
+        },
+        "artifacts_produced": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of artifacts produced"
+        },
+        "artifacts_from_cache": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of artifacts retrieved from cache"
+        },
+        "stages_executed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of stages that were executed"
+        },
+        "stages_cached": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of stages that hit cache"
+        }
+      }
+    },
+    "RunError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_type", "message"],
+      "properties": {
+        "error_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type/class of the error"
+        },
+        "message": {
+          "type": "string",
+          "description": "Error message"
+        },
+        "stage_name": {
+          "type": "string",
+          "description": "Stage where the error occurred"
+        },
+        "traceback": {
+          "type": "string",
+          "description": "Full stack trace if available"
+        },
+        "artifact_id": {
+          "type": "string",
+          "description": "Artifact ID that caused the error if applicable"
+        },
+        "recoverable": {
+          "type": "boolean",
+          "description": "Whether the error is recoverable"
+        }
+      }
+    }
+  }
+}

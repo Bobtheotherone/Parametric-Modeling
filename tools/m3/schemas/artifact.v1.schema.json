@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/artifact.v1.json",
+  "title": "Artifact",
+  "description": "Artifact schema version 1 - Describes a single artifact in the Formula Foundry data store",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "artifact_type",
+    "content_hash",
+    "byte_size",
+    "created_utc",
+    "provenance",
+    "roles",
+    "lineage"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version identifier; must be 1 for this schema version"
+    },
+    "artifact_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Unique identifier for this artifact (alphanumeric with underscores and hyphens)"
+    },
+    "artifact_type": {
+      "$ref": "#/$defs/ArtifactType",
+      "description": "Type classification of the artifact"
+    },
+    "content_hash": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "Cryptographic hash of the artifact content"
+    },
+    "byte_size": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the artifact content in bytes"
+    },
+    "created_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the artifact was created (UTC)"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance",
+      "description": "Information about how and where this artifact was created"
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ArtifactRole"
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Semantic roles this artifact serves in the pipeline"
+    },
+    "lineage": {
+      "$ref": "#/$defs/Lineage",
+      "description": "Lineage information linking this artifact to its sources and context"
+    },
+    "storage_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative path to the artifact file in the data store"
+    },
+    "media_type": {
+      "type": "string",
+      "pattern": "^[a-z]+/[a-z0-9.+-]+$",
+      "description": "MIME type of the artifact content (e.g., 'application/json', 'application/x-gerber')"
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "User-defined key-value tags for filtering and organization"
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {},
+      "description": "Free-form metadata annotations for extensibility"
+    },
+    "retention_policy": {
+      "$ref": "#/$defs/RetentionPolicy",
+      "description": "Policy governing how long this artifact should be retained"
+    },
+    "checksum_verified_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last successful checksum verification"
+    }
+  },
+  "$defs": {
+    "ArtifactType": {
+      "type": "string",
+      "enum": [
+        "coupon_spec",
+        "resolved_design",
+        "kicad_board",
+        "kicad_project",
+        "gerber",
+        "drill_file",
+        "fab_package",
+        "em_simulation_config",
+        "em_simulation_result",
+        "touchstone",
+        "sparam_matrix",
+        "dataset_index",
+        "dataset_snapshot",
+        "model_checkpoint",
+        "formula_candidate",
+        "validation_report",
+        "drc_report",
+        "manifest",
+        "log",
+        "other"
+      ],
+      "description": "Enumeration of artifact types supported by the system"
+    },
+    "ArtifactRole": {
+      "type": "string",
+      "enum": [
+        "geometry",
+        "config",
+        "oracle_output",
+        "intermediate",
+        "final_output",
+        "validation",
+        "metadata",
+        "cache",
+        "checkpoint",
+        "dataset_member",
+        "root_input"
+      ],
+      "description": "Semantic role the artifact plays in the pipeline"
+    },
+    "HashAlgorithm": {
+      "type": "string",
+      "enum": ["sha256", "sha384", "sha512", "blake3"],
+      "description": "Supported cryptographic hash algorithms"
+    },
+    "ContentHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": {
+          "$ref": "#/$defs/HashAlgorithm",
+          "description": "Hash algorithm used"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]+$",
+          "minLength": 64,
+          "description": "Hexadecimal hash digest"
+        }
+      }
+    },
+    "ToolVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the tool or software"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version string of the tool"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA if applicable"
+        },
+        "docker_image": {
+          "type": "string",
+          "description": "Docker image reference with optional digest"
+        }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator", "generator_version", "hostname"],
+      "properties": {
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the tool/process that generated this artifact"
+        },
+        "generator_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version of the generator tool"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hostname of the machine that generated the artifact"
+        },
+        "username": {
+          "type": "string",
+          "description": "Username of the account that generated the artifact"
+        },
+        "toolchain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolVersion"
+          },
+          "description": "List of tools in the toolchain used to produce this artifact"
+        },
+        "command": {
+          "type": "string",
+          "description": "Command line invocation that produced this artifact"
+        },
+        "working_directory": {
+          "type": "string",
+          "description": "Working directory when the artifact was generated"
+        },
+        "environment_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Hash of relevant environment variables"
+        },
+        "ci_run_id": {
+          "type": "string",
+          "description": "CI/CD run identifier if generated in CI"
+        },
+        "ci_job_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL to the CI job that produced this artifact"
+        }
+      }
+    },
+    "LineageReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "relation"],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the referenced artifact"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Hash of the referenced artifact at time of derivation"
+        },
+        "relation": {
+          "type": "string",
+          "enum": [
+            "derived_from",
+            "generated_by",
+            "validated_by",
+            "config_from",
+            "sibling_of",
+            "supersedes"
+          ],
+          "description": "Type of relationship to the referenced artifact"
+        }
+      }
+    },
+    "Lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "inputs"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the run that produced this artifact"
+        },
+        "stage_name": {
+          "type": "string",
+          "description": "Pipeline stage name that produced this artifact"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineageReference"
+          },
+          "description": "List of input artifacts this artifact was derived from"
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LineageReference"
+          },
+          "description": "List of artifacts derived from this artifact (populated by downstream stages)"
+        },
+        "dataset_id": {
+          "type": "string",
+          "description": "ID of the dataset this artifact belongs to, if any"
+        },
+        "dataset_version": {
+          "type": "string",
+          "description": "Version tag of the dataset snapshot"
+        }
+      }
+    },
+    "RetentionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_name"],
+      "properties": {
+        "policy_name": {
+          "type": "string",
+          "enum": ["pinned", "default", "cache", "ephemeral"],
+          "description": "Named retention policy"
+        },
+        "expires_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this artifact may be garbage collected"
+        },
+        "keep_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of recent versions to keep (for versioned artifacts)"
+        },
+        "pinned_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of dataset/run IDs that pin this artifact"
+        }
+      }
+    }
+  }
+}
