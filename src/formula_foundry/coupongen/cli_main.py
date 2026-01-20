@@ -1,3 +1,19 @@
+"""CLI for coupon generation (CP-3.5).
+
+This module provides the command-line interface for coupon generation:
+- validate: Validate spec using ConstraintEngine (Tier 0-3)
+- generate: Generate KiCad project from spec
+- drc: Run KiCad DRC on a board file
+- export: Export gerbers and drill files
+- build: Full build pipeline (validate/repair -> generate -> DRC -> export)
+- batch-filter: Filter batch of normalized design vectors using GPU prefilter
+- build-batch: Build multiple coupons from spec template and u vectors
+
+CP-3.5: Pipeline Integration
+- The validate command now uses ConstraintEngine by default for full tiered validation
+- Build command supports --use-engine flag to use ConstraintEngine
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -9,8 +25,18 @@ import numpy as np
 
 from formula_foundry.substrate import canonical_json_dumps
 
-from .api import build_coupon, export_fab, generate_kicad, load_spec, run_drc, validate_spec
+from .api import (
+    build_coupon,
+    build_coupon_with_engine,
+    export_fab,
+    generate_kicad,
+    load_spec,
+    run_drc,
+    validate_spec,
+    validate_spec_with_engine,
+)
 from .constraints.gpu_filter import batch_filter as gpu_batch_filter
+from .constraints.tiers import ConstraintViolationError
 from .fab_profiles import get_fab_limits, list_available_profiles, load_fab_profile
 from .spec import CouponSpec, KicadToolchain
 
@@ -22,6 +48,24 @@ def build_parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate", help="Validate spec and emit resolved design + constraints")
     validate.add_argument("spec", type=Path)
     validate.add_argument("--out", type=Path, default=Path("."))
+    validate.add_argument(
+        "--use-engine",
+        action="store_true",
+        default=True,
+        help="Use ConstraintEngine for full tiered validation (CP-3.5, default: True)",
+    )
+    validate.add_argument(
+        "--legacy",
+        action="store_true",
+        default=False,
+        help="Use legacy constraint system instead of ConstraintEngine",
+    )
+    validate.add_argument(
+        "--constraint-mode",
+        choices=["REJECT", "REPAIR"],
+        default=None,
+        help="Override constraint mode (default: use spec.constraints.mode)",
+    )
 
     generate = subparsers.add_parser("generate", help="Generate KiCad project from spec")
     generate.add_argument("spec", type=Path)
@@ -44,6 +88,24 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--out", type=Path, required=True)
     build.add_argument("--mode", choices=["local", "docker"], default="local")
     build.add_argument("--toolchain-image", type=str, default="")
+    build.add_argument(
+        "--use-engine",
+        action="store_true",
+        default=True,
+        help="Use ConstraintEngine for full tiered validation (CP-3.5, default: True)",
+    )
+    build.add_argument(
+        "--legacy",
+        action="store_true",
+        default=False,
+        help="Use legacy constraint system instead of ConstraintEngine",
+    )
+    build.add_argument(
+        "--constraint-mode",
+        choices=["REJECT", "REPAIR"],
+        default=None,
+        help="Override constraint mode (default: use spec.constraints.mode)",
+    )
 
     # CP-4.2: Batch filter command - filter normalized design vectors using GPU filter API
     batch_filter = subparsers.add_parser(
@@ -109,11 +171,39 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "validate":
         spec = load_spec(args.spec)
-        validate_spec(spec, out_dir=args.out)
+        # CP-3.5: Use ConstraintEngine by default unless --legacy is specified
+        if args.legacy:
+            validate_spec(spec, out_dir=args.out)
+            payload = canonical_json_dumps({"status": "valid", "engine": False})
+        else:
+            try:
+                result = validate_spec_with_engine(
+                    spec,
+                    out_dir=args.out,
+                    mode=args.constraint_mode,  # type: ignore[arg-type]
+                )
+                payload = canonical_json_dumps({
+                    "status": "valid",
+                    "engine": True,
+                    "was_repaired": result.was_repaired,
+                    "constraints_passed": result.proof.passed,
+                    "total_constraints": len(result.proof.constraints),
+                })
+            except ConstraintViolationError as e:
+                error_payload = canonical_json_dumps({
+                    "status": "invalid",
+                    "engine": True,
+                    "violation_tier": e.tier,
+                    "constraint_ids": e.constraint_ids,
+                })
+                sys.stderr.write(error_payload + "\n")
+                return 1
+        sys.stdout.write(payload + "\n")
         return 0
 
     if args.command == "generate":
         spec = load_spec(args.spec)
+        # Use legacy validate_spec for generate since we need the evaluation result
         evaluation = validate_spec(spec, out_dir=args.out)
         generate_kicad(evaluation.resolved, evaluation.spec, args.out)
         return 0
@@ -143,7 +233,28 @@ def main(argv: list[str] | None = None) -> int:
             spec_payload = spec.model_dump(mode="json")
             spec_payload["toolchain"]["kicad"]["docker_image"] = args.toolchain_image
             spec = CouponSpec.model_validate(spec_payload)
-        result = build_coupon(spec, out_root=args.out, mode=args.mode)
+
+        # CP-3.5: Use ConstraintEngine by default unless --legacy is specified
+        if args.legacy:
+            result = build_coupon(spec, out_root=args.out, mode=args.mode)
+        else:
+            try:
+                result = build_coupon_with_engine(
+                    spec,
+                    out_root=args.out,
+                    kicad_mode=args.mode,
+                    constraint_mode=args.constraint_mode,  # type: ignore[arg-type]
+                )
+            except ConstraintViolationError as e:
+                error_payload = canonical_json_dumps({
+                    "status": "constraint_violation",
+                    "engine": True,
+                    "violation_tier": e.tier,
+                    "constraint_ids": e.constraint_ids,
+                })
+                sys.stderr.write(error_payload + "\n")
+                return 1
+
         build_payload = canonical_json_dumps(
             {
                 "output_dir": str(result.output_dir),
