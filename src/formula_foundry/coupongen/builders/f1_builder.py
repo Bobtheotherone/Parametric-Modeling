@@ -570,16 +570,34 @@ class F1CouponBuilder:
         return PositionNM(center_x, 0)
 
     def _build_transmission_line(self, discontinuity_x_nm: int) -> TransmissionLineFeature:
-        """Extract transmission line feature from spec."""
+        """Extract transmission line feature from spec.
+
+        For F1 coupons, length_right_nm is derived from the continuity formula
+        (CP-2.2) and stored in resolved.length_right_nm. This ensures the trace
+        segments connect at the discontinuity center.
+        """
         tl = self.spec.transmission_line
         left_conn = self.spec.connectors.left
         right_conn = self.spec.connectors.right
+
+        # CP-2.2: Use derived length_right_nm from resolved design
+        # For F1 coupons, length_right_nm is derived from:
+        #   length_right = x_right_connector - x_discontinuity_center
+        # This ensures trace continuity at the via transition.
+        length_right_nm = self.resolved.length_right_nm
+        if length_right_nm is None:
+            # Fallback: derive from spec if resolve didn't compute it
+            # This should not happen if the resolver is working correctly
+            left_x = int(left_conn.position_nm[0])
+            right_x = int(right_conn.position_nm[0])
+            x_disc = left_x + int(tl.length_left_nm)
+            length_right_nm = right_x - x_disc
 
         return TransmissionLineFeature(
             w_nm=int(tl.w_nm),
             gap_nm=int(tl.gap_nm),
             length_left_nm=int(tl.length_left_nm),
-            length_right_nm=int(tl.length_right_nm),
+            length_right_nm=length_right_nm,
             layer=tl.layer,
             left_start_x_nm=int(left_conn.position_nm[0]),
             right_end_x_nm=int(right_conn.position_nm[0]),
