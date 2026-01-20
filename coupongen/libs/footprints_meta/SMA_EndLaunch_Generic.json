@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "SMA_EndLaunch_Generic",
+  "name": "Generic SMA End-Launch Connector",
+  "description": "Generic SMA end-launch connector footprint for coupon generation. SMD pads for signal and ground connections. Parametric placeholder with nominal dimensions.",
+  "footprint_lib": "Coupongen_Connectors",
+  "footprint_name": "SMA_EndLaunch_Generic",
+  "connector_type": "SMA",
+  "anchor": {
+    "x_nm": 0,
+    "y_nm": 0,
+    "description": "Footprint origin at center of signal pad"
+  },
+  "signal_pad": {
+    "pad_number": "1",
+    "center_x_nm": 0,
+    "center_y_nm": 0,
+    "size_x_nm": 500000,
+    "size_y_nm": 1500000,
+    "shape": "rect",
+    "layers": ["F.Cu", "F.Paste", "F.Mask"],
+    "net_name": "SIG"
+  },
+  "ground_pads": [
+    {
+      "pad_number": "2",
+      "center_x_nm": -1500000,
+      "center_y_nm": 0,
+      "size_x_nm": 1500000,
+      "size_y_nm": 2500000,
+      "shape": "rect",
+      "layers": ["F.Cu", "F.Paste", "F.Mask"],
+      "net_name": "GND"
+    },
+    {
+      "pad_number": "2",
+      "center_x_nm": 1500000,
+      "center_y_nm": 0,
+      "size_x_nm": 1500000,
+      "size_y_nm": 2500000,
+      "shape": "rect",
+      "layers": ["F.Cu", "F.Paste", "F.Mask"],
+      "net_name": "GND"
+    }
+  ],
+  "launch_reference": {
+    "x_nm": 0,
+    "y_nm": 0,
+    "direction_deg": 0,
+    "description": "Transmission line connects at signal pad center, launches in +X direction toward board center"
+  },
+  "courtyard": {
+    "min_x_nm": -3500000,
+    "max_x_nm": 3500000,
+    "min_y_nm": -2800000,
+    "max_y_nm": 2800000
+  },
+  "impedance_ohms": 50,
+  "max_frequency_ghz": 18
+}

@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry/schemas/footprint_meta.v1.json",
+  "title": "FootprintMetadata",
+  "description": "Metadata for connector footprints defining anchor point, signal pad, ground pads, and launch reference. All dimensions are in nanometers (integer nm).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "footprint_lib",
+    "footprint_name",
+    "anchor",
+    "signal_pad",
+    "ground_pads",
+    "launch_reference"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version for footprint metadata format"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_]+$",
+      "description": "Unique identifier for the footprint metadata (matches footprint name)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name for the footprint"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the footprint and its intended use"
+    },
+    "footprint_lib": {
+      "type": "string",
+      "minLength": 1,
+      "description": "KiCad footprint library name (e.g., 'Coupongen_Connectors')"
+    },
+    "footprint_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "KiCad footprint name within the library (e.g., 'SMA_EndLaunch_Generic')"
+    },
+    "connector_type": {
+      "type": "string",
+      "enum": ["SMA", "SMPM", "K", "2.92mm", "2.4mm", "1.85mm", "1.0mm", "custom"],
+      "description": "RF connector type/series"
+    },
+    "anchor": {
+      "type": "object",
+      "required": ["x_nm", "y_nm"],
+      "additionalProperties": false,
+      "properties": {
+        "x_nm": {
+          "type": "integer",
+          "description": "X coordinate of the anchor point (footprint origin) in nanometers"
+        },
+        "y_nm": {
+          "type": "integer",
+          "description": "Y coordinate of the anchor point (footprint origin) in nanometers"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the anchor point location"
+        }
+      },
+      "description": "Anchor point (footprint placement origin) in local coordinates"
+    },
+    "signal_pad": {
+      "type": "object",
+      "required": ["pad_number", "center_x_nm", "center_y_nm", "size_x_nm", "size_y_nm"],
+      "additionalProperties": false,
+      "properties": {
+        "pad_number": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pad number/name in the footprint (e.g., '1')"
+        },
+        "center_x_nm": {
+          "type": "integer",
+          "description": "X coordinate of pad center relative to anchor in nanometers"
+        },
+        "center_y_nm": {
+          "type": "integer",
+          "description": "Y coordinate of pad center relative to anchor in nanometers"
+        },
+        "size_x_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Pad width (X dimension) in nanometers"
+        },
+        "size_y_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Pad height (Y dimension) in nanometers"
+        },
+        "shape": {
+          "type": "string",
+          "enum": ["rect", "roundrect", "oval", "circle", "custom"],
+          "default": "rect",
+          "description": "Pad shape"
+        },
+        "layers": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Copper layers the pad exists on"
+        },
+        "net_name": {
+          "type": "string",
+          "default": "SIG",
+          "description": "Default net name for the signal pad"
+        }
+      },
+      "description": "Signal pad (center conductor connection point)"
+    },
+    "ground_pads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pad_number", "center_x_nm", "center_y_nm", "size_x_nm", "size_y_nm"],
+        "additionalProperties": false,
+        "properties": {
+          "pad_number": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Pad number/name in the footprint"
+          },
+          "center_x_nm": {
+            "type": "integer",
+            "description": "X coordinate of pad center relative to anchor in nanometers"
+          },
+          "center_y_nm": {
+            "type": "integer",
+            "description": "Y coordinate of pad center relative to anchor in nanometers"
+          },
+          "size_x_nm": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Pad width (X dimension) in nanometers"
+          },
+          "size_y_nm": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Pad height (Y dimension) in nanometers"
+          },
+          "shape": {
+            "type": "string",
+            "enum": ["rect", "roundrect", "oval", "circle", "custom"],
+            "default": "rect",
+            "description": "Pad shape"
+          },
+          "layers": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Copper layers the pad exists on"
+          },
+          "net_name": {
+            "type": "string",
+            "default": "GND",
+            "description": "Default net name for the ground pad"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "Ground pads (shield/return connection points)"
+    },
+    "launch_reference": {
+      "type": "object",
+      "required": ["x_nm", "y_nm", "direction_deg"],
+      "additionalProperties": false,
+      "properties": {
+        "x_nm": {
+          "type": "integer",
+          "description": "X coordinate of the launch reference point in nanometers"
+        },
+        "y_nm": {
+          "type": "integer",
+          "description": "Y coordinate of the launch reference point in nanometers"
+        },
+        "direction_deg": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360,
+          "description": "Direction of transmission line launch in degrees (0 = +X, 90 = +Y)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the launch reference (e.g., 'trace connection point toward board center')"
+        }
+      },
+      "description": "Launch reference point where the transmission line connects to the signal pad"
+    },
+    "courtyard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_x_nm": {
+          "type": "integer",
+          "description": "Minimum X coordinate of courtyard bounding box"
+        },
+        "max_x_nm": {
+          "type": "integer",
+          "description": "Maximum X coordinate of courtyard bounding box"
+        },
+        "min_y_nm": {
+          "type": "integer",
+          "description": "Minimum Y coordinate of courtyard bounding box"
+        },
+        "max_y_nm": {
+          "type": "integer",
+          "description": "Maximum Y coordinate of courtyard bounding box"
+        }
+      },
+      "description": "Courtyard bounding box in nanometers (optional)"
+    },
+    "impedance_ohms": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Characteristic impedance of the connector in ohms (typically 50)"
+    },
+    "max_frequency_ghz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Maximum operating frequency in GHz"
+    }
+  }
+}
