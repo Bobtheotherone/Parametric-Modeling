@@ -24,6 +24,7 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
     - verification:
         - constraints (passed + failed_ids)
         - drc (returncode, report_path, summary, canonical_hash)
+        - layer_set (per Section 13.5.3) - validation of expected layers
     - lineage (git sha, UTC timestamp - explicitly excluded from design_hash)
 """
 
@@ -39,6 +40,7 @@ from typing import Any, cast
 from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_bytes
 
 from .constraints import ConstraintProof, resolve_fab_limits
+from .layer_validation import LayerValidationResult, layer_validation_payload
 from .resolve import ResolvedDesign
 from .spec import CouponSpec
 
@@ -66,6 +68,7 @@ def build_manifest(
     export_hashes: Mapping[str, str],
     drc_report_path: Path,
     drc_returncode: int,
+    layer_validation: LayerValidationResult | None = None,
     git_sha: str | None = None,
     timestamp_utc: str | None = None,
 ) -> dict[str, Any]:
@@ -85,6 +88,7 @@ def build_manifest(
         export_hashes: Mapping of relative export paths to their canonical hashes.
         drc_report_path: Path to the DRC JSON report.
         drc_returncode: Return code from the DRC check.
+        layer_validation: Optional layer set validation result (per Section 13.5.3).
         git_sha: Optional explicit git SHA (defaults to HEAD of cwd).
         timestamp_utc: Optional explicit UTC timestamp (defaults to now).
 
@@ -124,6 +128,7 @@ def build_manifest(
                 "summary": drc_summary,
                 "canonical_hash": drc_canonical_hash,
             },
+            "layer_set": layer_validation_payload(layer_validation) if layer_validation else None,
         },
         "lineage": {
             "git_sha": resolved_git_sha,

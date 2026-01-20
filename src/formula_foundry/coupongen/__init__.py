@@ -58,6 +58,20 @@ from .hashing import (
     canonicalize_kicad_pcb_text,
     coupon_id_from_design_hash,
 )
+from .layer_validation import (
+    FamilyOverride,
+    LayerSetConfig,
+    LayerSetValidationError,
+    LayerValidationResult,
+    clear_layer_sets_cache,
+    extract_layers_from_exports,
+    get_family_override,
+    get_gerber_extension_map,
+    get_layer_set_for_copper_count,
+    layer_validation_payload,
+    validate_family_layer_requirements,
+    validate_layer_set,
+)
 from .kicad import BackendA, IKiCadBackend, KicadCliMode, KicadCliRunner, build_drc_args, deterministic_uuid
 from .manifest import ManifestPaths, build_manifest, load_manifest, toolchain_hash, write_manifest
 from .paths import FOOTPRINT_LIB_DIR, REPO_ROOT
@@ -133,6 +147,11 @@ __all__ = [
     "DielectricProperties",
     "StackupLayer",
     "StackupProfile",
+    # Layer validation types
+    "FamilyOverride",
+    "LayerSetConfig",
+    "LayerSetValidationError",
+    "LayerValidationResult",
     # KiCad types
     "BackendA",
     "IKiCadBackend",
@@ -205,4 +224,13 @@ __all__ = [
     "ToolchainProvenance",
     "ToolchainProvenanceError",
     "capture_toolchain_provenance",
+    # Layer validation functions
+    "clear_layer_sets_cache",
+    "extract_layers_from_exports",
+    "get_family_override",
+    "get_gerber_extension_map",
+    "get_layer_set_for_copper_count",
+    "layer_validation_payload",
+    "validate_family_layer_requirements",
+    "validate_layer_set",
 ]
