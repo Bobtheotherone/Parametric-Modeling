@@ -7,6 +7,7 @@ avoid cross-platform rounding drift.
 
 Submodules:
 - primitives: Core geometry primitives (TrackSegment, Via, Polygon, etc.)
+- layout: Layout plan dataclasses (LayoutPlan, SegmentPlan, PortPlan)
 - cpwg: CPWG transmission line generators with ground via fencing
 - via_patterns: Signal via and return via pattern generators
 - cutouts: Antipad and plane cutout shape generators
@@ -38,6 +39,14 @@ from .cutouts import (
     generate_rectangle_antipad,
     generate_roundrect_antipad,
     generate_slot_antipad,
+)
+from .layout import (
+    LayoutPlan,
+    PortPlan,
+    SegmentPlan,
+    create_f0_layout_plan,
+    create_f1_layout_plan,
+    derive_right_length_nm,
 )
 from .primitives import (
     ArcTrack,
@@ -77,6 +86,13 @@ from .via_patterns import (
 )
 
 __all__ = [
+    # Layout plan (single source of truth for geometry)
+    "LayoutPlan",
+    "PortPlan",
+    "SegmentPlan",
+    "create_f0_layout_plan",
+    "create_f1_layout_plan",
+    "derive_right_length_nm",
     # Primitives
     "ArcTrack",
     "BoardOutline",
