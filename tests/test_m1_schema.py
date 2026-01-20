@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from formula_foundry.coupongen.spec import COUPONSPEC_SCHEMA, CouponSpec
+from formula_foundry.coupongen.spec import (
+    COUPONSPEC_SCHEMA,
+    COUPONSPEC_SCHEMA_PATH,
+    CouponSpec,
+    get_json_schema,
+    load_couponspec,
+    load_couponspec_from_file,
+)
 
 
 def _example_spec_data() -> dict[str, object]:
@@ -119,3 +130,114 @@ def test_couponspec_schema_validation() -> None:
     data["unexpected_field"] = "nope"
     with pytest.raises(ValidationError):
         CouponSpec.model_validate(data)
+
+
+def test_json_schema_file_exists() -> None:
+    """REQ-M1-001: JSON Schema file must exist at the canonical path."""
+    assert COUPONSPEC_SCHEMA_PATH.exists(), f"Schema file not found: {COUPONSPEC_SCHEMA_PATH}"
+
+
+def test_json_schema_file_is_valid() -> None:
+    """REQ-M1-001: JSON Schema file must be valid JSON Schema."""
+    schema = get_json_schema()
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["title"] == "CouponSpec"
+    assert schema["type"] == "object"
+    assert "schema_version" in schema["required"]
+
+
+def test_load_couponspec_from_dict() -> None:
+    """Test loading CouponSpec from dict validates and normalizes units."""
+    data = _example_spec_data()
+    spec = load_couponspec(data)
+    assert spec.schema_version == 1
+    assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
+    assert spec.units == "nm"
+
+
+def test_load_couponspec_from_json_file() -> None:
+    """REQ-M1-002: Must support loading CouponSpec from JSON files."""
+    data = _example_spec_data()
+    with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+        json.dump(data, f)
+        f.flush()
+        path = Path(f.name)
+
+    try:
+        spec = load_couponspec_from_file(path)
+        assert spec.schema_version == 1
+        assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
+    finally:
+        path.unlink()
+
+
+def test_load_couponspec_from_yaml_file() -> None:
+    """REQ-M1-002: Must support loading CouponSpec from YAML files."""
+    yaml = pytest.importorskip("yaml")
+    data = _example_spec_data()
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        yaml.safe_dump(data, f)
+        f.flush()
+        path = Path(f.name)
+
+    try:
+        spec = load_couponspec_from_file(path)
+        assert spec.schema_version == 1
+        assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
+    finally:
+        path.unlink()
+
+
+def test_load_couponspec_from_yml_file() -> None:
+    """REQ-M1-002: Must support .yml extension."""
+    yaml = pytest.importorskip("yaml")
+    data = _example_spec_data()
+    with tempfile.NamedTemporaryFile(suffix=".yml", mode="w", delete=False) as f:
+        yaml.safe_dump(data, f)
+        f.flush()
+        path = Path(f.name)
+
+    try:
+        spec = load_couponspec_from_file(path)
+        assert spec.schema_version == 1
+    finally:
+        path.unlink()
+
+
+def test_load_couponspec_with_unit_strings() -> None:
+    """REQ-M1-001: CouponSpec must support mm/mil/um unit strings that normalize to nm."""
+    data = _example_spec_data()
+    # Replace integer nm values with unit strings
+    data["board"]["outline"]["width_nm"] = "20mm"  # type: ignore[index]
+    data["board"]["outline"]["length_nm"] = "80mm"  # type: ignore[index]
+    data["board"]["outline"]["corner_radius_nm"] = "2mm"  # type: ignore[index]
+    data["transmission_line"]["w_nm"] = "0.3mm"  # type: ignore[index]
+    data["transmission_line"]["gap_nm"] = "7.09mil"  # type: ignore[index]
+
+    spec = load_couponspec(data)
+    assert spec.board.outline.width_nm == 20_000_000
+    assert spec.board.outline.length_nm == 80_000_000
+    assert spec.board.outline.corner_radius_nm == 2_000_000
+    assert spec.transmission_line.w_nm == 300_000
+    # 7.09mil = 7.09 * 25400 = 180086 nm (approximately)
+    assert spec.transmission_line.gap_nm == 180086
+
+
+def test_load_couponspec_unsupported_extension_raises() -> None:
+    """Unsupported file extensions must raise ValueError."""
+    with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
+        f.write("{}")
+        f.flush()
+        path = Path(f.name)
+
+    try:
+        with pytest.raises(ValueError, match="Unsupported file extension"):
+            load_couponspec_from_file(path)
+    finally:
+        path.unlink()
+
+
+def test_load_couponspec_file_not_found_raises() -> None:
+    """Missing file must raise FileNotFoundError."""
+    with pytest.raises(FileNotFoundError, match="not found"):
+        load_couponspec_from_file("/nonexistent/path/to/spec.json")

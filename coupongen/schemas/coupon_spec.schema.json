@@ -1,0 +1,586 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/coupon_spec.v1.json",
+  "title": "CouponSpec",
+  "description": "CouponSpec schema version 1 - Parametric coupon generator DSL specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "coupon_family",
+    "toolchain",
+    "fab_profile",
+    "stackup",
+    "board",
+    "connectors",
+    "transmission_line",
+    "constraints",
+    "export"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version identifier; must be 1 for this schema version"
+    },
+    "coupon_family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Coupon family identifier (e.g., F0_CALIBRATION_THRU, F1_SINGLE_ENDED_VIA, F2_DIFFERENTIAL_VIA)"
+    },
+    "units": {
+      "type": "string",
+      "const": "nm",
+      "default": "nm",
+      "description": "Internal unit representation (always nm for integer nanometers)"
+    },
+    "toolchain": {
+      "$ref": "#/$defs/Toolchain"
+    },
+    "fab_profile": {
+      "$ref": "#/$defs/FabProfile"
+    },
+    "stackup": {
+      "$ref": "#/$defs/Stackup"
+    },
+    "board": {
+      "$ref": "#/$defs/Board"
+    },
+    "connectors": {
+      "$ref": "#/$defs/Connectors"
+    },
+    "transmission_line": {
+      "$ref": "#/$defs/TransmissionLine"
+    },
+    "discontinuity": {
+      "anyOf": [
+        {"$ref": "#/$defs/Discontinuity"},
+        {"type": "null"}
+      ],
+      "default": null,
+      "description": "Optional discontinuity specification (via transition, etc.)"
+    },
+    "constraints": {
+      "$ref": "#/$defs/ConstraintsSpec"
+    },
+    "export": {
+      "$ref": "#/$defs/ExportSpec"
+    }
+  },
+  "$defs": {
+    "LengthNM": {
+      "title": "LengthNM",
+      "description": "Integer nanometers (int or numeric string) or a string with nm/um/mm/mil units",
+      "anyOf": [
+        {"type": "integer"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+\\s*$"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+(?:\\.\\d+)?\\s*(nm|um|mm|mil|NM|UM|MM|MIL)\\s*$"}
+      ]
+    },
+    "AngleMdeg": {
+      "title": "AngleMdeg",
+      "description": "Angle in millidegrees (int or numeric string) or a string with deg/mdeg units",
+      "anyOf": [
+        {"type": "integer"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+\\s*$"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+(?:\\.\\d+)?\\s*(deg|mdeg|DEG|MDEG)\\s*$"}
+      ]
+    },
+    "FrequencyHz": {
+      "title": "FrequencyHz",
+      "description": "Frequency in Hz (int or numeric string) or a string with Hz/kHz/MHz/GHz units",
+      "anyOf": [
+        {"type": "integer"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+\\s*$"},
+        {"type": "string", "pattern": "^\\s*[+-]?\\d+(?:\\.\\d+)?\\s*(Hz|kHz|MHz|GHz|hz|khz|mhz|ghz)\\s*$"}
+      ]
+    },
+    "KicadToolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "docker_image"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pinned KiCad version (e.g., '9.0.7')"
+        },
+        "docker_image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Docker image reference with optional digest (e.g., 'kicad/kicad:9.0.7@sha256:...')"
+        }
+      }
+    },
+    "Toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kicad"],
+      "properties": {
+        "kicad": {
+          "$ref": "#/$defs/KicadToolchain"
+        }
+      }
+    },
+    "FabProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Fabrication profile identifier (e.g., 'oshpark_4layer', 'pcbway_standard')"
+        },
+        "overrides": {
+          "type": "object",
+          "default": {},
+          "description": "Optional overrides for fab profile parameters"
+        }
+      }
+    },
+    "StackupMaterials": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["er", "loss_tangent"],
+      "properties": {
+        "er": {
+          "type": "number",
+          "description": "Relative permittivity (dielectric constant)"
+        },
+        "loss_tangent": {
+          "type": "number",
+          "description": "Dielectric loss tangent"
+        }
+      }
+    },
+    "Stackup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["copper_layers", "thicknesses_nm", "materials"],
+      "properties": {
+        "copper_layers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of copper layers"
+        },
+        "thicknesses_nm": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/LengthNM"
+          },
+          "description": "Layer-to-layer thicknesses keyed by layer pair (e.g., 'L1_to_L2')"
+        },
+        "materials": {
+          "$ref": "#/$defs/StackupMaterials"
+        }
+      }
+    },
+    "BoardOutline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width_nm", "length_nm", "corner_radius_nm"],
+      "properties": {
+        "width_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Board width in nanometers"
+        },
+        "length_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Board length in nanometers"
+        },
+        "corner_radius_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Corner radius in nanometers"
+        }
+      }
+    },
+    "BoardOrigin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Origin mode (e.g., 'EDGE_L_CENTER')"
+        }
+      }
+    },
+    "BoardText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coupon_id", "include_manifest_hash"],
+      "properties": {
+        "coupon_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Coupon ID template (may use KiCad variables like '${COUPON_ID}')"
+        },
+        "include_manifest_hash": {
+          "type": "boolean",
+          "description": "Whether to include manifest hash in board text"
+        }
+      }
+    },
+    "Board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outline", "origin", "text"],
+      "properties": {
+        "outline": {
+          "$ref": "#/$defs/BoardOutline"
+        },
+        "origin": {
+          "$ref": "#/$defs/BoardOrigin"
+        },
+        "text": {
+          "$ref": "#/$defs/BoardText"
+        }
+      }
+    },
+    "Connector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["footprint", "position_nm", "rotation_deg"],
+      "properties": {
+        "footprint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Footprint library reference (e.g., 'Coupongen_Connectors:SMA_EndLaunch_Generic')"
+        },
+        "position_nm": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/LengthNM"},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Position as [x_nm, y_nm] tuple"
+        },
+        "rotation_deg": {
+          "type": "integer",
+          "description": "Rotation in degrees"
+        }
+      }
+    },
+    "Connectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": {
+          "$ref": "#/$defs/Connector"
+        },
+        "right": {
+          "$ref": "#/$defs/Connector"
+        }
+      }
+    },
+    "ViaSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drill_nm", "diameter_nm"],
+      "properties": {
+        "drill_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via drill diameter in nanometers"
+        },
+        "diameter_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via finished diameter in nanometers"
+        }
+      }
+    },
+    "SignalViaSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drill_nm", "diameter_nm", "pad_diameter_nm"],
+      "properties": {
+        "drill_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via drill diameter in nanometers"
+        },
+        "diameter_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via finished diameter in nanometers"
+        },
+        "pad_diameter_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via pad diameter in nanometers"
+        }
+      }
+    },
+    "GroundViaFence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "pitch_nm", "offset_from_gap_nm", "via"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether ground via fence is enabled"
+        },
+        "pitch_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Via fence pitch in nanometers"
+        },
+        "offset_from_gap_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Offset from CPWG gap in nanometers"
+        },
+        "via": {
+          "$ref": "#/$defs/ViaSpec"
+        }
+      }
+    },
+    "TransmissionLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "layer", "w_nm", "gap_nm", "length_left_nm", "length_right_nm"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Transmission line type (e.g., 'CPWG', 'MICROSTRIP')"
+        },
+        "layer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "KiCad layer name (e.g., 'F.Cu')"
+        },
+        "w_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Trace width in nanometers"
+        },
+        "gap_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Gap to ground plane in nanometers"
+        },
+        "length_left_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Left section length in nanometers"
+        },
+        "length_right_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Right section length in nanometers"
+        },
+        "ground_via_fence": {
+          "anyOf": [
+            {"$ref": "#/$defs/GroundViaFence"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Optional ground via fence specification"
+        }
+      }
+    },
+    "Antipad": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shape"],
+      "properties": {
+        "shape": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Antipad shape (e.g., 'CIRCLE', 'ROUNDRECT', 'OVAL')"
+        },
+        "rx_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "X radius for ROUNDRECT shape"
+        },
+        "ry_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Y radius for ROUNDRECT shape"
+        },
+        "corner_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Corner radius for ROUNDRECT shape"
+        },
+        "r_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Radius for CIRCLE shape"
+        }
+      }
+    },
+    "PlaneCutout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shape", "length_nm", "width_nm", "rotation_deg"],
+      "properties": {
+        "shape": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Cutout shape (e.g., 'SLOT', 'RECT')"
+        },
+        "length_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Cutout length in nanometers"
+        },
+        "width_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Cutout width in nanometers"
+        },
+        "rotation_deg": {
+          "type": "integer",
+          "description": "Rotation in degrees"
+        }
+      }
+    },
+    "ReturnVias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "count", "radius_nm", "via"],
+      "properties": {
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Return via pattern (e.g., 'RING', 'QUAD')"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of return vias"
+        },
+        "radius_nm": {
+          "$ref": "#/$defs/LengthNM",
+          "description": "Pattern radius in nanometers"
+        },
+        "via": {
+          "$ref": "#/$defs/ViaSpec"
+        }
+      }
+    },
+    "Discontinuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "signal_via"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Discontinuity type (e.g., 'VIA_TRANSITION')"
+        },
+        "signal_via": {
+          "$ref": "#/$defs/SignalViaSpec"
+        },
+        "antipads": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/Antipad"},
+          "default": {},
+          "description": "Antipads keyed by layer name (e.g., 'L2', 'L3')"
+        },
+        "return_vias": {
+          "anyOf": [
+            {"$ref": "#/$defs/ReturnVias"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Optional return via pattern"
+        },
+        "plane_cutouts": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/PlaneCutout"},
+          "default": {},
+          "description": "Plane cutouts keyed by layer name"
+        }
+      }
+    },
+    "DrcSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["must_pass", "severity"],
+      "properties": {
+        "must_pass": {
+          "type": "boolean",
+          "description": "Whether DRC must pass"
+        },
+        "severity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "DRC severity level (e.g., 'all', 'error')"
+        }
+      }
+    },
+    "SymmetrySpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enforce"],
+      "properties": {
+        "enforce": {
+          "type": "boolean",
+          "description": "Whether to enforce symmetry constraints"
+        }
+      }
+    },
+    "ConstraintsSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "drc", "symmetry", "allow_unconnected_copper"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["REJECT", "REPAIR"],
+          "description": "Constraint violation mode"
+        },
+        "drc": {
+          "$ref": "#/$defs/DrcSpec"
+        },
+        "symmetry": {
+          "$ref": "#/$defs/SymmetrySpec"
+        },
+        "allow_unconnected_copper": {
+          "type": "boolean",
+          "description": "Whether to allow unconnected copper regions"
+        }
+      }
+    },
+    "ExportGerbers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "format"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether Gerber export is enabled"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Gerber format (e.g., 'gerbers')"
+        }
+      }
+    },
+    "ExportDrill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "format"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether drill export is enabled"
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Drill format (e.g., 'excellon')"
+        }
+      }
+    },
+    "ExportSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gerbers", "drill", "outputs_dir"],
+      "properties": {
+        "gerbers": {
+          "$ref": "#/$defs/ExportGerbers"
+        },
+        "drill": {
+          "$ref": "#/$defs/ExportDrill"
+        },
+        "outputs_dir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Output directory path"
+        }
+      }
+    }
+  }
+}
