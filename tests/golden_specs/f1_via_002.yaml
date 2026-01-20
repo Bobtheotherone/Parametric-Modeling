@@ -1,0 +1,91 @@
+# Golden spec F1-002: Small via F1 single-ended via transition
+# Parameters: 127um trace, 127um gap, 254um via drill (min for OSH Park)
+schema_version: 1
+coupon_family: F1_SINGLE_ENDED_VIA
+units: nm
+
+toolchain:
+  kicad:
+    version: "9.0.7"
+    docker_image: "kicad/kicad:9.0.7"
+
+fab_profile:
+  id: oshpark_4layer
+
+stackup:
+  copper_layers: 4
+  thicknesses_nm:
+    L1_to_L2: "170 um"
+    L2_to_L3: "1090 um"
+    L3_to_L4: "170 um"
+  materials:
+    er: 3.66
+    loss_tangent: 0.0095
+
+board:
+  outline:
+    width_nm: "10 mm"
+    length_nm: "28 mm"
+    corner_radius_nm: "500 um"
+  origin:
+    mode: EDGE_L_CENTER
+  text:
+    coupon_id: "F1-VIA-002"
+    include_manifest_hash: true
+
+connectors:
+  left:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["1 mm", "0 nm"]
+    rotation_deg: 0
+  right:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["27 mm", "0 nm"]
+    rotation_deg: 180
+
+transmission_line:
+  type: CPWG
+  layer: F.Cu
+  w_nm: "127 um"
+  gap_nm: "127 um"
+  length_left_nm: "10 mm"
+  length_right_nm: "10 mm"
+
+discontinuity:
+  type: VIA_TRANSITION
+  signal_via:
+    drill_nm: "254 um"
+    diameter_nm: "457 um"
+    pad_diameter_nm: "600 um"
+  antipads:
+    L2:
+      shape: CIRCLE
+      r_nm: "400 um"
+    L3:
+      shape: CIRCLE
+      r_nm: "400 um"
+  return_vias:
+    pattern: QUAD
+    count: 4
+    radius_nm: "900 um"
+    via:
+      drill_nm: "254 um"
+      diameter_nm: "457 um"
+
+constraints:
+  mode: REJECT
+  drc:
+    must_pass: true
+    severity: all
+  symmetry:
+    enforce: true
+  allow_unconnected_copper: false
+
+export:
+  gerbers:
+    enabled: true
+    format: gerbers
+  drill:
+    enabled: true
+    format: excellon
+  outputs_dir: "./outputs"
