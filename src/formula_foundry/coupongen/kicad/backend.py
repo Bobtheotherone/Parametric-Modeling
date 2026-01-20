@@ -1,83 +1,86 @@
+"""KiCad backend interface and implementations.
+
+This module defines the IKiCadBackend interface and the primary BackendA
+implementation that uses S-expression generation for headless .kicad_pcb
+file creation.
+
+Satisfies REQ-M1-012 and REQ-M1-013.
+"""
+
 from __future__ import annotations
 
 import abc
-import uuid
-from collections.abc import Iterable
-from decimal import Decimal
 from pathlib import Path
 
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
-
-_UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "coupongen")
+from .board_writer import (
+    BoardWriter,
+    build_board_text,
+    deterministic_uuid,
+    deterministic_uuid_indexed,
+    write_board,
+)
 
 
 class IKiCadBackend(abc.ABC):
+    """Abstract interface for KiCad backend implementations.
+
+    Backends are responsible for generating KiCad project files from
+    CouponSpec and ResolvedDesign.
+    """
+
     name: str
 
     @abc.abstractmethod
-    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
+    def write_board(
+        self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path
+    ) -> Path:
+        """Write a KiCad board file.
+
+        Args:
+            spec: Coupon specification.
+            resolved: Resolved design with concrete parameters.
+            out_dir: Output directory for the board file.
+
+        Returns:
+            Path to the generated .kicad_pcb file.
+        """
         raise NotImplementedError
 
 
 class BackendA(IKiCadBackend):
+    """Primary backend using S-expression generation.
+
+    This backend generates .kicad_pcb files using the sexpr module,
+    with deterministic UUIDv5-based tstamp generation. It is headless
+    and does not require KiCad to be installed for file generation.
+    """
+
     name = "sexpr"
 
-    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        board_path = out_dir / "coupon.kicad_pcb"
-        board_text = build_board_text(spec, resolved)
-        board_path.write_text(board_text, encoding="utf-8")
-        return board_path
+    def write_board(
+        self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path
+    ) -> Path:
+        """Write a KiCad board file using S-expression generation.
+
+        Args:
+            spec: Coupon specification.
+            resolved: Resolved design with concrete parameters.
+            out_dir: Output directory for the board file.
+
+        Returns:
+            Path to the generated .kicad_pcb file.
+        """
+        return write_board(spec, resolved, out_dir)
 
 
-def deterministic_uuid(schema_version: int, path: str) -> str:
-    namespace = uuid.uuid5(_UUID_NAMESPACE, f"schema:{schema_version}")
-    return str(uuid.uuid5(namespace, path))
-
-
-def build_board_text(spec: CouponSpec, resolved: ResolvedDesign) -> str:
-    width_nm = int(spec.board.outline.width_nm)
-    length_nm = int(spec.board.outline.length_nm)
-    half_width = width_nm // 2
-    start = _format_point(0, -half_width)
-    end = _format_point(length_nm, half_width)
-    outline_uuid = deterministic_uuid(spec.schema_version, "board.outline")
-    lines = [
-        "(kicad_pcb (version 20240101) (generator coupongen)",
-        '  (general (thickness 1.6))',
-        '  (paper "A4")',
-        '  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))',
-        '  (net 0 "")',
-        '  (net 1 "SIG")',
-        '  (net 2 "GND")',
-        f'  (gr_rect (start {start}) (end {end}) (layer "Edge.Cuts") (width 0.1) (tstamp {outline_uuid}))',
-    ]
-    lines.extend(_footprint_blocks(spec))
-    lines.append(")")
-    return "\n".join(lines)
-
-
-def _footprint_blocks(spec: CouponSpec) -> Iterable[str]:
-    blocks: list[str] = []
-    for side in ("left", "right"):
-        connector = getattr(spec.connectors, side)
-        uuid_value = deterministic_uuid(spec.schema_version, f"connector.{side}")
-        position = _format_point(int(connector.position_nm[0]), int(connector.position_nm[1]))
-        blocks.append(
-            f'  (footprint "{connector.footprint}" (layer "F.Cu") '
-            f'(at {position} {connector.rotation_deg}) (tstamp {uuid_value}))'
-        )
-    return blocks
-
-
-def _format_point(x_nm: int, y_nm: int) -> str:
-    return f"{_nm_to_mm(x_nm)} {_nm_to_mm(y_nm)}"
-
-
-def _nm_to_mm(value_nm: int) -> str:
-    mm = Decimal(value_nm) / Decimal(1_000_000)
-    text = format(mm, "f")
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return text or "0"
+__all__ = [
+    "BackendA",
+    "BoardWriter",
+    "IKiCadBackend",
+    "build_board_text",
+    "deterministic_uuid",
+    "deterministic_uuid_indexed",
+    "write_board",
+]
