@@ -59,6 +59,19 @@ from .sim_runner import (
     SimulationTimeoutError,
     load_sparam_result,
 )
+from .sparam_extract import (
+    ExtractionConfig,
+    ExtractionResult,
+    PortSignalData,
+    apply_deembedding,
+    build_manifest_entry,
+    extract_sparams,
+    extract_sparams_from_csv,
+    extract_sparams_from_port_signals,
+    extract_sparams_from_touchstone,
+    load_port_signals_json,
+    write_extraction_result,
+)
 from .spec import (
     SIMULATIONSPEC_SCHEMA,
     BoundarySpec,
@@ -194,4 +207,16 @@ __all__ = [
     "WaveguidePortSpec",
     "build_ports_from_resolved",
     "waveguide_port_to_basic_port_spec",
+    # S-parameter extraction (REQ-M2-007)
+    "ExtractionConfig",
+    "ExtractionResult",
+    "PortSignalData",
+    "apply_deembedding",
+    "build_manifest_entry",
+    "extract_sparams",
+    "extract_sparams_from_csv",
+    "extract_sparams_from_port_signals",
+    "extract_sparams_from_touchstone",
+    "load_port_signals_json",
+    "write_extraction_result",
 ]
