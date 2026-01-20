@@ -1,4 +1,17 @@
 from .cli_main import build_parser
+from .convert import build_simulation_spec, simulation_canonical_json, write_simulation_spec
+from .geometry import (
+    BoardOutlineSpec,
+    DiscontinuitySpec,
+    GeometrySpec,
+    LayerSpec,
+    StackupSpec,
+    TransmissionLineSpec,
+    build_geometry_spec,
+    geometry_canonical_json,
+    layer_positions_nm,
+    write_geometry_spec,
+)
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
 from .spec import (
     SIMULATIONSPEC_SCHEMA,
@@ -28,10 +41,19 @@ from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 __all__ = [
     # Toolchain (existing)
     "DEFAULT_OPENEMS_TOOLCHAIN_PATH",
+    "BoardOutlineSpec",
+    "DiscontinuitySpec",
+    "GeometrySpec",
+    "LayerSpec",
+    "StackupSpec",
     "OpenEMSMode",
     "OpenEMSRunner",
     "OpenEMSToolchain",
     "build_parser",
+    "build_geometry_spec",
+    "build_simulation_spec",
+    "geometry_canonical_json",
+    "layer_positions_nm",
     "load_openems_toolchain",
     "parse_openems_version_output",
     # Units (new)
@@ -56,8 +78,12 @@ __all__ = [
     "PortSpec",
     "SimulationControlSpec",
     "SimulationSpec",
+    "TransmissionLineSpec",
     "TerminationSpec",
     "ToolchainSpec",
     "SIMULATIONSPEC_SCHEMA",
     "load_simulationspec",
+    "simulation_canonical_json",
+    "write_geometry_spec",
+    "write_simulation_spec",
 ]
