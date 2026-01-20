@@ -29,6 +29,15 @@ from formula_foundry.m3.dataset_snapshot import (
     SplitDefinition,
     compute_manifest_hash,
 )
+from formula_foundry.m3.lineage_graph import (
+    LineageEdge,
+    LineageGraph,
+    LineageGraphError,
+    LineageNode,
+    LineagePath,
+    LineageSubgraph,
+    NodeNotFoundError,
+)
 from formula_foundry.m3.registry import ArtifactRegistry
 
 __all__ = [
@@ -48,7 +57,14 @@ __all__ = [
     "DatasetSnapshotWriter",
     "DatasetStatistics",
     "Lineage",
+    "LineageEdge",
+    "LineageGraph",
+    "LineageGraphError",
+    "LineageNode",
+    "LineagePath",
     "LineageReference",
+    "LineageSubgraph",
+    "NodeNotFoundError",
     "ParquetNotAvailableError",
     "Provenance",
     "SplitDefinition",
