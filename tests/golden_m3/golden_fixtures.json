@@ -1,0 +1,126 @@
+{
+  "description": "Golden fixtures for M3 subsystem demonstration",
+  "version": "1.0.0",
+  "created_utc": "2026-01-20T00:00:00Z",
+
+  "coupon_spec_f1": {
+    "schema_version": 1,
+    "coupon_family": "F1_SINGLE_ENDED_VIA",
+    "units": "nm",
+    "toolchain": {
+      "kicad": {
+        "version": "9.0.7",
+        "docker_image": "kicad/kicad:9.0.7@sha256:abc123"
+      }
+    },
+    "fab_profile": {
+      "id": "oshpark_4layer"
+    },
+    "stackup": {
+      "copper_layers": 4,
+      "thicknesses_nm": {
+        "L1_to_L2": 180000,
+        "L2_to_L3": 800000,
+        "L3_to_L4": 180000
+      },
+      "materials": {
+        "er": 4.1,
+        "loss_tangent": 0.02
+      }
+    },
+    "board": {
+      "outline": {
+        "width_nm": 20000000,
+        "length_nm": 80000000,
+        "corner_radius_nm": 2000000
+      },
+      "origin": {
+        "mode": "EDGE_L_CENTER"
+      }
+    },
+    "transmission_line": {
+      "type": "CPWG",
+      "layer": "F.Cu",
+      "w_nm": 300000,
+      "gap_nm": 180000
+    },
+    "discontinuity": {
+      "type": "VIA_TRANSITION",
+      "signal_via": {
+        "drill_nm": 300000,
+        "diameter_nm": 650000
+      }
+    }
+  },
+
+  "resolved_design": {
+    "design_id": "design-001",
+    "spec_id": "spec-001",
+    "w_nm": 300000,
+    "gap_nm": 180000,
+    "via_drill_nm": 300000,
+    "via_diameter_nm": 650000,
+    "computed_impedance_ohm": 50.2,
+    "computed_via_inductance_nh": 0.35
+  },
+
+  "workflow_stages": [
+    {
+      "stage_name": "coupon_generation",
+      "artifact_types": ["coupon_spec", "resolved_design", "kicad_board"],
+      "description": "Generate parametric coupon from spec"
+    },
+    {
+      "stage_name": "em_simulation",
+      "artifact_types": ["touchstone"],
+      "description": "Run electromagnetic simulation"
+    },
+    {
+      "stage_name": "dataset_build",
+      "artifact_types": ["dataset_snapshot"],
+      "description": "Build versioned dataset from artifacts"
+    }
+  ],
+
+  "retention_policies": {
+    "golden_demo": {
+      "name": "golden_demo",
+      "description": "Conservative policy for golden demo testing",
+      "keep_min_age_days": 7,
+      "keep_min_count": 3,
+      "keep_pinned": true,
+      "keep_with_descendants": true,
+      "keep_artifact_types": ["dataset_snapshot", "touchstone"],
+      "keep_roles": ["final_output", "oracle_output"]
+    }
+  },
+
+  "expected_artifact_types": [
+    "coupon_spec",
+    "resolved_design",
+    "kicad_board",
+    "gerber",
+    "touchstone",
+    "dataset_snapshot"
+  ],
+
+  "expected_roles": [
+    "config",
+    "root_input",
+    "geometry",
+    "intermediate",
+    "final_output",
+    "fabrication",
+    "oracle_output",
+    "simulation"
+  ],
+
+  "lineage_relations": [
+    "derived_from",
+    "config_from",
+    "generated_by",
+    "validated_by",
+    "sibling_of",
+    "supersedes"
+  ]
+}
