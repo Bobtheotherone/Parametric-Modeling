@@ -1,0 +1,43 @@
+{
+  "$schema_comment": "Expected layer sets for coupon family exports (G4 gate verification)",
+  "F0_CAL_THRU_LINE": {
+    "description": "Calibration thru line - 4-layer stackup",
+    "stackup_layers": 4,
+    "gerbers": [
+      "F.Cu.gbr",
+      "In1.Cu.gbr",
+      "In2.Cu.gbr",
+      "B.Cu.gbr",
+      "F.Mask.gbr",
+      "B.Mask.gbr",
+      "F.SilkS.gbr",
+      "B.SilkS.gbr",
+      "Edge.Cuts.gbr"
+    ],
+    "drills": [
+      "drill.drl",
+      "drill-NPTH.drl"
+    ],
+    "notes": "F0 has no vias (discontinuity: null), but drill files are still generated for connector mounting holes"
+  },
+  "F1_SINGLE_ENDED_VIA": {
+    "description": "Single-ended via transition - 4-layer stackup",
+    "stackup_layers": 4,
+    "gerbers": [
+      "F.Cu.gbr",
+      "In1.Cu.gbr",
+      "In2.Cu.gbr",
+      "B.Cu.gbr",
+      "F.Mask.gbr",
+      "B.Mask.gbr",
+      "F.SilkS.gbr",
+      "B.SilkS.gbr",
+      "Edge.Cuts.gbr"
+    ],
+    "drills": [
+      "drill.drl",
+      "drill-NPTH.drl"
+    ],
+    "notes": "F1 has signal via and optional return vias, all PTH drills in drill.drl"
+  }
+}

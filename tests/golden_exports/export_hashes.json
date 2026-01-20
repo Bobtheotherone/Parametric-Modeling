@@ -1,0 +1,363 @@
+{
+  "$schema_comment": "Expected canonical export hashes per golden spec (G5 gate verification). Hashes are SHA-256 of canonicalized export files. PLACEHOLDER values must be replaced after first authoritative KiCad build in CI.",
+  "f0_cal_001": {
+    "design_hash": "b366011a8c72800f852590ec71f4714345f67fe4dc10c787b9aea162b355634e",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_002": {
+    "design_hash": "72868679e09ac68bb51e1e98c93598a3c6134f845024869d24ddf19f19bb0b0a",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_003": {
+    "design_hash": "6e03fcca622fd4058cab4d24fb261872b01a3332ea8603cd23bd6a0207bd3df6",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_004": {
+    "design_hash": "9fbe86b9db3531bd269ba9caf9055444beb3c3a24868750e8518d7e462993c7b",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_005": {
+    "design_hash": "16cf5234991979b36c815c347e5e9ed4a2b6d602b1f6eab8d89bf1dceff9b972",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_006": {
+    "design_hash": "0abdf3f6286b03582de99a476c1f7298f160740d0d50f3493354b0f6963d999d",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_007": {
+    "design_hash": "9c2f3c56f9a7b4b9e656a516aa611f46e84b13f395fea6f3d20ed3751ca8d49c",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_008": {
+    "design_hash": "5f15bbb767e1bbde352ce7c80deec9a624c557bf501387b701f26f8ae3390522",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_009": {
+    "design_hash": "42c33ee2dcc1aa155b4a2ec113b2aee2532160e497129b0aa7fe426c9cefe7bc",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f0_cal_010": {
+    "design_hash": "c87d8806abd7c2b14d76f8f5eb30f3eae4e30ad10c58daeab8b9ffcad7b224c4",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_001": {
+    "design_hash": "298e7fb619182b6fbf40dbbf3e415b9cdd40091b3531b496f795ab1f3babe18d",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_002": {
+    "design_hash": "aaf2d31cb0d2882993e30b07c2924559299d61ed60529bea523f4b35e0bdee7b",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_003": {
+    "design_hash": "b634ab7286805876ca3b0681b7eb828ffbece5fb107a31f69be539934d826fd1",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_004": {
+    "design_hash": "1b6f2feb251b74687d32b680f4668481b6956d688a17ebf720bc0fe98ec7d85b",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_005": {
+    "design_hash": "bcecb04c78f5cca682de2080ea369084f985f2381b8cb1a7596c99d253d6bf38",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_006": {
+    "design_hash": "3671813e0518180e96a3dcf1b77199b81176383d4c406b2b0d6b7a3a19a54661",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_007": {
+    "design_hash": "6f7cccb869cfc8296a94fc12c82fd3943db4ca544369acbfe7a2f4c3a05c43cb",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_008": {
+    "design_hash": "1fcd83be58204fca8b302e14c396c95b210afbc5fd9bb4cddc69add2f46ac87a",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_009": {
+    "design_hash": "c2d56ba29ebd93d111997f80ebd219bcbd2527937f68c1eecae68d9512209a80",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  },
+  "f1_via_010": {
+    "design_hash": "b9a7e76d4ce41b6bcedf26609143bdb5fbc8dba285e4f57c78257119102828ba",
+    "canonical_gerber_hashes": {
+      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_drill_hashes": {
+      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    }
+  }
+}
