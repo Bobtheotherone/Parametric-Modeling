@@ -10,6 +10,9 @@ dependencies = [
     "torch",
 ]
 
+[project.scripts]
+coupongen = "formula_foundry.coupongen.cli_main:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
