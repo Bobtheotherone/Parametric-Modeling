@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/dataset.v1.json",
+  "title": "Dataset",
+  "description": "Dataset schema version 1 - Describes a versioned collection of artifacts for ML/symbolic regression workflows",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dataset_id",
+    "version",
+    "created_utc",
+    "members",
+    "content_hash",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version identifier; must be 1 for this schema version"
+    },
+    "dataset_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Unique identifier for this dataset (alphanumeric with underscores and hyphens)"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^v\\d+(\\.\\d+)*(-[a-zA-Z0-9]+)?$",
+      "description": "Dataset version tag (e.g., 'v1', 'v1.0', 'v2.1-beta')"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Human-readable name for the dataset"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Detailed description of the dataset contents and purpose"
+    },
+    "created_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when this dataset version was created (UTC)"
+    },
+    "members": {
+      "$ref": "#/$defs/DatasetMembers",
+      "description": "Collection of artifacts that comprise this dataset"
+    },
+    "content_hash": {
+      "$ref": "#/$defs/ContentHash",
+      "description": "Hash of the dataset manifest (hash of sorted member hashes)"
+    },
+    "provenance": {
+      "$ref": "#/$defs/DatasetProvenance",
+      "description": "Information about how this dataset was created"
+    },
+    "parent_version": {
+      "type": "string",
+      "description": "Version tag of the parent dataset this was derived from"
+    },
+    "statistics": {
+      "$ref": "#/$defs/DatasetStatistics",
+      "description": "Summary statistics about the dataset contents"
+    },
+    "splits": {
+      "$ref": "#/$defs/DatasetSplits",
+      "description": "Train/validation/test split definitions"
+    },
+    "index_path": {
+      "type": "string",
+      "description": "Path to the Parquet index file containing member metadata"
+    },
+    "tags": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {},
+      "description": "User-defined key-value tags for filtering and organization"
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {},
+      "description": "Free-form metadata annotations for extensibility"
+    },
+    "quality_gates": {
+      "$ref": "#/$defs/QualityGates",
+      "description": "Quality assurance gates that this dataset has passed"
+    },
+    "retention_policy": {
+      "$ref": "#/$defs/RetentionPolicy",
+      "description": "Policy governing how long this dataset should be retained"
+    }
+  },
+  "$defs": {
+    "HashAlgorithm": {
+      "type": "string",
+      "enum": ["sha256", "sha384", "sha512", "blake3"],
+      "description": "Supported cryptographic hash algorithms"
+    },
+    "ContentHash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest"],
+      "properties": {
+        "algorithm": {
+          "$ref": "#/$defs/HashAlgorithm",
+          "description": "Hash algorithm used"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]+$",
+          "minLength": 64,
+          "description": "Hexadecimal hash digest"
+        }
+      }
+    },
+    "DatasetMemberRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "content_hash", "artifact_type", "role"],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the member artifact"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Content hash of the artifact at time of inclusion"
+        },
+        "artifact_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Type of the artifact"
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Role of this artifact in the dataset"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Size of the artifact in bytes"
+        },
+        "storage_path": {
+          "type": "string",
+          "description": "Relative path to the artifact file"
+        }
+      }
+    },
+    "DatasetMembers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "total_bytes", "artifacts"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of artifacts in the dataset"
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total size of all artifacts in bytes"
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DatasetMemberRef"
+          },
+          "description": "List of artifact references in this dataset"
+        }
+      }
+    },
+    "ToolVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the tool or software"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version string of the tool"
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA if applicable"
+        }
+      }
+    },
+    "DatasetProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator", "generator_version"],
+      "properties": {
+        "generator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the tool/process that generated this dataset"
+        },
+        "generator_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version of the generator tool"
+        },
+        "source_runs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of run IDs that contributed to this dataset"
+        },
+        "pipeline_stage": {
+          "type": "string",
+          "description": "Pipeline stage that produced this dataset"
+        },
+        "dvc_version": {
+          "type": "string",
+          "description": "DVC version used for versioning"
+        },
+        "git_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA of the repo when dataset was created"
+        },
+        "toolchain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolVersion"
+          },
+          "description": "List of tools used to produce this dataset"
+        }
+      }
+    },
+    "DatasetStatistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "by_artifact_type": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {"type": "integer", "minimum": 0},
+              "total_bytes": {"type": "integer", "minimum": 0}
+            }
+          },
+          "description": "Counts and sizes grouped by artifact type"
+        },
+        "by_role": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {"type": "integer", "minimum": 0},
+              "total_bytes": {"type": "integer", "minimum": 0}
+            }
+          },
+          "description": "Counts and sizes grouped by artifact role"
+        },
+        "unique_coupons": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of unique coupon designs in the dataset"
+        },
+        "frequency_range_hz": {
+          "type": "object",
+          "properties": {
+            "min": {"type": "number"},
+            "max": {"type": "number"}
+          },
+          "description": "Frequency range covered by simulation data"
+        },
+        "parameter_ranges": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "min": {"type": "number"},
+              "max": {"type": "number"},
+              "mean": {"type": "number"},
+              "std": {"type": "number"}
+            }
+          },
+          "description": "Summary statistics for key design parameters"
+        }
+      }
+    },
+    "SplitDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "artifact_ids"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["train", "validation", "test", "holdout"],
+          "description": "Split name"
+        },
+        "artifact_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of artifact IDs in this split"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of artifacts in this split"
+        },
+        "fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of total dataset in this split"
+        }
+      }
+    },
+    "DatasetSplits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seed", "splits"],
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "description": "Random seed used for split generation"
+        },
+        "split_method": {
+          "type": "string",
+          "enum": ["random", "stratified", "temporal", "hash_based"],
+          "description": "Method used to generate splits"
+        },
+        "stratify_by": {
+          "type": "string",
+          "description": "Column/field used for stratification"
+        },
+        "splits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SplitDefinition"
+          },
+          "description": "List of split definitions"
+        }
+      }
+    },
+    "QualityGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_name", "passed", "checked_utc"],
+      "properties": {
+        "gate_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the quality gate"
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Whether the gate passed"
+        },
+        "checked_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the gate was checked"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Additional details about the gate check"
+        }
+      }
+    },
+    "QualityGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "all_passed": {
+          "type": "boolean",
+          "description": "Whether all quality gates passed"
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QualityGate"
+          },
+          "description": "List of quality gate results"
+        }
+      }
+    },
+    "RetentionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_name"],
+      "properties": {
+        "policy_name": {
+          "type": "string",
+          "enum": ["pinned", "default", "cache", "ephemeral"],
+          "description": "Named retention policy"
+        },
+        "expires_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when this dataset may be garbage collected"
+        },
+        "keep_versions": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of recent versions to keep"
+        }
+      }
+    }
+  }
+}
