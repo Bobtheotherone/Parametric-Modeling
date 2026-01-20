@@ -155,7 +155,25 @@ class MeshSpec(_SpecBase):
 # =============================================================================
 
 
-PortType = Literal["lumped", "waveguide", "msl"]
+PortType = Literal["lumped", "waveguide", "msl", "cpwg"]
+
+
+class DeembedConfigSpec(_SpecBase):
+    """De-embedding configuration for port calibration.
+
+    Allows reference plane shifting to compensate for connectors,
+    launches, and other non-DUT structures.
+    """
+
+    enabled: bool = Field(False, description="Whether de-embedding is enabled")
+    distance_nm: LengthNM | None = Field(
+        None, description="Reference plane shift distance (nm)"
+    )
+    epsilon_r_eff: float | None = Field(
+        None,
+        gt=0,
+        description="Effective dielectric constant for phase correction",
+    )
 
 
 class PortSpec(_SpecBase):
@@ -163,6 +181,9 @@ class PortSpec(_SpecBase):
 
     Ports define where excitation is applied and S-parameters are extracted.
     For via transition coupons, typically two ports at the transmission line ends.
+
+    Enhanced to support waveguide ports with proper impedance matching
+    and de-embedding for accurate S-parameter extraction.
     """
 
     id: str = Field(..., min_length=1, description="Unique port identifier")
@@ -177,9 +198,39 @@ class PortSpec(_SpecBase):
         ..., description="Port excitation direction"
     )
 
+    # Geometry for waveguide/MSL ports
     width_nm: LengthNM | None = Field(None, description="Port width for MSL/waveguide ports (nm)")
     height_nm: LengthNM | None = Field(
         None, description="Port height for MSL/waveguide ports (nm)"
+    )
+    signal_width_nm: LengthNM | None = Field(
+        None, description="Signal trace width at port (nm), for CPW/CPWG"
+    )
+    gap_nm: LengthNM | None = Field(
+        None, description="Gap to ground for CPW/CPWG ports (nm)"
+    )
+
+    # Impedance matching
+    match_to_line: bool = Field(
+        False, description="Auto-match reference impedance to calculated line impedance"
+    )
+    calculated_z0_ohm: float | None = Field(
+        None, gt=0, description="Calculated line characteristic impedance (Ohm)"
+    )
+
+    # De-embedding
+    deembed: DeembedConfigSpec = Field(
+        default_factory=DeembedConfigSpec, description="De-embedding configuration"
+    )
+
+    # Excitation control
+    excite_weight: float = Field(
+        1.0, gt=0, description="Excitation amplitude weight for multi-port simulations"
+    )
+
+    # Mode selection
+    polarization: Literal["E_transverse", "H_transverse"] | None = Field(
+        None, description="Polarization for quasi-TEM mode selection"
     )
 
 
