@@ -3,6 +3,7 @@ from __future__ import annotations
 from formula_foundry.coupongen.hashing import (
     canonical_hash_export_text,
     canonical_hash_kicad_pcb_text,
+    coupon_id_from_design_hash,
 )
 
 
@@ -20,3 +21,35 @@ def test_canonical_hashing_removes_nondeterminism() -> None:
 
     assert canonical_hash_export_text(export_a) == canonical_hash_export_text(export_b)
     assert canonical_hash_export_text(export_a) != canonical_hash_export_text(export_c)
+
+
+def test_coupon_id_from_design_hash_produces_12_char_id() -> None:
+    """coupon_id_from_design_hash must produce a 12-character base32-encoded ID."""
+    # A known SHA256 hex digest (64 hex chars = 32 bytes)
+    design_hash = "a" * 64  # 0xaa... repeated
+    coupon_id = coupon_id_from_design_hash(design_hash)
+
+    assert len(coupon_id) == 12
+    assert coupon_id.islower()
+    # Base32 uses only a-z and 2-7
+    assert all(c in "abcdefghijklmnopqrstuvwxyz234567" for c in coupon_id)
+
+
+def test_coupon_id_from_design_hash_is_deterministic() -> None:
+    """coupon_id_from_design_hash must be deterministic for the same input."""
+    design_hash = "deadbeef" * 8  # 64 hex chars
+    id_a = coupon_id_from_design_hash(design_hash)
+    id_b = coupon_id_from_design_hash(design_hash)
+
+    assert id_a == id_b
+
+
+def test_coupon_id_from_design_hash_differs_for_different_hashes() -> None:
+    """Different design hashes must produce different coupon IDs."""
+    hash_a = "a" * 64
+    hash_b = "b" * 64
+
+    id_a = coupon_id_from_design_hash(hash_a)
+    id_b = coupon_id_from_design_hash(hash_b)
+
+    assert id_a != id_b
