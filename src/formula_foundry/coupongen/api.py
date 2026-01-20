@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import yaml  # type: ignore[import-untyped]
 
-from formula_foundry.substrate import canonical_json_dumps
+from formula_foundry.substrate import canonical_json_dumps, get_git_sha
 
 from .constraints import (
     ConstraintEvaluation,
@@ -36,11 +36,13 @@ from .constraints.repair import generate_constraint_proof
 from .fab_profiles import get_fab_limits, load_fab_profile
 from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
-from .kicad import BackendA, KicadCliRunner
+from .kicad import BackendA, KicadCliRunner, get_kicad_cli_version
 from .kicad.cli import KicadCliMode
+from .kicad.runners.docker import load_docker_image_ref
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash, resolve
 from .spec import CouponSpec, KicadToolchain
+from .toolchain_capture import ToolchainProvenance, capture_toolchain_provenance
 
 if TYPE_CHECKING:
     from .constraints.repair import ConstraintProofDocument
@@ -281,22 +283,30 @@ def build_coupon(
     runner: KicadRunnerProtocol | None = None,
     backend: BackendA | None = None,
     kicad_cli_version: str | None = None,
+    lock_file: Path | None = None,
 ) -> BuildResult:
-    """Build coupon using legacy constraint system (backward compatibility).
+    """Build a coupon from a specification.
 
     For new code, prefer build_coupon_with_engine() which uses the unified
     ConstraintEngine with full tiered validation (Tier 0-3).
 
+    For docker mode, this function captures complete toolchain provenance
+    by running kicad-cli --version inside the container (per CP-5.3).
+
     Args:
-        spec: CouponSpec to build
-        out_root: Root directory for output artifacts
-        mode: KiCad CLI mode ("local" or "docker")
-        runner: Optional KiCad runner protocol for testing
-        backend: Optional board writer backend
-        kicad_cli_version: Optional KiCad CLI version string
+        spec: The coupon specification.
+        out_root: Root output directory.
+        mode: KiCad CLI mode ("local" or "docker").
+        runner: Custom KiCad runner (for testing).
+        backend: Custom KiCad backend (for testing).
+        kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
+        lock_file: Path to toolchain lock file (for docker mode).
 
     Returns:
-        BuildResult with output paths and hashes
+        BuildResult with output paths and cache status.
+
+    Raises:
+        ToolchainProvenanceError: If docker mode and provenance cannot be captured.
     """
     validate_family(spec)
     evaluation = enforce_constraints(spec)
@@ -306,16 +316,34 @@ def build_coupon(
     output_dir = out_root / f"{coupon_id}-{design_hash_value}"
     manifest_path = output_dir / "manifest.json"
 
-    toolchain_meta = {
-        "kicad": {
-            "version": evaluation.spec.toolchain.kicad.version,
-            "cli_version_output": kicad_cli_version or "unknown",
-        },
-        "docker": {
-            "image_ref": evaluation.spec.toolchain.kicad.docker_image,
-        },
-        "mode": mode,
-    }
+    # Capture toolchain provenance (CP-5.3: always run kicad-cli version inside container for docker builds)
+    if kicad_cli_version is not None:
+        # Pre-captured version provided (for testing)
+        toolchain_meta = {
+            "kicad": {
+                "version": evaluation.spec.toolchain.kicad.version,
+                "cli_version_output": kicad_cli_version,
+            },
+            "docker": {
+                "image_ref": evaluation.spec.toolchain.kicad.docker_image,
+            },
+            "mode": mode,
+            "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
+        }
+    else:
+        # Capture provenance dynamically
+        provenance = capture_toolchain_provenance(
+            mode=mode,
+            kicad_version=evaluation.spec.toolchain.kicad.version,
+            docker_image=evaluation.spec.toolchain.kicad.docker_image,
+            workdir=out_root,
+            lock_file=lock_file,
+        )
+        toolchain_meta = provenance.to_metadata()
+        # Ensure docker image_ref is set for compatibility
+        if mode == "docker" and "docker" not in toolchain_meta:
+            toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
+
     toolchain_hash_value = toolchain_hash(toolchain_meta)
 
     if manifest_path.exists():
