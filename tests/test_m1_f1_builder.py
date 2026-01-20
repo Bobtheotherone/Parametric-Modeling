@@ -522,7 +522,12 @@ class TestF1CouponBuilder:
         assert composition.right_port.side == "right"
 
     def test_transmission_line_extraction(self) -> None:
-        """Test transmission line feature extraction."""
+        """Test transmission line feature extraction.
+
+        CP-2.2: length_right_nm is derived from continuity formula:
+        length_right = right_connector_x - discontinuity_x
+                     = 75mm - (5mm + 25mm) = 45mm
+        """
         spec = CouponSpec.model_validate(_f1_spec_data())
         resolved = resolve(spec)
         composition = build_f1_coupon(spec, resolved)
@@ -531,7 +536,9 @@ class TestF1CouponBuilder:
         assert tl.w_nm == 300000
         assert tl.gap_nm == 180000
         assert tl.length_left_nm == 25000000
-        assert tl.length_right_nm == 25000000
+        # CP-2.2: length_right is derived, not from spec
+        # Derived: right_connector_x (75mm) - discontinuity_x (30mm) = 45mm
+        assert tl.length_right_nm == 45000000
         assert tl.layer == "F.Cu"
         # Discontinuity at 5mm + 25mm = 30mm
         assert tl.discontinuity_x_nm == 30000000
@@ -587,13 +594,17 @@ class TestF1CouponBuilder:
         assert cutout.width_nm == 1500000
 
     def test_total_trace_length(self) -> None:
-        """Test total trace length calculation."""
+        """Test total trace length calculation.
+
+        CP-2.2: length_right_nm is derived from continuity formula.
+        Total trace = left (25mm) + derived_right (45mm) = 70mm
+        """
         spec = CouponSpec.model_validate(_f1_spec_data())
         resolved = resolve(spec)
         composition = build_f1_coupon(spec, resolved)
 
-        # 25mm left + 25mm right = 50mm
-        assert composition.total_trace_length_nm == 50000000
+        # 25mm left + 45mm derived right = 70mm (full span between connectors)
+        assert composition.total_trace_length_nm == 70000000
 
     def test_discontinuity_position(self) -> None:
         """Test discontinuity position accessor."""
