@@ -698,19 +698,22 @@ class TestCP34RepairModeAuditTrail:
         assert repair_result.projection_policy_order[2] == "T2"
         assert repair_result.projection_policy_order[3] == "F1_CONTINUITY"
 
-    def test_f1_continuity_clamps_negative_length_right(self) -> None:
-        """F1 continuity should clamp negative length_right to 0."""
+    def test_f1_continuity_derives_length_right(self) -> None:
+        """F1 continuity should derive length_right from continuity equation (CP-3.3)."""
         from formula_foundry.coupongen.constraints.repair import RepairEngine
 
         limits = _default_fab_limits()
         engine = RepairEngine(limits)
 
+        # Setup: left_x=5mm, right_x=75mm, length_left=25mm
+        # Derived: x_discontinuity = 5 + 25 = 30mm
+        # Derived: length_right = 75 - 30 = 45mm
         payload = {
             "transmission_line": {
                 "w_nm": 100_000,
                 "gap_nm": 100_000,
                 "length_left_nm": 25_000_000,
-                "length_right_nm": -5_000_000,  # Negative - should be clamped
+                "length_right_nm": 10_000_000,  # Specified wrong - should be derived to 45mm
                 "ground_via_fence": None,
             },
             "board": {
@@ -736,10 +739,66 @@ class TestCP34RepairModeAuditTrail:
 
         engine.repair_f1_continuity(payload)
 
-        # CP-3.4: Negative length_right should be clamped to 0
-        assert payload["transmission_line"]["length_right_nm"] == 0
+        # CP-3.3: length_right should be derived from continuity equation
+        # derived = right_x - (left_x + length_left) = 75 - (5 + 25) = 45mm
+        assert payload["transmission_line"]["length_right_nm"] == 45_000_000
         assert len(engine.actions) == 1
         assert engine.actions[0].constraint_id == "F1_CONTINUITY_LENGTH_RIGHT"
+
+    def test_f1_continuity_adjusts_length_left_for_topology(self) -> None:
+        """F1 continuity should reduce length_left if derived length_right would be negative."""
+        from formula_foundry.coupongen.constraints.repair import RepairEngine
+
+        limits = _default_fab_limits()
+        engine = RepairEngine(limits)
+
+        # Setup: left_x=5mm, right_x=75mm, length_left=80mm (too long!)
+        # Derived: x_discontinuity = 5 + 80 = 85mm (past right connector!)
+        # Derived: length_right = 75 - 85 = -10mm (negative - invalid!)
+        #
+        # To fix: max_length_left = right_x - left_x - 1 = 75 - 5 - 1 = 69.999999mm
+        # This ensures: derived_length_right = 75 - (5 + 69.999999) = 1nm
+        payload = {
+            "transmission_line": {
+                "w_nm": 100_000,
+                "gap_nm": 100_000,
+                "length_left_nm": 80_000_000,  # Very long, past right connector
+                "length_right_nm": 5_000_000,  # Specified wrong
+                "ground_via_fence": None,
+            },
+            "board": {
+                "outline": {
+                    "width_nm": 20_000_000,
+                    "length_nm": 80_000_000,
+                    "corner_radius_nm": 2_000_000,
+                }
+            },
+            "discontinuity": {
+                "type": "VIA_TRANSITION",
+                "signal_via": {
+                    "drill_nm": 300_000,
+                    "diameter_nm": 600_000,
+                    "pad_diameter_nm": 900_000,
+                },
+            },
+            "connectors": {
+                "left": {"position_nm": [5_000_000, 0]},
+                "right": {"position_nm": [75_000_000, 0]},
+            },
+        }
+
+        engine.repair_f1_continuity(payload)
+
+        # CP-3.3: length_left should be reduced to ensure positive length_right
+        # max_length_left = 75_000_000 - 5_000_000 - 1 = 69_999_999
+        # derived_length_right = 75_000_000 - (5_000_000 + 69_999_999) = 1
+        assert payload["transmission_line"]["length_left_nm"] == 69_999_999
+        assert payload["transmission_line"]["length_right_nm"] == 1
+        assert len(engine.actions) == 2  # Both length_left and length_right modified
+        # Check we have both repair actions
+        action_ids = {a.constraint_id for a in engine.actions}
+        assert "F1_CONTINUITY_LENGTH_LEFT" in action_ids
+        assert "F1_CONTINUITY_LENGTH_RIGHT" in action_ids
 
     def test_f1_continuity_skips_non_f1_family(self) -> None:
         """F1 continuity repair should skip non-F1 families."""
