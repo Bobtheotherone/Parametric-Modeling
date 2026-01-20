@@ -32,6 +32,7 @@ from formula_foundry.coupongen.constraints import (
     GPUConstraintFilter,
     ParameterMapping,
     RepairEngine,
+    RepairMeta,
     Tier0Checker,
     Tier1Checker,
     Tier2Checker,
@@ -934,13 +935,18 @@ class TestBatchFilterResult:
 
     def test_properties(self) -> None:
         """BatchFilterResult should compute properties correctly."""
-        result = BatchFilterResult(
-            feasible_mask=np.array([True, True, False, True, False]),
-            repaired_u=np.random.rand(5, 19),
+        repair_meta = RepairMeta(
             repair_counts=np.array([0, 1, 2, 0, 3]),
             repair_distances=np.array([0.0, 0.1, 0.2, 0.0, 0.3]),
             tier_violations={"T0": np.array([0, 0, 1, 0, 1])},
             constraint_margins={},
+            seed=42,
+            mode="REPAIR",
+        )
+        result = BatchFilterResult(
+            mask=np.array([True, True, False, True, False]),
+            u_repaired=np.random.rand(5, 19),
+            repair_meta=repair_meta,
         )
 
         assert result.n_candidates == 5
