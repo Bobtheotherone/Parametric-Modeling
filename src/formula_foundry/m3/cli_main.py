@@ -148,6 +148,145 @@ def build_parser() -> argparse.ArgumentParser:
         help="Suppress non-error output",
     )
 
+    # artifact subcommand
+    artifact_parser = subparsers.add_parser(
+        "artifact",
+        help="Inspect and query artifacts in the store",
+    )
+    artifact_subparsers = artifact_parser.add_subparsers(
+        dest="artifact_command",
+        required=True,
+    )
+
+    # artifact show subcommand
+    artifact_show_parser = artifact_subparsers.add_parser(
+        "show",
+        help="Display detailed information about an artifact",
+    )
+    artifact_show_parser.add_argument(
+        "artifact_id",
+        help="Artifact ID to display",
+    )
+    artifact_show_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    artifact_show_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output raw JSON manifest instead of formatted text",
+    )
+    artifact_show_parser.add_argument(
+        "--content",
+        action="store_true",
+        help="Also display artifact content (if text-based)",
+    )
+    artifact_show_parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Verify artifact integrity by checking content hash",
+    )
+    artifact_show_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
+    )
+
+    # artifact list subcommand
+    artifact_list_parser = artifact_subparsers.add_parser(
+        "list",
+        help="List artifacts in the store with optional filtering",
+    )
+    artifact_list_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    artifact_list_parser.add_argument(
+        "--type",
+        "-t",
+        type=str,
+        dest="artifact_type",
+        help="Filter by artifact type (e.g., touchstone, coupon_spec)",
+    )
+    artifact_list_parser.add_argument(
+        "--run",
+        "-r",
+        type=str,
+        dest="run_id",
+        help="Filter by run ID",
+    )
+    artifact_list_parser.add_argument(
+        "--role",
+        type=str,
+        action="append",
+        dest="roles",
+        default=[],
+        help="Filter by role (can be specified multiple times)",
+    )
+    artifact_list_parser.add_argument(
+        "--after",
+        type=str,
+        dest="created_after",
+        help="Filter to artifacts created after this timestamp (ISO 8601)",
+    )
+    artifact_list_parser.add_argument(
+        "--before",
+        type=str,
+        dest="created_before",
+        help="Filter to artifacts created before this timestamp (ISO 8601)",
+    )
+    artifact_list_parser.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=None,
+        help="Maximum number of artifacts to show",
+    )
+    artifact_list_parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Number of artifacts to skip (for pagination)",
+    )
+    artifact_list_parser.add_argument(
+        "--order-by",
+        type=str,
+        choices=["created_utc", "artifact_id", "byte_size"],
+        default="created_utc",
+        help="Field to order results by (default: created_utc)",
+    )
+    artifact_list_parser.add_argument(
+        "--asc",
+        action="store_true",
+        dest="order_asc",
+        help="Order ascending instead of descending",
+    )
+    artifact_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output as JSON instead of formatted table",
+    )
+    artifact_list_parser.add_argument(
+        "--long",
+        "-l",
+        action="store_true",
+        dest="long_format",
+        help="Show detailed information for each artifact",
+    )
+    artifact_list_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output (only show artifact IDs)",
+    )
+
     # run subcommand
     run_parser = subparsers.add_parser(
         "run",
@@ -1475,6 +1614,366 @@ def cmd_dataset_diff(
     return 0
 
 
+# =============================================================================
+# Artifact commands
+# =============================================================================
+
+
+def cmd_artifact_show(
+    artifact_id: str,
+    root: Path | None,
+    output_json: bool,
+    show_content: bool,
+    verify: bool,
+    quiet: bool,
+) -> int:
+    """Display detailed information about an artifact.
+
+    Args:
+        artifact_id: The artifact ID to display.
+        root: Project root directory.
+        output_json: If True, output raw JSON manifest.
+        show_content: If True, also display artifact content.
+        verify: If True, verify artifact integrity.
+        quiet: If True, suppress non-error output.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.artifact_store import (
+        ArtifactNotFoundError,
+        ArtifactStore,
+    )
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    if not data_dir.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    # Get artifact from store
+    store = ArtifactStore(
+        root=data_dir,
+        generator="m3_cli",
+        generator_version=__version__,
+    )
+
+    try:
+        manifest = store.get_manifest(artifact_id)
+    except ArtifactNotFoundError:
+        sys.stderr.write(f"Error: Artifact not found: {artifact_id}\n")
+        return 2
+
+    # Output JSON if requested
+    if output_json:
+        sys.stdout.write(manifest.to_json(indent=2) + "\n")
+        return 0
+
+    # Verify integrity if requested
+    integrity_ok: bool | None = None
+    if verify:
+        try:
+            integrity_ok = store.verify(artifact_id)
+        except Exception as e:
+            sys.stderr.write(f"Error verifying artifact: {e}\n")
+            integrity_ok = False
+
+    # Formatted output
+    lines: list[str] = []
+    lines.append(f"Artifact: {manifest.artifact_id}")
+    lines.append(f"Type: {manifest.artifact_type}")
+    lines.append(f"Created: {manifest.created_utc}")
+    lines.append("")
+
+    # Content hash and size
+    lines.append("Content:")
+    lines.append(f"  Algorithm: {manifest.content_hash.algorithm}")
+    lines.append(f"  Digest: {manifest.content_hash.digest}")
+    lines.append(f"  Spec ID: {manifest.spec_id}")
+    lines.append(f"  Size: {_format_bytes(manifest.byte_size)}")
+    if manifest.media_type:
+        lines.append(f"  Media type: {manifest.media_type}")
+    if manifest.storage_path:
+        lines.append(f"  Storage path: {manifest.storage_path}")
+    lines.append("")
+
+    # Integrity status
+    if verify:
+        if integrity_ok:
+            lines.append("Integrity: VERIFIED (content hash matches)")
+        else:
+            lines.append("Integrity: FAILED (content hash mismatch)")
+        lines.append("")
+
+    # Provenance
+    lines.append("Provenance:")
+    lines.append(f"  Generator: {manifest.provenance.generator}")
+    lines.append(f"  Version: {manifest.provenance.generator_version}")
+    lines.append(f"  Hostname: {manifest.provenance.hostname}")
+    if manifest.provenance.username:
+        lines.append(f"  Username: {manifest.provenance.username}")
+    if manifest.provenance.command:
+        lines.append(f"  Command: {manifest.provenance.command}")
+    if manifest.provenance.working_directory:
+        lines.append(f"  Working dir: {manifest.provenance.working_directory}")
+    if manifest.provenance.ci_run_id:
+        lines.append(f"  CI run ID: {manifest.provenance.ci_run_id}")
+    lines.append("")
+
+    # Lineage
+    lines.append("Lineage:")
+    lines.append(f"  Run ID: {manifest.lineage.run_id}")
+    if manifest.lineage.stage_name:
+        lines.append(f"  Stage: {manifest.lineage.stage_name}")
+    if manifest.lineage.dataset_id:
+        lines.append(f"  Dataset ID: {manifest.lineage.dataset_id}")
+    if manifest.lineage.dataset_version:
+        lines.append(f"  Dataset version: {manifest.lineage.dataset_version}")
+    if manifest.lineage.inputs:
+        lines.append(f"  Inputs: {len(manifest.lineage.inputs)}")
+        for inp in manifest.lineage.inputs[:5]:  # Show first 5
+            lines.append(f"    - {inp.artifact_id} ({inp.relation})")
+        if len(manifest.lineage.inputs) > 5:
+            lines.append(f"    ... and {len(manifest.lineage.inputs) - 5} more")
+    if manifest.lineage.outputs:
+        lines.append(f"  Outputs: {len(manifest.lineage.outputs)}")
+        for out in manifest.lineage.outputs[:5]:  # Show first 5
+            lines.append(f"    - {out.artifact_id} ({out.relation})")
+        if len(manifest.lineage.outputs) > 5:
+            lines.append(f"    ... and {len(manifest.lineage.outputs) - 5} more")
+    lines.append("")
+
+    # Roles
+    lines.append(f"Roles: {', '.join(manifest.roles)}")
+
+    # Tags
+    if manifest.tags:
+        lines.append("")
+        lines.append("Tags:")
+        for key, value in manifest.tags.items():
+            lines.append(f"  {key}: {value}")
+
+    # Annotations
+    if manifest.annotations:
+        lines.append("")
+        lines.append("Annotations:")
+        for key, value in list(manifest.annotations.items())[:10]:
+            value_str = str(value)
+            if len(value_str) > 60:
+                value_str = value_str[:57] + "..."
+            lines.append(f"  {key}: {value_str}")
+        if len(manifest.annotations) > 10:
+            lines.append(f"  ... and {len(manifest.annotations) - 10} more")
+
+    # Output formatted text
+    for line in lines:
+        _log(line, quiet)
+
+    # Show content if requested
+    if show_content:
+        _log("", quiet)
+        _log("Content:", quiet)
+        _log("-" * 50, quiet)
+        try:
+            content = store.get(manifest.content_hash.digest)
+            # Try to decode as text
+            try:
+                text = content.decode("utf-8")
+                # Limit output for large content
+                max_lines = 100
+                content_lines = text.split("\n")
+                if len(content_lines) > max_lines:
+                    for line in content_lines[:max_lines]:
+                        _log(line, quiet)
+                    _log(f"... ({len(content_lines) - max_lines} more lines)", quiet)
+                else:
+                    _log(text, quiet)
+            except UnicodeDecodeError:
+                _log(f"(Binary content, {_format_bytes(len(content))})", quiet)
+        except Exception as e:
+            sys.stderr.write(f"Error reading content: {e}\n")
+
+    return 0 if integrity_ok is not False else 1
+
+
+def cmd_artifact_list(
+    root: Path | None,
+    artifact_type: str | None,
+    run_id: str | None,
+    roles: list[str],
+    created_after: str | None,
+    created_before: str | None,
+    limit: int | None,
+    offset: int,
+    order_by: str,
+    order_asc: bool,
+    output_json: bool,
+    long_format: bool,
+    quiet: bool,
+) -> int:
+    """List artifacts in the store with optional filtering.
+
+    Args:
+        root: Project root directory.
+        artifact_type: Filter by artifact type.
+        run_id: Filter by run ID.
+        roles: Filter by roles.
+        created_after: Filter to artifacts created after this timestamp.
+        created_before: Filter to artifacts created before this timestamp.
+        limit: Maximum number of artifacts to show.
+        offset: Number of artifacts to skip.
+        order_by: Field to order by.
+        order_asc: If True, order ascending.
+        output_json: If True, output as JSON.
+        long_format: If True, show detailed info for each artifact.
+        quiet: If True, only show artifact IDs.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    # Query registry
+    registry = ArtifactRegistry(registry_db)
+
+    try:
+        records = registry.query_artifacts(
+            artifact_type=artifact_type,
+            run_id=run_id,
+            roles=roles if roles else None,
+            created_after=created_after,
+            created_before=created_before,
+            limit=limit,
+            offset=offset,
+            order_by=order_by,  # type: ignore[arg-type]
+            order_desc=not order_asc,
+        )
+    finally:
+        registry.close()
+
+    # Get total count for summary
+    total_count = len(records)
+    if limit is not None and total_count >= limit:
+        # Reopen to get full count
+        registry = ArtifactRegistry(registry_db)
+        full_count = registry.count_artifacts(
+            artifact_type=artifact_type,
+            run_id=run_id,
+        )
+        registry.close()
+    else:
+        full_count = total_count + offset
+
+    # Output JSON if requested
+    if output_json:
+        output_data = {
+            "count": len(records),
+            "total": full_count,
+            "offset": offset,
+            "artifacts": [
+                {
+                    "artifact_id": r.artifact_id,
+                    "artifact_type": r.artifact_type,
+                    "content_hash": {
+                        "algorithm": r.content_hash_algorithm,
+                        "digest": r.content_hash_digest,
+                    },
+                    "byte_size": r.byte_size,
+                    "created_utc": r.created_utc,
+                    "run_id": r.run_id,
+                    "stage_name": r.stage_name,
+                    "roles": r.roles,
+                    "tags": r.tags,
+                }
+                for r in records
+            ],
+        }
+        sys.stdout.write(json.dumps(output_data, indent=2) + "\n")
+        return 0
+
+    # Quiet mode - just IDs
+    if quiet:
+        for record in records:
+            sys.stdout.write(record.artifact_id + "\n")
+        return 0
+
+    # No results
+    if not records:
+        _log("No artifacts found.", False)
+        return 0
+
+    # Formatted output
+    if long_format:
+        # Detailed view for each artifact
+        for i, record in enumerate(records):
+            if i > 0:
+                _log("", False)
+                _log("-" * 50, False)
+            _log(f"Artifact: {record.artifact_id}", False)
+            _log(f"  Type: {record.artifact_type}", False)
+            _log(f"  Created: {record.created_utc}", False)
+            _log(f"  Size: {_format_bytes(record.byte_size)}", False)
+            _log(f"  Hash: {record.content_hash_digest[:16]}...", False)
+            if record.run_id:
+                _log(f"  Run: {record.run_id}", False)
+            if record.stage_name:
+                _log(f"  Stage: {record.stage_name}", False)
+            _log(f"  Roles: {', '.join(record.roles)}", False)
+            if record.tags:
+                tag_str = ", ".join(f"{k}={v}" for k, v in record.tags.items())
+                if len(tag_str) > 60:
+                    tag_str = tag_str[:57] + "..."
+                _log(f"  Tags: {tag_str}", False)
+    else:
+        # Table view
+        _log(f"Found {total_count} artifacts (showing {len(records)}, offset {offset})", False)
+        if full_count > total_count + offset:
+            _log(f"Total matching: {full_count}", False)
+        _log("", False)
+
+        # Header
+        _log(f"{'ARTIFACT_ID':<40} {'TYPE':<20} {'SIZE':>10} {'CREATED':<20}", False)
+        _log("-" * 94, False)
+
+        for record in records:
+            artifact_id = record.artifact_id
+            if len(artifact_id) > 38:
+                artifact_id = artifact_id[:35] + "..."
+
+            artifact_type = record.artifact_type
+            if len(artifact_type) > 18:
+                artifact_type = artifact_type[:15] + "..."
+
+            size_str = _format_bytes(record.byte_size)
+
+            # Truncate timestamp to date + time
+            created = record.created_utc[:19]
+
+            _log(f"{artifact_id:<40} {artifact_type:<20} {size_str:>10} {created:<20}", False)
+
+    _log("", False)
+    _log(f"Total: {full_count} artifacts", False)
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the m3 CLI."""
     parser = build_parser()
@@ -1517,6 +2016,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 quiet=args.quiet,
             )
         parser.error(f"Unknown dataset command: {args.dataset_command}")
+
+    if args.command == "artifact":
+        if args.artifact_command == "show":
+            return cmd_artifact_show(
+                artifact_id=args.artifact_id,
+                root=args.root,
+                output_json=args.output_json,
+                show_content=args.content,
+                verify=args.verify,
+                quiet=args.quiet,
+            )
+        if args.artifact_command == "list":
+            return cmd_artifact_list(
+                root=args.root,
+                artifact_type=args.artifact_type,
+                run_id=args.run_id,
+                roles=args.roles,
+                created_after=args.created_after,
+                created_before=args.created_before,
+                limit=args.limit,
+                offset=args.offset,
+                order_by=args.order_by,
+                order_asc=args.order_asc,
+                output_json=args.output_json,
+                long_format=args.long_format,
+                quiet=args.quiet,
+            )
+        parser.error(f"Unknown artifact command: {args.artifact_command}")
 
     # Should not reach here due to required=True on subparsers
     parser.error(f"Unknown command: {args.command}")
