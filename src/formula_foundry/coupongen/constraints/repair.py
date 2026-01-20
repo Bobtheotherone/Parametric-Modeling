@@ -877,19 +877,21 @@ class RepairEngine:
                 )
 
     def repair_f1_continuity(self, payload: dict[str, Any]) -> None:
-        """Apply F1 continuity repair: ensure length_right >= 0 (CP-3.4).
+        """Apply F1 continuity repair: derive length_right from continuity (CP-3.3/CP-3.4).
 
         For the F1_SINGLE_ENDED_VIA family, the right trace length must be
-        non-negative to ensure valid topology. This is a post-repair step
-        that clamps length_right to 0 if it would otherwise be negative.
+        derived from the continuity equation to ensure valid topology.
 
         The F1 topology constraint is:
             x_discontinuity_center = x_left_connector + length_left
             x_discontinuity_center = x_right_connector - length_right
 
-        If length_right would be negative (due to connector positions or
-        length_left being too large), we clamp it to 0 to maintain valid
-        topology.
+        Therefore:
+            length_right_derived = x_right_connector - (x_left_connector + length_left)
+
+        This repair step computes the derived length_right and sets it
+        to enforce F1 continuity. If the derived value is negative,
+        it clamps to 0 to maintain valid topology.
 
         Args:
             payload: Spec payload to repair
@@ -903,13 +905,64 @@ class RepairEngine:
         if disc is None or disc.get("type") != "VIA_TRANSITION":
             return
 
-        length_right = int(tl.get("length_right_nm", 0))
-        if length_right < 0:
+        # Get connector positions and length_left
+        connectors = payload.get("connectors", {})
+        left_conn = connectors.get("left", {})
+        right_conn = connectors.get("right", {})
+        left_pos = left_conn.get("position_nm", [])
+        right_pos = right_conn.get("position_nm", [])
+
+        if len(left_pos) < 1 or len(right_pos) < 1:
+            return
+
+        left_x = int(left_pos[0])
+        right_x = int(right_pos[0])
+        length_left = int(tl.get("length_left_nm", 0))
+        length_right_specified = int(tl.get("length_right_nm", 0))
+
+        # Compute derived length_right from F1 continuity equation
+        # length_right_derived = right_x - (left_x + length_left)
+        x_discontinuity = left_x + length_left
+        length_right_derived = right_x - x_discontinuity
+
+        # If derived length_right is < 1, we need to reduce length_left to make room
+        # T1 constraint requires trace length >= 1, so we need length_right >= 1
+        # This means: right_x - (left_x + length_left) >= 1
+        #            => length_left <= right_x - left_x - 1
+        if length_right_derived < 1:
+            # Maximum allowed length_left to ensure length_right >= 1
+            max_length_left = right_x - left_x - 1
+            if max_length_left < 1:
+                # Both connectors are too close - use minimum lengths for both
+                max_length_left = 1
+
+            if length_left > max_length_left:
+                tl["length_left_nm"] = self._record(
+                    "transmission_line.length_left_nm",
+                    length_left,
+                    max_length_left,
+                    f"Left trace length reduced from {length_left}nm to {max_length_left}nm "
+                    f"to ensure F1 continuity (derived length_right was {length_right_derived}nm)",
+                    "F1_CONTINUITY_LENGTH_LEFT",
+                )
+                length_left = max_length_left
+
+            # Recompute derived length_right with updated length_left
+            x_discontinuity = left_x + length_left
+            length_right_derived = right_x - x_discontinuity
+
+            # Final clamp to ensure minimum value (should be >= 1 now)
+            if length_right_derived < 1:
+                length_right_derived = 1
+
+        # Record the length_right repair if the value changed
+        if length_right_specified != length_right_derived:
             tl["length_right_nm"] = self._record(
                 "transmission_line.length_right_nm",
-                length_right,
-                0,
-                f"Right trace length {length_right}nm clamped to 0 for F1 continuity",
+                length_right_specified,
+                length_right_derived,
+                f"Right trace length set to {length_right_derived}nm for F1 continuity "
+                f"(derived from right_x={right_x} - (left_x={left_x} + length_left={length_left}))",
                 "F1_CONTINUITY_LENGTH_RIGHT",
             )
 

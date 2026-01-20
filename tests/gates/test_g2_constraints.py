@@ -111,6 +111,10 @@ def _generate_spec_from_u(u_vector: list[float]) -> dict[str, Any]:
     The u vector has 19 dimensions corresponding to the parameters defined
     in _PARAM_RANGES. Values in [0, 1] are mapped to physical ranges.
 
+    For F1 family specs, length_right_nm is derived from the F1 continuity
+    equation rather than taken directly from the u vector (per CP-2.2/CP-3.3):
+        length_right = right_connector_x - (left_connector_x + length_left)
+
     Args:
         u_vector: List of 19 normalized values in [0, 1]
 
@@ -120,6 +124,14 @@ def _generate_spec_from_u(u_vector: list[float]) -> dict[str, Any]:
     # Extract parameters from u vector (19 dimensions)
     param_names = list(_PARAM_RANGES.keys())
     params = {name: _u_to_param(u_vector[i], name) for i, name in enumerate(param_names)}
+
+    # CP-3.3: Derive length_right from F1 continuity equation for F1 family specs
+    # This ensures generated specs satisfy the continuity constraint
+    left_x = params["left_connector_x_nm"]
+    right_x = params["right_connector_x_nm"]
+    length_left = params["length_left_nm"]
+    derived_length_right = max(0, right_x - (left_x + length_left))
+    params["length_right_nm"] = derived_length_right
 
     return {
         "schema_version": 1,
