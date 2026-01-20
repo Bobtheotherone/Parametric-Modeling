@@ -28,3 +28,13 @@ venv/
 *.log
 .verify*
 *.egg-info/
+
+# DVC (M3)
+# Note: .dvc/ directory is tracked, dvc.lock and *.dvc files are not
+/dvc.lock
+!/.dvc/
+/.dvc/config.local
+/.dvc/cache/
+/.dvc/tmp/
+/artifacts/
+/data/

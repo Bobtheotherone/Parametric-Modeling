@@ -1,0 +1,32 @@
+# DVC Configuration
+# M3: Data Provenance and Artifact Management
+#
+# Cache settings optimized for local development with reflink preference
+# as specified in the design document (Section 4-5, 18.5).
+
+[core]
+    # Use autostage to automatically git add DVC files
+    autostage = true
+
+[cache]
+    # Cache type preference: reflink > symlink > copy
+    # Reflinks (copy-on-write) provide instant deduplication on filesystems
+    # that support it (BTRFS, XFS with reflink, APFS on macOS).
+    # Falls back to copy on filesystems without reflink support.
+    type = reflink,copy
+
+    # Local cache directory (default is .dvc/cache)
+    # This is relative to the repo root
+    dir = cache
+
+[hydra]
+    # Enable Hydra integration for parameter management
+    enabled = false
+
+# Remote storage configuration (optional - uncomment to enable)
+# [remote "local_backup"]
+#     url = /path/to/backup/storage
+#
+# [remote "s3"]
+#     url = s3://bucket/formula-foundry
+#     region = us-west-2
