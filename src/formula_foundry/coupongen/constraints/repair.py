@@ -197,11 +197,123 @@ class RepairResult:
 
 
 @dataclass
+class CategoryMarginSummary:
+    """Summary of margin statistics for a constraint category (CP-3.2).
+
+    Attributes:
+        min_margin_nm: Minimum margin in nanometers across all constraints in this category
+        min_margin_constraint_id: ID of the constraint with the minimum margin
+        constraint_count: Total number of constraints in this category
+        failed_count: Number of failed constraints in this category
+        passed_count: Number of passed constraints in this category
+        average_margin_nm: Average margin in nanometers across all constraints
+    """
+
+    min_margin_nm: int | None = None
+    min_margin_constraint_id: str | None = None
+    constraint_count: int = 0
+    failed_count: int = 0
+    passed_count: int = 0
+    average_margin_nm: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result: dict[str, Any] = {}
+        if self.min_margin_nm is not None:
+            result["min_margin_nm"] = self.min_margin_nm
+        if self.min_margin_constraint_id is not None:
+            result["min_margin_constraint_id"] = self.min_margin_constraint_id
+        result["constraint_count"] = self.constraint_count
+        result["failed_count"] = self.failed_count
+        result["passed_count"] = self.passed_count
+        if self.average_margin_nm is not None:
+            result["average_margin_nm"] = self.average_margin_nm
+        return result
+
+
+@dataclass
+class FailingConstraintsSummary:
+    """Summary of all failing constraints (CP-3.2).
+
+    Attributes:
+        total_failures: Total number of failing constraints
+        must_pass_failures: Number of failing constraints where must_pass=true
+        failures_by_tier: Count of failures grouped by tier
+        failures_by_category: Count of failures grouped by category
+        constraint_ids: List of all failing constraint IDs
+        failure_details: Detailed information for each failing constraint
+    """
+
+    total_failures: int = 0
+    must_pass_failures: int = 0
+    failures_by_tier: dict[str, int] = field(default_factory=dict)
+    failures_by_category: dict[str, int] = field(default_factory=dict)
+    constraint_ids: list[str] = field(default_factory=list)
+    failure_details: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "total_failures": self.total_failures,
+            "must_pass_failures": self.must_pass_failures,
+            "failures_by_tier": self.failures_by_tier,
+            "failures_by_category": self.failures_by_category,
+            "constraint_ids": self.constraint_ids,
+            "failure_details": self.failure_details,
+        }
+
+
+@dataclass
+class RepairSummary:
+    """Summary of repairs applied when REPAIR mode was used (CP-3.2).
+
+    Attributes:
+        repair_applied: Whether any repairs were applied
+        total_repairs: Total number of parameter repairs made
+        repairs_by_tier: Count of repairs triggered by constraints in each tier
+        repaired_parameter_paths: List of all parameter paths that were repaired
+        total_distance_nm: Sum of absolute repair distances in nanometers
+        max_single_repair_nm: Largest single repair distance in nanometers
+        normalized_repair_distance: Normalized repair distance (L2 norm)
+        original_failures: Number of constraint failures before repair
+        remaining_failures: Number of constraint failures after repair
+        projection_policy_order: Order of projection policies applied
+    """
+
+    repair_applied: bool = False
+    total_repairs: int = 0
+    repairs_by_tier: dict[str, int] = field(default_factory=dict)
+    repaired_parameter_paths: list[str] = field(default_factory=list)
+    total_distance_nm: int = 0
+    max_single_repair_nm: int = 0
+    normalized_repair_distance: float = 0.0
+    original_failures: int = 0
+    remaining_failures: int = 0
+    projection_policy_order: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "repair_applied": self.repair_applied,
+            "total_repairs": self.total_repairs,
+            "repairs_by_tier": self.repairs_by_tier,
+            "repaired_parameter_paths": self.repaired_parameter_paths,
+            "total_distance_nm": self.total_distance_nm,
+            "max_single_repair_nm": self.max_single_repair_nm,
+            "normalized_repair_distance": self.normalized_repair_distance,
+            "original_failures": self.original_failures,
+            "remaining_failures": self.remaining_failures,
+            "projection_policy_order": self.projection_policy_order,
+        }
+
+
+@dataclass
 class ConstraintProofDocument:
-    """A constraint proof document for JSON serialization.
+    """A constraint proof document for JSON serialization (CP-3.2 M1 compliant).
 
     This is the canonical format for constraint_proof.json files,
-    containing per-constraint evaluations with signed margins.
+    containing per-constraint evaluations with signed margins and
+    summary sections per M1 requirements.
 
     Attributes:
         schema_version: Version of the constraint proof schema
@@ -211,6 +323,9 @@ class ConstraintProofDocument:
         failed_constraints: Number of failed constraints
         tiers: Constraint IDs grouped by tier
         constraints: Full per-constraint evaluation details
+        min_margin_by_category: Minimum margin per constraint category (CP-3.2)
+        failing_constraints_summary: Summary of all failing constraints (CP-3.2)
+        repair_summary: Summary of repairs applied (CP-3.2)
         repair_applied: Whether REPAIR mode was applied
         repair_info: Repair details if REPAIR was applied
     """
@@ -222,6 +337,9 @@ class ConstraintProofDocument:
     failed_constraints: int = 0
     tiers: dict[ConstraintTier, list[str]] = field(default_factory=dict)
     constraints: list[dict[str, Any]] = field(default_factory=list)
+    min_margin_by_category: dict[str, CategoryMarginSummary] = field(default_factory=dict)
+    failing_constraints_summary: FailingConstraintsSummary | None = None
+    repair_summary: RepairSummary | None = None
     repair_applied: bool = False
     repair_info: dict[str, Any] | None = None
 
@@ -237,6 +355,17 @@ class ConstraintProofDocument:
             "constraints": self.constraints,
             "repair_applied": self.repair_applied,
         }
+        # Add min_margin_by_category if populated (CP-3.2)
+        if self.min_margin_by_category:
+            result["min_margin_by_category"] = {
+                cat: summary.to_dict() for cat, summary in self.min_margin_by_category.items()
+            }
+        # Add failing_constraints_summary if there are failures (CP-3.2)
+        if self.failing_constraints_summary is not None:
+            result["failing_constraints_summary"] = self.failing_constraints_summary.to_dict()
+        # Add repair_summary if repairs were applied (CP-3.2)
+        if self.repair_summary is not None:
+            result["repair_summary"] = self.repair_summary.to_dict()
         if self.repair_info is not None:
             result["repair_info"] = self.repair_info
         return result
@@ -1097,14 +1226,88 @@ def repair_spec_tiered(
     )
 
 
+def _infer_category_from_constraint_id(constraint_id: str) -> str:
+    """Infer constraint category from constraint ID (CP-3.2).
+
+    Maps constraint IDs to categories based on naming conventions.
+
+    Args:
+        constraint_id: Constraint ID like "T0_TRACE_WIDTH_MIN"
+
+    Returns:
+        Category string like "FABRICATION"
+    """
+    constraint_id_upper = constraint_id.upper()
+
+    # TOPOLOGY constraints
+    if any(kw in constraint_id_upper for kw in [
+        "CONNECT", "SIG", "TOPOLOGY", "CONTINUITY", "NET"
+    ]):
+        return "TOPOLOGY"
+
+    # SPACING constraints
+    if any(kw in constraint_id_upper for kw in [
+        "CLEARANCE", "SPACING", "GAP", "EDGE", "PITCH"
+    ]):
+        return "SPACING"
+
+    # GEOMETRY constraints
+    if any(kw in constraint_id_upper for kw in [
+        "OVERLAP", "COLLISION", "SYMMETRY", "FITS", "COVERAGE", "RADIUS", "ASPECT"
+    ]):
+        return "GEOMETRY"
+
+    # ELECTRICAL constraints
+    if any(kw in constraint_id_upper for kw in [
+        "IMPEDANCE", "CURRENT", "POWER", "RESISTANCE"
+    ]):
+        return "ELECTRICAL"
+
+    # MATERIAL constraints
+    if any(kw in constraint_id_upper for kw in [
+        "MATERIAL", "ER", "LOSS", "DIELECTRIC"
+    ]):
+        return "MATERIAL"
+
+    # Default to FABRICATION for parameter bounds
+    return "FABRICATION"
+
+
+def _infer_severity_from_constraint(constraint_id: str, passed: bool) -> str:
+    """Infer severity level from constraint (CP-3.2).
+
+    Args:
+        constraint_id: Constraint ID
+        passed: Whether constraint passed
+
+    Returns:
+        Severity string: "ERROR", "WARNING", or "INFO"
+    """
+    # Tier 0 constraints are always ERROR
+    if constraint_id.startswith("T0_"):
+        return "ERROR"
+    # Tier 1 constraints are ERROR for critical ones
+    if constraint_id.startswith("T1_"):
+        return "ERROR"
+    # Tier 2-3 constraints are ERROR for safety-critical ones
+    if constraint_id.startswith(("T2_", "T3_")):
+        return "ERROR"
+    # Default to ERROR
+    return "ERROR"
+
+
 def generate_constraint_proof(
     proof: TieredConstraintProof,
     repair_result: RepairResult | None = None,
 ) -> ConstraintProofDocument:
-    """Generate a constraint proof document from a tiered proof.
+    """Generate a constraint proof document from a tiered proof (CP-3.2 M1 compliant).
 
     This creates the canonical constraint_proof.json format with
-    per-constraint evaluations and signed margins.
+    per-constraint evaluations and signed margins, plus summary sections
+    required by M1:
+    - min_margin_by_category: Minimum margin per constraint category
+    - failing_constraints_summary: Summary of all failing constraints
+    - repair_summary: Summary of repairs applied (if REPAIR mode used)
 
     Args:
         proof: The tiered constraint proof to document
@@ -1113,31 +1316,153 @@ def generate_constraint_proof(
     Returns:
         ConstraintProofDocument ready for serialization
     """
+    # Build constraint entries with all M1-required fields
     constraints_list: list[dict[str, Any]] = []
-    for c in proof.constraints:
-        constraints_list.append(
-            {
-                "id": c.constraint_id,
-                "description": c.description,
-                "tier": c.tier,
-                "value": c.value,
-                "limit": c.limit,
-                "margin": c.margin,  # Signed margin
-                "passed": c.passed,
-                "reason": c.reason,
-            }
-        )
 
+    # Track statistics for summaries
+    category_stats: dict[str, dict[str, Any]] = {}  # category -> {margins, constraints, failures}
+    failed_constraints: list[dict[str, Any]] = []
+
+    for c in proof.constraints:
+        # Infer category from constraint ID if not available
+        category = _infer_category_from_constraint_id(c.constraint_id)
+        severity = _infer_severity_from_constraint(c.constraint_id, c.passed)
+        # Most constraints should pass for validity (must_pass=True)
+        must_pass = severity == "ERROR"
+
+        # Convert margin to integer nanometers (CP-3.2 M1 requirement)
+        margin_nm = int(round(c.margin))
+
+        constraint_entry: dict[str, Any] = {
+            "id": c.constraint_id,
+            "description": c.description,
+            "tier": c.tier,
+            "category": category,
+            "value": c.value,
+            "limit": c.limit,
+            "margin": c.margin,  # Signed margin (float)
+            "margin_nm": margin_nm,  # Signed margin in nm (CP-3.2 M1)
+            "passed": c.passed,
+            "severity": severity,
+            "must_pass": must_pass,
+            "reason": c.reason if c.reason else "",  # Always include reason
+        }
+
+        constraints_list.append(constraint_entry)
+
+        # Update category statistics
+        if category not in category_stats:
+            category_stats[category] = {
+                "margins": [],
+                "constraint_ids": [],
+                "failed_count": 0,
+                "passed_count": 0,
+            }
+
+        category_stats[category]["margins"].append((margin_nm, c.constraint_id))
+        category_stats[category]["constraint_ids"].append(c.constraint_id)
+        if c.passed:
+            category_stats[category]["passed_count"] += 1
+        else:
+            category_stats[category]["failed_count"] += 1
+
+            # Track failure details
+            failed_constraints.append({
+                "id": c.constraint_id,
+                "tier": c.tier,
+                "category": category,
+                "margin_nm": margin_nm,
+                "severity": severity,
+                "must_pass": must_pass,
+                "reason": c.reason if c.reason else f"Margin {margin_nm}nm < 0",
+            })
+
+    # Build min_margin_by_category summary (CP-3.2)
+    min_margin_by_category: dict[str, CategoryMarginSummary] = {}
+    for category, stats in category_stats.items():
+        margins = stats["margins"]
+        if margins:
+            min_margin, min_constraint_id = min(margins, key=lambda x: x[0])
+            avg_margin = sum(m[0] for m in margins) / len(margins)
+
+            min_margin_by_category[category] = CategoryMarginSummary(
+                min_margin_nm=min_margin,
+                min_margin_constraint_id=min_constraint_id,
+                constraint_count=len(margins),
+                failed_count=stats["failed_count"],
+                passed_count=stats["passed_count"],
+                average_margin_nm=avg_margin,
+            )
+
+    # Build tiers dict
     tiers_dict: dict[ConstraintTier, list[str]] = {}
     for tier in _TIERS:
         tier_constraints = proof.tiers.get(tier, ())
         tiers_dict[tier] = [c.constraint_id for c in tier_constraints]
 
-    failed_count = len([c for c in proof.constraints if not c.passed])
+    failed_count = len(failed_constraints)
 
+    # Build failing_constraints_summary (CP-3.2)
+    failing_constraints_summary = None
+    if failed_count > 0:
+        failures_by_tier: dict[str, int] = {}
+        failures_by_category: dict[str, int] = {}
+        must_pass_failures = 0
+
+        for fc in failed_constraints:
+            tier = fc["tier"]
+            cat = fc["category"]
+            failures_by_tier[tier] = failures_by_tier.get(tier, 0) + 1
+            failures_by_category[cat] = failures_by_category.get(cat, 0) + 1
+            if fc["must_pass"]:
+                must_pass_failures += 1
+
+        failing_constraints_summary = FailingConstraintsSummary(
+            total_failures=failed_count,
+            must_pass_failures=must_pass_failures,
+            failures_by_tier=failures_by_tier,
+            failures_by_category=failures_by_category,
+            constraint_ids=[fc["id"] for fc in failed_constraints],
+            failure_details=failed_constraints,
+        )
+
+    # Build repair_summary (CP-3.2)
+    repair_summary = None
     repair_info = None
     if repair_result is not None and repair_result.repair_actions:
         repair_info = repair_result.to_dict()
+
+        # Calculate repair statistics
+        total_distance_nm = sum(abs(a.after - a.before) for a in repair_result.repair_actions)
+        max_single_repair_nm = max(
+            abs(a.after - a.before) for a in repair_result.repair_actions
+        ) if repair_result.repair_actions else 0
+
+        # Group repairs by tier (from constraint_id)
+        repairs_by_tier: dict[str, int] = {}
+        for action in repair_result.repair_actions:
+            tier = action.constraint_id.split("_")[0] if "_" in action.constraint_id else "T0"
+            repairs_by_tier[tier] = repairs_by_tier.get(tier, 0) + 1
+
+        # Get original and remaining failure counts
+        original_failures = len([c for c in repair_result.original_proof.constraints if not c.passed])
+        remaining_failures = len([c for c in repair_result.repaired_proof.constraints if not c.passed])
+
+        repair_summary = RepairSummary(
+            repair_applied=True,
+            total_repairs=len(repair_result.repair_actions),
+            repairs_by_tier=repairs_by_tier,
+            repaired_parameter_paths=list(repair_result.repair_map.keys()),
+            total_distance_nm=total_distance_nm,
+            max_single_repair_nm=max_single_repair_nm,
+            normalized_repair_distance=(
+                repair_result.distance_metrics.l2_distance
+                if repair_result.distance_metrics else repair_result.repair_distance
+            ),
+            original_failures=original_failures,
+            remaining_failures=remaining_failures,
+            projection_policy_order=list(repair_result.projection_policy_order),
+        )
 
     return ConstraintProofDocument(
         schema_version=1,
@@ -1147,6 +1472,9 @@ def generate_constraint_proof(
         failed_constraints=failed_count,
         tiers=tiers_dict,
         constraints=constraints_list,
+        min_margin_by_category=min_margin_by_category,
+        failing_constraints_summary=failing_constraints_summary,
+        repair_summary=repair_summary,
         repair_applied=repair_result is not None and bool(repair_result.repair_actions),
         repair_info=repair_info,
     )
