@@ -13,6 +13,7 @@ from .geometry import (
     write_geometry_spec,
 )
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
+from .sim_runner import SimulationResult, SimulationRunner, SimulationSolverMode
 from .spec import (
     SIMULATIONSPEC_SCHEMA,
     BoundarySpec,
@@ -82,6 +83,9 @@ __all__ = [
     "TerminationSpec",
     "ToolchainSpec",
     "SIMULATIONSPEC_SCHEMA",
+    "SimulationResult",
+    "SimulationRunner",
+    "SimulationSolverMode",
     "load_simulationspec",
     "simulation_canonical_json",
     "write_geometry_spec",
