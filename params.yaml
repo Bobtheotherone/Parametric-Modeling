@@ -1,0 +1,66 @@
+# DVC Pipeline Parameters
+# M3: Data Provenance and Artifact Management
+#
+# Default parameter values for pipeline stages.
+# Override these for different experiments/runs.
+
+# =============================================================================
+# Coupon Generation Parameters
+# =============================================================================
+
+coupon:
+  family: "F1_SINGLE_ENDED_VIA"
+  stackup:
+    copper_layers: 4
+    thicknesses_nm:
+      L1_to_L2: 180000
+      L2_to_L3: 800000
+      L3_to_L4: 180000
+    materials:
+      er: 4.1
+      loss_tangent: 0.02
+
+# =============================================================================
+# Fabrication Profile
+# =============================================================================
+
+fab_profile:
+  id: "jlcpcb_4layer"
+  min_trace_nm: 90000
+  min_space_nm: 90000
+  min_drill_nm: 200000
+
+# =============================================================================
+# Simulation Parameters (M2)
+# =============================================================================
+
+simulation:
+  frequency:
+    start_hz: 100000000      # 100 MHz
+    stop_hz: 20000000000     # 20 GHz
+    points: 201
+  mesh:
+    resolution: "standard"   # coarse, standard, fine
+    max_cells: 1000000
+  solver:
+    end_criteria: -50        # dB
+    max_timesteps: 100000
+
+# =============================================================================
+# Dataset Parameters
+# =============================================================================
+
+dataset:
+  schema_version: 1
+  include_fields: true
+  compression: "snappy"
+
+# =============================================================================
+# Path Variables (used in dvc.yaml stages)
+# =============================================================================
+
+spec_file: "config/coupon_spec.yaml"
+coupon_output_dir: "artifacts/coupons/current"
+sim_output_dir: "artifacts/simulations/current"
+dataset_input_dirs: "artifacts/simulations/"
+dataset_output: "data/datasets/current"

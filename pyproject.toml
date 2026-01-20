@@ -30,6 +30,11 @@ tracking = [
   "pyyaml>=6.0",
 ]
 
+# DVC for pipeline versioning (M3)
+dvc = [
+  "dvc>=3.50",
+]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q"
