@@ -10,6 +10,7 @@ def test_lengthnm_parsing_integer_nm() -> None:
     assert parse_length_nm("10mil") == 254000
     assert parse_length_nm("250um") == 250000
     assert parse_length_nm("1000nm") == 1000
+    assert parse_length_nm("1000") == 1000
     assert isinstance(parse_length_nm("1mm"), int)
 
     with pytest.raises(ValueError):
