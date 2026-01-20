@@ -218,6 +218,67 @@
         "repaired_passed": {
           "type": "boolean",
           "description": "Whether constraints passed after repair"
+        },
+        "projection_policy_order": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Order in which projection policies were applied during repair"
+        },
+        "original_vector": {
+          "type": "object",
+          "description": "Original parameter vector before repair",
+          "additionalProperties": false,
+          "properties": {
+            "parameters": {
+              "type": "object",
+              "description": "Parameter values in nanometers",
+              "additionalProperties": {"type": "integer"}
+            },
+            "normalized": {
+              "type": "object",
+              "description": "Normalized parameter values in [0, 1]",
+              "additionalProperties": {"type": "number"}
+            }
+          }
+        },
+        "repaired_vector": {
+          "type": "object",
+          "description": "Repaired parameter vector after repair",
+          "additionalProperties": false,
+          "properties": {
+            "parameters": {
+              "type": "object",
+              "description": "Parameter values in nanometers",
+              "additionalProperties": {"type": "integer"}
+            },
+            "normalized": {
+              "type": "object",
+              "description": "Normalized parameter values in [0, 1]",
+              "additionalProperties": {"type": "number"}
+            }
+          }
+        },
+        "distance_metrics": {
+          "type": "object",
+          "description": "Distance metrics quantifying the repair",
+          "additionalProperties": false,
+          "properties": {
+            "l2_distance": {
+              "type": "number",
+              "minimum": 0,
+              "description": "L2 (Euclidean) distance in normalized space"
+            },
+            "linf_distance": {
+              "type": "number",
+              "minimum": 0,
+              "description": "L-infinity (max) distance in normalized space"
+            },
+            "normalized_sum_distance": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Sum of normalized distances across all repaired parameters"
+            }
+          }
         }
       }
     }
