@@ -1,3 +1,11 @@
+"""Tests for openEMS simulation runner (REQ-M2-006).
+
+This module tests the SimulationRunner class which provides:
+- Subprocess management for openEMS execution
+- Output parsing for S-parameter results
+- Error handling with timeout support
+- Integration with port configuration from M2-PORT-CONFIG
+"""
 from __future__ import annotations
 
 import json
@@ -5,10 +13,18 @@ import stat
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
 from formula_foundry.coupongen.resolve import design_hash, resolve
 from formula_foundry.coupongen.spec import CouponSpec
-from formula_foundry.openems import OpenEMSRunner, SimulationRunner
+from formula_foundry.openems import (
+    OpenEMSRunner,
+    SimulationExecutionError,
+    SimulationRunner,
+    SimulationTimeoutError,
+    load_sparam_result,
+)
 from formula_foundry.openems.convert import build_simulation_spec
 from formula_foundry.openems.geometry import GeometrySpec, build_geometry_spec
 from formula_foundry.openems.spec import SimulationSpec
@@ -178,3 +194,137 @@ def test_sim_runner_cli_invokes_openems(tmp_path: Path) -> None:
     assert "--flag" in args_text
     assert "value" in args_text
     assert (result.outputs_dir / "sparams.s2p").exists()
+
+
+def test_sim_runner_result_includes_sparam_path(tmp_path: Path) -> None:
+    """REQ-M2-006: SimulationResult includes path to S-parameter output."""
+    simulation, geometry = _build_inputs()
+    runner = SimulationRunner(mode="stub")
+    output_dir = tmp_path / "run"
+
+    result = runner.run(simulation, geometry, output_dir=output_dir)
+
+    assert result.sparam_path is not None
+    assert result.sparam_path.exists()
+    assert result.sparam_path.suffix == ".s2p"
+
+
+def test_sim_runner_result_includes_execution_time(tmp_path: Path) -> None:
+    """REQ-M2-006: SimulationResult includes execution time."""
+    simulation, geometry = _build_inputs()
+    runner = SimulationRunner(mode="stub")
+    output_dir = tmp_path / "run"
+
+    result = runner.run(simulation, geometry, output_dir=output_dir)
+
+    assert result.execution_time_sec is not None
+    assert result.execution_time_sec >= 0
+
+
+def test_sim_runner_cached_result_no_execution_time(tmp_path: Path) -> None:
+    """REQ-M2-006: Cached results have no execution time."""
+    simulation, geometry = _build_inputs()
+    runner = SimulationRunner(mode="stub")
+    output_dir = tmp_path / "run"
+
+    # First run
+    runner.run(simulation, geometry, output_dir=output_dir)
+
+    # Second run (cached)
+    result = runner.run(simulation, geometry, output_dir=output_dir)
+
+    assert result.cache_hit is True
+    assert result.execution_time_sec is None
+
+
+def test_load_sparam_result_from_stub(tmp_path: Path) -> None:
+    """REQ-M2-006: load_sparam_result parses S-parameters from result."""
+    simulation, geometry = _build_inputs()
+    runner = SimulationRunner(mode="stub")
+    output_dir = tmp_path / "run"
+
+    result = runner.run(simulation, geometry, output_dir=output_dir)
+    sparam_data = load_sparam_result(result)
+
+    assert sparam_data is not None
+    assert sparam_data.n_ports == 2
+    assert sparam_data.n_frequencies > 0
+
+
+def test_sim_runner_cli_error_handling(tmp_path: Path) -> None:
+    """REQ-M2-006: SimulationRunner raises SimulationExecutionError on failure."""
+    simulation, geometry = _build_inputs()
+    simulation = simulation.model_copy(
+        update={
+            "output": simulation.output.model_copy(update={"outputs_dir": "error_outputs/"}),
+        }
+    )
+
+    # Create a stub that fails with error
+    stub = tmp_path / "openEMS_fail"
+    _write_executable(
+        stub,
+        "#!/usr/bin/env bash\n"
+        "echo 'Error: simulation failed' >&2\n"
+        "exit 1\n",
+    )
+    runner = SimulationRunner(
+        mode="cli",
+        openems_runner=OpenEMSRunner(mode="local", openems_bin=str(stub)),
+    )
+
+    with pytest.raises(SimulationExecutionError) as exc_info:
+        runner.run(
+            simulation,
+            geometry,
+            output_dir=tmp_path / "run_error",
+            openems_args=["--some-flag"],
+        )
+
+    assert exc_info.value.returncode == 1
+    assert "simulation failed" in exc_info.value.stderr
+
+
+def test_sim_runner_requires_cli_args(tmp_path: Path) -> None:
+    """REQ-M2-006: CLI mode requires openems_args."""
+    simulation, geometry = _build_inputs()
+    stub = tmp_path / "openEMS"
+    _write_executable(stub, "#!/usr/bin/env bash\nexit 0\n")
+
+    runner = SimulationRunner(
+        mode="cli",
+        openems_runner=OpenEMSRunner(mode="local", openems_bin=str(stub)),
+    )
+
+    with pytest.raises(ValueError, match="openems_args must be provided"):
+        runner.run(
+            simulation,
+            geometry,
+            output_dir=tmp_path / "run_no_args",
+            openems_args=[],
+        )
+
+
+def test_sim_runner_mode_validation() -> None:
+    """REQ-M2-006: SimulationRunner validates mode parameter."""
+    with pytest.raises(ValueError, match="Unsupported simulation runner mode"):
+        SimulationRunner(mode="invalid")  # type: ignore[arg-type]
+
+
+def test_sim_runner_cli_requires_runner() -> None:
+    """REQ-M2-006: CLI mode requires openems_runner."""
+    with pytest.raises(ValueError, match="openems_runner is required"):
+        SimulationRunner(mode="cli", openems_runner=None)
+
+
+def test_sim_runner_manifest_includes_execution_time(tmp_path: Path) -> None:
+    """REQ-M2-006: Manifest includes execution_time_sec field."""
+    simulation, geometry = _build_inputs()
+    runner = SimulationRunner(mode="stub")
+    output_dir = tmp_path / "run"
+
+    result = runner.run(simulation, geometry, output_dir=output_dir)
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert "execution_time_sec" in manifest
+    assert manifest["execution_time_sec"] >= 0

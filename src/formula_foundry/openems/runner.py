@@ -56,8 +56,47 @@ class OpenEMSRunner:
         ]
 
     def run(self, args: Iterable[str], *, workdir: Path) -> subprocess.CompletedProcess[str]:
+        """Run openEMS with the given arguments.
+
+        Args:
+            args: Command-line arguments for openEMS.
+            workdir: Working directory for the simulation.
+
+        Returns:
+            CompletedProcess with stdout, stderr, and returncode.
+        """
         cmd = self.build_command(args, workdir=workdir)
         return subprocess.run(cmd, cwd=workdir, text=True, capture_output=True, check=False)
+
+    def run_with_timeout(
+        self,
+        args: Iterable[str],
+        *,
+        workdir: Path,
+        timeout_sec: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run openEMS with optional timeout.
+
+        Args:
+            args: Command-line arguments for openEMS.
+            workdir: Working directory for the simulation.
+            timeout_sec: Timeout in seconds (None for no timeout).
+
+        Returns:
+            CompletedProcess with stdout, stderr, and returncode.
+
+        Raises:
+            subprocess.TimeoutExpired: If the process exceeds timeout.
+        """
+        cmd = self.build_command(args, workdir=workdir)
+        return subprocess.run(
+            cmd,
+            cwd=workdir,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout_sec,
+        )
 
     def version_metadata(self, *, workdir: Path) -> dict[str, Any]:
         attempts = [["--version"], ["-v"], ["--help"]]

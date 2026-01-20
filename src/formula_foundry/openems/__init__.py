@@ -50,7 +50,15 @@ from .ports import (
     waveguide_port_to_basic_port_spec,
 )
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
-from .sim_runner import SimulationResult, SimulationRunner, SimulationSolverMode
+from .sim_runner import (
+    SimulationError,
+    SimulationExecutionError,
+    SimulationResult,
+    SimulationRunner,
+    SimulationSolverMode,
+    SimulationTimeoutError,
+    load_sparam_result,
+)
 from .spec import (
     SIMULATIONSPEC_SCHEMA,
     BoundarySpec,
@@ -132,10 +140,14 @@ __all__ = [
     "TerminationSpec",
     "ToolchainSpec",
     "SIMULATIONSPEC_SCHEMA",
+    "SimulationError",
+    "SimulationExecutionError",
     "SimulationResult",
     "SimulationRunner",
     "SimulationSolverMode",
+    "SimulationTimeoutError",
     "load_simulationspec",
+    "load_sparam_result",
     "simulation_canonical_json",
     "write_geometry_spec",
     "write_simulation_spec",
