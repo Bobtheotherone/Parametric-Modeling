@@ -254,6 +254,38 @@ class TestTier1DerivedScalars:
         aspect_result = next(r for r in results if r.constraint_id == "T1_BOARD_ASPECT_RATIO_MAX")
         assert not aspect_result.passed
 
+    def test_copper_to_edge_clearance_fails(self) -> None:
+        """Copper features too close to edge should fail (Section 13.3.2)."""
+        data = _example_spec_data()
+        # Make board very narrow so copper is too close to edge
+        data["board"]["outline"]["width_nm"] = 2_000_000  # 2mm width
+        # With trace_width=300000, gap=180000, fence_offset=800000, fence_via_radius=300000
+        # Extent from center = 150000 + 180000 + 800000 + 300000 = 1430000 nm
+        # Available clearance = 1000000 - 1430000 = -430000 nm (negative = fails)
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+        checker = Tier1Checker()
+
+        results = checker.check(spec, limits)
+
+        clearance_result = next(r for r in results if r.constraint_id == "T1_COPPER_TO_EDGE_CLEARANCE")
+        assert not clearance_result.passed
+
+    def test_fence_pitch_too_small_fails(self) -> None:
+        """Fence pitch smaller than via + spacing should fail (Section 13.3.2)."""
+        data = _example_spec_data()
+        # Set fence pitch smaller than via diameter + spacing
+        data["transmission_line"]["ground_via_fence"]["pitch_nm"] = 500_000  # Too small
+        # Via diameter = 600_000, min_via_to_via = 200_000, so min pitch = 800_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+        checker = Tier1Checker()
+
+        results = checker.check(spec, limits)
+
+        pitch_result = next(r for r in results if r.constraint_id == "T1_FENCE_PITCH_MIN")
+        assert not pitch_result.passed
+
 
 class TestTier2AnalyticSpatial:
     """Test Tier 2 analytic spatial constraints."""

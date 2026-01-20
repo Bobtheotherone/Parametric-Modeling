@@ -475,6 +475,51 @@ class RepairEngine:
                 "T1_TRACE_RIGHT_POSITIVE",
             )
 
+        # Fence pitch constraint (Section 13.3.2)
+        if fence is not None and fence.get("enabled", False):
+            fence_pitch = int(fence["pitch_nm"])
+            fence_via_dia = int(fence["via"]["diameter_nm"])
+            min_via_to_via = self.fab_limits.get("min_via_to_via_nm", 200_000)
+            min_fence_pitch = fence_via_dia + min_via_to_via
+
+            if fence_pitch < min_fence_pitch:
+                fence["pitch_nm"] = self._record(
+                    "transmission_line.ground_via_fence.pitch_nm",
+                    fence_pitch,
+                    min_fence_pitch,
+                    f"Fence pitch {fence_pitch}nm raised for via spacing to {min_fence_pitch}nm",
+                    "T1_FENCE_PITCH_MIN",
+                )
+
+        # Copper-to-edge clearance (Section 13.3.2)
+        # If copper is too close to edge, we can widen the board
+        if payload.get("board") is not None and payload["board"].get("outline") is not None:
+            board = payload["board"]["outline"]
+            board_width = int(board["width_nm"])
+            trace_width = int(tl["w_nm"])
+            trace_gap = int(tl["gap_nm"])
+            min_edge_clearance = self.fab_limits.get("min_edge_clearance_nm", 200_000)
+
+            # Calculate copper extent from centerline
+            trace_extent_from_center = trace_width // 2 + trace_gap
+            if fence is not None and fence.get("enabled", False):
+                fence_offset = int(fence["offset_from_gap_nm"])
+                fence_via_radius = int(fence["via"]["diameter_nm"]) // 2
+                trace_extent_from_center = trace_width // 2 + trace_gap + fence_offset + fence_via_radius
+
+            # Required board half-width = trace extent + edge clearance
+            required_half_width = trace_extent_from_center + min_edge_clearance
+            required_board_width = required_half_width * 2
+
+            if board_width < required_board_width:
+                board["width_nm"] = self._record(
+                    "board.outline.width_nm",
+                    board_width,
+                    required_board_width,
+                    f"Board width {board_width}nm raised for copper-to-edge clearance to {required_board_width}nm",
+                    "T1_COPPER_TO_EDGE_CLEARANCE",
+                )
+
     def repair_tier2(self, payload: dict[str, Any]) -> None:
         """Apply Tier 2 repairs: analytic spatial constraints."""
         board_length = int(payload["board"]["outline"]["length_nm"])

@@ -526,6 +526,61 @@ class Tier1Checker(TierChecker):
             )
         )
 
+        # Copper-to-edge clearance (Section 13.3.2)
+        # The minimum copper-to-edge clearance is derived from:
+        # - Trace center at y=0 (centerline)
+        # - Trace half-width + gap + ground pour edge = distance from centerline
+        # - Board half-width - this distance = clearance to board edge
+        trace_width = int(spec.transmission_line.w_nm)
+        trace_gap = int(spec.transmission_line.gap_nm)
+        min_edge_clearance = fab_limits.get("min_edge_clearance_nm", 200_000)
+
+        # For CPWG, the ground pour extends beyond the gap. Compute clearance:
+        # Copper footprint from centerline = trace_width/2 + gap + ground_pour_margin
+        # For simplicity, we check that half the trace width + gap doesn't exceed
+        # half the board width minus edge clearance
+        half_board_width = board_width // 2
+        trace_extent_from_center = trace_width // 2 + trace_gap
+
+        # If there's a ground via fence, include its extent
+        fence = spec.transmission_line.ground_via_fence
+        if fence is not None and fence.enabled:
+            fence_offset = int(fence.offset_from_gap_nm)
+            fence_via_radius = int(fence.via.diameter_nm) // 2
+            trace_extent_from_center = trace_width // 2 + trace_gap + fence_offset + fence_via_radius
+
+        available_clearance = half_board_width - trace_extent_from_center
+
+        results.append(
+            _min_constraint(
+                "T1_COPPER_TO_EDGE_CLEARANCE",
+                "Copper features must maintain minimum clearance from board edge",
+                tier="T1",
+                value=available_clearance,
+                limit=min_edge_clearance,
+            )
+        )
+
+        # Fence pitch constraint (Section 13.3.2)
+        # Fence pitch should be reasonable relative to via diameter
+        if fence is not None and fence.enabled:
+            fence_pitch = int(fence.pitch_nm)
+            fence_via_dia = int(fence.via.diameter_nm)
+            min_via_to_via = fab_limits.get("min_via_to_via_nm", 200_000)
+
+            # Fence pitch must allow non-overlapping vias with clearance
+            min_fence_pitch = fence_via_dia + min_via_to_via
+
+            results.append(
+                _min_constraint(
+                    "T1_FENCE_PITCH_MIN",
+                    "Ground fence pitch must exceed via diameter plus spacing",
+                    tier="T1",
+                    value=fence_pitch,
+                    limit=min_fence_pitch,
+                )
+            )
+
         return results
 
 
