@@ -1,3 +1,17 @@
+from .batch_runner import (
+    BatchConfig,
+    BatchProgress,
+    BatchResult,
+    BatchSimulationRunner,
+    ProgressCallback,
+    SimulationJob,
+    SimulationJobResult,
+    SimulationStatus,
+    create_batch_jobs,
+    estimate_batch_time,
+    load_batch_result_summary,
+    write_batch_result,
+)
 from .cli_main import build_parser
 from .convergence import (
     ConvergenceCheckResult,
@@ -275,4 +289,17 @@ __all__ = [
     "validate_convergence",
     "validate_simulation_convergence",
     "write_convergence_report",
+    # Batch simulation runner (REQ-M2-009)
+    "BatchConfig",
+    "BatchProgress",
+    "BatchResult",
+    "BatchSimulationRunner",
+    "ProgressCallback",
+    "SimulationJob",
+    "SimulationJobResult",
+    "SimulationStatus",
+    "create_batch_jobs",
+    "estimate_batch_time",
+    "load_batch_result_summary",
+    "write_batch_result",
 ]
