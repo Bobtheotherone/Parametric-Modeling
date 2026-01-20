@@ -137,6 +137,26 @@
         }
       }
     },
+    "GpuToolchainInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used"],
+      "description": "GPU toolchain info for batch filtering (CP-4.1/CP-4.2)",
+      "properties": {
+        "used": {
+          "type": "boolean",
+          "description": "Whether GPU acceleration was used for batch filtering"
+        },
+        "cupy_version": {
+          "type": ["string", "null"],
+          "description": "CuPy version if GPU was used (e.g., '13.0.0')"
+        },
+        "cuda_runtime_version": {
+          "type": ["string", "null"],
+          "description": "CUDA runtime version if GPU was used (e.g., '12010')"
+        }
+      }
+    },
     "Toolchain": {
       "type": "object",
       "additionalProperties": false,
@@ -147,6 +167,10 @@
         },
         "docker": {
           "$ref": "#/$defs/DockerToolchainInfo"
+        },
+        "gpu": {
+          "$ref": "#/$defs/GpuToolchainInfo",
+          "description": "GPU toolchain info when batch filtering with GPU (CP-4.2)"
         },
         "mode": {
           "type": "string",
