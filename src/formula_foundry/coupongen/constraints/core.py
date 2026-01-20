@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .fab_profiles import FabCapabilityProfile, get_fab_limits, load_fab_profile
-from .resolve import ResolvedDesign, resolve
-from .spec import CouponSpec
+from ..fab_profiles import FabCapabilityProfile, get_fab_limits, load_fab_profile
+from ..resolve import ResolvedDesign, resolve
+from ..spec import CouponSpec
 
 ConstraintTier = Literal["T0", "T1", "T2", "T3", "T4"]
 
