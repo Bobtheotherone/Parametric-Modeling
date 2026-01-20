@@ -14,6 +14,7 @@ The convergence pipeline:
 3. Generate diagnostic report with pass/fail gates
 4. Produce structured output for manifest inclusion
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,10 +31,7 @@ from formula_foundry.em.touchstone import SParameterData
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .spec import (
-    FrequencySpec,
-    MeshResolutionSpec,
     SimulationSpec,
-    TerminationSpec,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,7 +153,7 @@ class ConvergenceConfig:
     check_passivity: bool = True
 
     @classmethod
-    def from_spec(cls, spec: SimulationSpec) -> "ConvergenceConfig":
+    def from_spec(cls, spec: SimulationSpec) -> ConvergenceConfig:
         """Create config from simulation specification.
 
         Args:
@@ -414,8 +412,7 @@ def check_port_power_balance(
         return ConvergenceCheckResult(
             name="port_power_balance",
             status=ConvergenceStatus.FAILED,
-            message=f"Power balance violated at {violations} frequencies "
-            f"(max excess: {max_power_excess:.4f})",
+            message=f"Power balance violated at {violations} frequencies (max excess: {max_power_excess:.4f})",
             value=max_power_excess,
             threshold=tolerance,
             details=details,
@@ -482,8 +479,7 @@ def check_passivity(
         return ConvergenceCheckResult(
             name="passivity",
             status=ConvergenceStatus.FAILED,
-            message=f"Passivity violated at {violations} frequencies "
-            f"(max eigenvalue: {max_eigenvalue:.6f})",
+            message=f"Passivity violated at {violations} frequencies (max eigenvalue: {max_eigenvalue:.6f})",
             value=max_eigenvalue,
             threshold=1.0 + tolerance,
             details=details,
@@ -576,8 +572,7 @@ def check_frequency_resolution(
         return ConvergenceCheckResult(
             name="frequency_resolution",
             status=ConvergenceStatus.PASSED,
-            message=f"Mesh resolution adequate ({actual_cells_per_lambda:.1f} "
-            f"cells/wavelength >= {min_cells})",
+            message=f"Mesh resolution adequate ({actual_cells_per_lambda:.1f} cells/wavelength >= {min_cells})",
             value=actual_cells_per_lambda,
             threshold=float(min_cells),
             details=details,
@@ -586,8 +581,7 @@ def check_frequency_resolution(
         return ConvergenceCheckResult(
             name="frequency_resolution",
             status=ConvergenceStatus.WARNING,
-            message=f"Mesh resolution marginal ({actual_cells_per_lambda:.1f} "
-            f"cells/wavelength, target: {min_cells})",
+            message=f"Mesh resolution marginal ({actual_cells_per_lambda:.1f} cells/wavelength, target: {min_cells})",
             value=actual_cells_per_lambda,
             threshold=float(min_cells),
             details=details,
@@ -596,8 +590,7 @@ def check_frequency_resolution(
         return ConvergenceCheckResult(
             name="frequency_resolution",
             status=ConvergenceStatus.FAILED,
-            message=f"Mesh resolution insufficient ({actual_cells_per_lambda:.1f} "
-            f"cells/wavelength < {min_cells})",
+            message=f"Mesh resolution insufficient ({actual_cells_per_lambda:.1f} cells/wavelength < {min_cells})",
             value=actual_cells_per_lambda,
             threshold=float(min_cells),
             details=details,
@@ -683,9 +676,7 @@ def validate_convergence(
     # Frequency resolution check
     if config.check_frequency_resolution:
         if max_freq_hz is not None:
-            checks.append(
-                check_frequency_resolution(max_freq_hz, mesh_info, config, epsilon_r)
-            )
+            checks.append(check_frequency_resolution(max_freq_hz, mesh_info, config, epsilon_r))
         else:
             checks.append(
                 ConvergenceCheckResult(

@@ -43,14 +43,11 @@ class BuildResult:
 
 
 class KicadRunnerProtocol(Protocol):
-    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
-        ...
+    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]: ...
 
-    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
-        ...
+    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]: ...
 
-    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
-        ...
+    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]: ...
 
 
 def load_spec(path: Path) -> CouponSpec:
@@ -161,10 +158,7 @@ def build_coupon(
 
     if manifest_path.exists():
         manifest = load_manifest(manifest_path)
-        if (
-            manifest.get("design_hash") == design_hash_value
-            and manifest.get("toolchain_hash") == toolchain_hash_value
-        ):
+        if manifest.get("design_hash") == design_hash_value and manifest.get("toolchain_hash") == toolchain_hash_value:
             return BuildResult(
                 output_dir=output_dir,
                 design_hash=design_hash_value,

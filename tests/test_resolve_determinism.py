@@ -98,9 +98,7 @@ class TestDeterministicResolveHashing:
         _golden_spec_files(),
         ids=lambda p: p.name,
     )
-    def test_resolve_hash_matches_golden(
-        self, spec_path: Path, golden_hashes: dict[str, str]
-    ) -> None:
+    def test_resolve_hash_matches_golden(self, spec_path: Path, golden_hashes: dict[str, str]) -> None:
         """Each golden spec's design_hash must match the committed golden hash."""
         spec = load_spec(spec_path)
         resolved = resolve(spec)
@@ -109,9 +107,7 @@ class TestDeterministicResolveHashing:
         key = spec_path.name
         assert key in golden_hashes, f"No golden hash for {key}"
         expected_hash = golden_hashes[key]
-        assert computed_hash == expected_hash, (
-            f"Hash mismatch for {key}: computed={computed_hash}, expected={expected_hash}"
-        )
+        assert computed_hash == expected_hash, f"Hash mismatch for {key}: computed={computed_hash}, expected={expected_hash}"
 
     @pytest.mark.parametrize(
         "spec_path",
@@ -235,17 +231,13 @@ class TestF0FamilyDeterminism:
         """All F0 golden specs must have coupon_family F0_CAL_THRU_LINE."""
         for spec_path in _f0_golden_specs():
             spec = load_spec(spec_path)
-            assert spec.coupon_family == "F0_CAL_THRU_LINE", (
-                f"{spec_path.name}: family={spec.coupon_family}"
-            )
+            assert spec.coupon_family == "F0_CAL_THRU_LINE", f"{spec_path.name}: family={spec.coupon_family}"
 
     def test_f0_specs_have_no_discontinuity(self) -> None:
         """F0 calibration thru-lines must have discontinuity=null."""
         for spec_path in _f0_golden_specs():
             spec = load_spec(spec_path)
-            assert spec.discontinuity is None, (
-                f"{spec_path.name}: discontinuity should be null"
-            )
+            assert spec.discontinuity is None, f"{spec_path.name}: discontinuity should be null"
 
 
 class TestF1FamilyDeterminism:
@@ -265,26 +257,20 @@ class TestF1FamilyDeterminism:
         """All F1 golden specs must have coupon_family F1_SINGLE_ENDED_VIA."""
         for spec_path in _f1_golden_specs():
             spec = load_spec(spec_path)
-            assert spec.coupon_family == "F1_SINGLE_ENDED_VIA", (
-                f"{spec_path.name}: family={spec.coupon_family}"
-            )
+            assert spec.coupon_family == "F1_SINGLE_ENDED_VIA", f"{spec_path.name}: family={spec.coupon_family}"
 
     def test_f1_specs_have_discontinuity(self) -> None:
         """F1 via transition specs must have a discontinuity section."""
         for spec_path in _f1_golden_specs():
             spec = load_spec(spec_path)
-            assert spec.discontinuity is not None, (
-                f"{spec_path.name}: discontinuity should not be null"
-            )
+            assert spec.discontinuity is not None, f"{spec_path.name}: discontinuity should not be null"
 
     def test_f1_specs_have_signal_via(self) -> None:
         """F1 via transition specs must have signal_via in discontinuity."""
         for spec_path in _f1_golden_specs():
             spec = load_spec(spec_path)
             assert spec.discontinuity is not None
-            assert spec.discontinuity.signal_via is not None, (
-                f"{spec_path.name}: signal_via is missing"
-            )
+            assert spec.discontinuity.signal_via is not None, f"{spec_path.name}: signal_via is missing"
 
 
 class TestKeyOrderingIndependence:
@@ -319,9 +305,7 @@ class TestGoldenHashIntegrity:
         hashes = _load_golden_hashes()
         for key, digest in hashes.items():
             assert len(digest) == 64, f"{key}: hash length != 64"
-            assert all(c in "0123456789abcdef" for c in digest), (
-                f"{key}: invalid hex characters"
-            )
+            assert all(c in "0123456789abcdef" for c in digest), f"{key}: invalid hex characters"
 
     def test_golden_hashes_cover_all_golden_specs(self) -> None:
         """Every golden spec file must have a corresponding golden hash."""

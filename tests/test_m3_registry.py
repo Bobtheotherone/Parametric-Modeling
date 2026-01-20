@@ -37,9 +37,7 @@ class TestArtifactRegistryInit:
 
         # Verify tables exist by attempting queries
         conn = registry._get_connection()
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
         cursor.close()
 
@@ -564,10 +562,7 @@ class TestThreadSafety:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=index_artifact, args=(i,))
-            for i in range(num_threads)
-        ]
+        threads = [threading.Thread(target=index_artifact, args=(i,)) for i in range(num_threads)]
         for t in threads:
             t.start()
         for t in threads:

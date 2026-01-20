@@ -26,11 +26,16 @@ if TYPE_CHECKING:
 try:
     import cupy as cp
 
-    # Verify CUDA device is actually available
+    # Verify CUDA device is actually available and NVRTC works
     try:
         cp.cuda.Device(0).compute_capability
+        # Try a tiny kernel operation to verify NVRTC is available
+        # This will fail if libnvrtc.so is missing
+        _test_arr = cp.array([1.0, 2.0])
+        _ = _test_arr * 2.0  # This triggers NVRTC compilation
+        del _test_arr
         _HAS_CUPY = True
-    except cp.cuda.runtime.CUDARuntimeError:
+    except (cp.cuda.runtime.CUDARuntimeError, RuntimeError, OSError):
         cp = None  # type: ignore[assignment]
         _HAS_CUPY = False
 except ImportError:
@@ -149,30 +154,32 @@ class FamilyF1ParameterSpace:
 
     # Default parameter mappings for F1 family
     # Indices are assigned to group related constraints together
-    mappings: tuple[ParameterMapping, ...] = field(default_factory=lambda: (
-        # Tier 0: Direct parameter bounds
-        ParameterMapping("trace_width_nm", 0, "linear", 100_000, 500_000),
-        ParameterMapping("trace_gap_nm", 1, "linear", 100_000, 300_000),
-        ParameterMapping("board_width_nm", 2, "linear", 10_000_000, 50_000_000),
-        ParameterMapping("board_length_nm", 3, "linear", 30_000_000, 150_000_000),
-        ParameterMapping("corner_radius_nm", 4, "linear", 0, 5_000_000),
-        ParameterMapping("signal_drill_nm", 5, "linear", 200_000, 500_000),
-        ParameterMapping("signal_via_diameter_nm", 6, "linear", 300_000, 800_000),
-        ParameterMapping("signal_pad_diameter_nm", 7, "linear", 400_000, 1_200_000),
-        ParameterMapping("return_via_drill_nm", 8, "linear", 200_000, 500_000),
-        ParameterMapping("return_via_diameter_nm", 9, "linear", 300_000, 800_000),
-        ParameterMapping("fence_via_drill_nm", 10, "linear", 200_000, 400_000),
-        ParameterMapping("fence_via_diameter_nm", 11, "linear", 300_000, 700_000),
-        # Tier 1: Derived parameters (annular ring computed from above)
-        # Tier 2: Spatial parameters
-        ParameterMapping("left_connector_x_nm", 12, "linear", 2_000_000, 10_000_000),
-        ParameterMapping("right_connector_x_nm", 13, "linear", 70_000_000, 145_000_000),
-        ParameterMapping("trace_length_left_nm", 14, "linear", 5_000_000, 50_000_000),
-        ParameterMapping("trace_length_right_nm", 15, "linear", 5_000_000, 50_000_000),
-        ParameterMapping("return_via_ring_radius_nm", 16, "linear", 800_000, 3_000_000),
-        ParameterMapping("fence_pitch_nm", 17, "linear", 500_000, 3_000_000),
-        ParameterMapping("fence_offset_nm", 18, "linear", 200_000, 1_500_000),
-    ))
+    mappings: tuple[ParameterMapping, ...] = field(
+        default_factory=lambda: (
+            # Tier 0: Direct parameter bounds
+            ParameterMapping("trace_width_nm", 0, "linear", 100_000, 500_000),
+            ParameterMapping("trace_gap_nm", 1, "linear", 100_000, 300_000),
+            ParameterMapping("board_width_nm", 2, "linear", 10_000_000, 50_000_000),
+            ParameterMapping("board_length_nm", 3, "linear", 30_000_000, 150_000_000),
+            ParameterMapping("corner_radius_nm", 4, "linear", 0, 5_000_000),
+            ParameterMapping("signal_drill_nm", 5, "linear", 200_000, 500_000),
+            ParameterMapping("signal_via_diameter_nm", 6, "linear", 300_000, 800_000),
+            ParameterMapping("signal_pad_diameter_nm", 7, "linear", 400_000, 1_200_000),
+            ParameterMapping("return_via_drill_nm", 8, "linear", 200_000, 500_000),
+            ParameterMapping("return_via_diameter_nm", 9, "linear", 300_000, 800_000),
+            ParameterMapping("fence_via_drill_nm", 10, "linear", 200_000, 400_000),
+            ParameterMapping("fence_via_diameter_nm", 11, "linear", 300_000, 700_000),
+            # Tier 1: Derived parameters (annular ring computed from above)
+            # Tier 2: Spatial parameters
+            ParameterMapping("left_connector_x_nm", 12, "linear", 2_000_000, 10_000_000),
+            ParameterMapping("right_connector_x_nm", 13, "linear", 70_000_000, 145_000_000),
+            ParameterMapping("trace_length_left_nm", 14, "linear", 5_000_000, 50_000_000),
+            ParameterMapping("trace_length_right_nm", 15, "linear", 5_000_000, 50_000_000),
+            ParameterMapping("return_via_ring_radius_nm", 16, "linear", 800_000, 3_000_000),
+            ParameterMapping("fence_pitch_nm", 17, "linear", 500_000, 3_000_000),
+            ParameterMapping("fence_offset_nm", 18, "linear", 200_000, 1_500_000),
+        )
+    )
 
     @property
     def dimension(self) -> int:
@@ -186,9 +193,7 @@ class FamilyF1ParameterSpace:
                 return m
         return None
 
-    def to_physical_batch(
-        self, u_batch: Any, xp: ArrayModule
-    ) -> dict[str, Any]:
+    def to_physical_batch(self, u_batch: Any, xp: ArrayModule) -> dict[str, Any]:
         """Convert batch of normalized vectors to physical parameters.
 
         Args:
@@ -296,9 +301,7 @@ class GPUConstraintFilter:
             return arr.get()
         return np.asarray(arr)
 
-    def check_tier0(
-        self, params: dict[str, Any]
-    ) -> tuple[Any, dict[str, Any]]:
+    def check_tier0(self, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Check Tier 0 parameter bounds constraints.
 
         Args:
@@ -380,9 +383,7 @@ class GPUConstraintFilter:
 
         return passed, margins
 
-    def check_tier1(
-        self, params: dict[str, Any]
-    ) -> tuple[Any, dict[str, Any]]:
+    def check_tier1(self, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Check Tier 1 derived scalar constraints.
 
         Args:
@@ -444,9 +445,7 @@ class GPUConstraintFilter:
 
         return passed, margins
 
-    def check_tier2(
-        self, params: dict[str, Any]
-    ) -> tuple[Any, dict[str, Any]]:
+    def check_tier2(self, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
         """Check Tier 2 analytic spatial constraints.
 
         Args:
@@ -511,9 +510,7 @@ class GPUConstraintFilter:
 
         return passed, margins
 
-    def repair_tier0(
-        self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]
-    ) -> tuple[Any, Any]:
+    def repair_tier0(self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]) -> tuple[Any, Any]:
         """Repair Tier 0 violations by clamping to bounds.
 
         Args:
@@ -637,9 +634,7 @@ class GPUConstraintFilter:
 
         return repaired, repair_counts
 
-    def repair_tier1(
-        self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]
-    ) -> tuple[Any, Any]:
+    def repair_tier1(self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]) -> tuple[Any, Any]:
         """Repair Tier 1 violations (annular rings, etc.).
 
         Args:
@@ -664,9 +659,7 @@ class GPUConstraintFilter:
                 drill_vals = params["signal_drill_nm"][violating]
                 required_pad = drill_vals + 2 * self._min_annular_ring
                 u_required = pad_idx.to_normalized(required_pad, xp)
-                repaired[violating, pad_idx.index] = xp.maximum(
-                    repaired[violating, pad_idx.index], u_required
-                )
+                repaired[violating, pad_idx.index] = xp.maximum(repaired[violating, pad_idx.index], u_required)
                 repair_counts[violating] += 1
 
         # Repair return via annular ring
@@ -678,9 +671,7 @@ class GPUConstraintFilter:
                 drill_vals = params["return_via_drill_nm"][violating]
                 required_dia = drill_vals + 2 * self._min_annular_ring
                 u_required = dia_idx.to_normalized(required_dia, xp)
-                repaired[violating, dia_idx.index] = xp.maximum(
-                    repaired[violating, dia_idx.index], u_required
-                )
+                repaired[violating, dia_idx.index] = xp.maximum(repaired[violating, dia_idx.index], u_required)
                 repair_counts[violating] += 1
 
         # Repair fence via annular ring
@@ -692,16 +683,12 @@ class GPUConstraintFilter:
                 drill_vals = params["fence_via_drill_nm"][violating]
                 required_dia = drill_vals + 2 * self._min_annular_ring
                 u_required = dia_idx.to_normalized(required_dia, xp)
-                repaired[violating, dia_idx.index] = xp.maximum(
-                    repaired[violating, dia_idx.index], u_required
-                )
+                repaired[violating, dia_idx.index] = xp.maximum(repaired[violating, dia_idx.index], u_required)
                 repair_counts[violating] += 1
 
         return repaired, repair_counts
 
-    def repair_tier2(
-        self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]
-    ) -> tuple[Any, Any]:
+    def repair_tier2(self, u_batch: Any, params: dict[str, Any], margins: dict[str, Any]) -> tuple[Any, Any]:
         """Repair Tier 2 violations (spatial constraints).
 
         Args:
@@ -744,9 +731,7 @@ class GPUConstraintFilter:
                 return_via_radius = params["return_via_diameter_nm"][violating] / 2
                 required_radius = signal_pad_radius + return_via_radius + self._min_via_to_via
                 u_required = idx.to_normalized(required_radius, xp)
-                repaired[violating, idx.index] = xp.maximum(
-                    repaired[violating, idx.index], u_required
-                )
+                repaired[violating, idx.index] = xp.maximum(repaired[violating, idx.index], u_required)
                 repair_counts[violating] += 1
 
         # Repair fence offset
@@ -758,9 +743,7 @@ class GPUConstraintFilter:
                 fence_dia = params["fence_via_diameter_nm"][violating]
                 required_offset = fence_dia / 2
                 u_required = idx.to_normalized(required_offset, xp)
-                repaired[violating, idx.index] = xp.maximum(
-                    repaired[violating, idx.index], u_required
-                )
+                repaired[violating, idx.index] = xp.maximum(repaired[violating, idx.index], u_required)
                 repair_counts[violating] += 1
 
         # Repair fence pitch
@@ -772,9 +755,7 @@ class GPUConstraintFilter:
                 fence_dia = params["fence_via_diameter_nm"][violating]
                 required_pitch = fence_dia + self._min_via_to_via
                 u_required = idx.to_normalized(required_pitch, xp)
-                repaired[violating, idx.index] = xp.maximum(
-                    repaired[violating, idx.index], u_required
-                )
+                repaired[violating, idx.index] = xp.maximum(repaired[violating, idx.index], u_required)
                 repair_counts[violating] += 1
 
         return repaired, repair_counts
@@ -819,19 +800,19 @@ class GPUConstraintFilter:
         # Check Tier 0
         t0_passed, t0_margins = self.check_tier0(params)
         all_margins.update(t0_margins)
-        for key, margin in t0_margins.items():
+        for _key, margin in t0_margins.items():
             tier_violations["T0"] += (margin < 0).astype(int)
 
         # Check Tier 1
         t1_passed, t1_margins = self.check_tier1(params)
         all_margins.update(t1_margins)
-        for key, margin in t1_margins.items():
+        for _key, margin in t1_margins.items():
             tier_violations["T1"] += (margin < 0).astype(int)
 
         # Check Tier 2
         t2_passed, t2_margins = self.check_tier2(params)
         all_margins.update(t2_margins)
-        for key, margin in t2_margins.items():
+        for _key, margin in t2_margins.items():
             tier_violations["T2"] += (margin < 0).astype(int)
 
         # Initial feasibility
@@ -880,9 +861,7 @@ class GPUConstraintFilter:
         result_repaired = self._to_host(repaired_u)
         result_repair_counts = self._to_host(total_repair_counts)
         result_repair_distances = self._to_host(repair_distances)
-        result_tier_violations = {
-            tier: self._to_host(counts) for tier, counts in tier_violations.items()
-        }
+        result_tier_violations = {tier: self._to_host(counts) for tier, counts in tier_violations.items()}
         result_margins = {key: self._to_host(margin) for key, margin in all_margins.items()}
 
         return BatchFilterResult(

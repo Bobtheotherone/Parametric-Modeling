@@ -3,6 +3,7 @@
 This module provides the same annotated-type pattern used in coupongen for
 flexible input parsing while storing canonical values internally.
 """
+
 from __future__ import annotations
 
 import re
@@ -96,9 +97,7 @@ def parse_frequency_hz(value: str | int | float) -> int:
             return _check_i64(int(text))
         match = _FREQ_RE.match(text)
         if not match:
-            raise ValueError(
-                "FrequencyHz string must be formatted like '1GHz', '100MHz', or '1000000Hz'."
-            )
+            raise ValueError("FrequencyHz string must be formatted like '1GHz', '100MHz', or '1000000Hz'.")
         number_text, unit = match.groups()
         unit = unit.lower()
         scale = _FREQ_SCALES_HZ.get(unit)
@@ -126,9 +125,7 @@ def parse_time_ps(value: str | int | float) -> int:
             return _check_i64(int(text))
         match = _TIME_RE.match(text)
         if not match:
-            raise ValueError(
-                "TimePS string must be formatted like '1ns', '100ps', or '1us'."
-            )
+            raise ValueError("TimePS string must be formatted like '1ns', '100ps', or '1us'.")
         number_text, unit = match.groups()
         unit = unit.lower()
         scale = _TIME_SCALES_PS.get(unit)

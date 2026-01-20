@@ -8,6 +8,7 @@ as defined in M1 of the design document. It covers:
 - Unit parsing (nm, um, mm, mil) with normalization to integer nanometers
 - Error handling for invalid inputs (missing required fields, type errors, etc.)
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,6 @@ from formula_foundry.coupongen.units import (
     parse_frequency_hz,
     parse_length_nm,
 )
-
 
 # =============================================================================
 # Test Data Fixtures

@@ -19,13 +19,13 @@ import shutil
 import subprocess
 import sys
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from typing import Literal, Sequence
+    from collections.abc import Sequence
 
 # Version for provenance tracking
 __version__ = "0.1.0"
@@ -1021,8 +1021,10 @@ def _run_dvc_stage(
     # Detect if stage was cached (DVC outputs specific messages)
     was_cached = (
         "didn't change" in result.stdout.lower()
-        or "Stage" in result.stdout and "cached" in result.stdout.lower()
-        or result.returncode == 0 and "Running" not in result.stdout
+        or "Stage" in result.stdout
+        and "cached" in result.stdout.lower()
+        or result.returncode == 0
+        and "Running" not in result.stdout
     )
 
     return result.returncode, result.stdout, result.stderr, was_cached
@@ -1179,7 +1181,7 @@ def _record_init_run(data_dir: Path, project_root: Path) -> None:
     registry_db = data_dir / "registry.db"
     registry = ArtifactRegistry(registry_db)
 
-    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     unique_suffix = uuid.uuid4().hex[:8]
     run_id = f"init-{timestamp}-{unique_suffix}"
     hostname = socket.gethostname()
@@ -1282,7 +1284,7 @@ def cmd_run(
     parsed_tags = _parse_tags(tags)
 
     # Generate run ID
-    timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     unique_suffix = uuid.uuid4().hex[:8]
     run_id = f"run-{timestamp}-{unique_suffix}"
 
@@ -1550,7 +1552,6 @@ def cmd_dataset_show(
     """
     from formula_foundry.m3.dataset_snapshot import (
         DatasetNotFoundError,
-        DatasetSnapshot,
         DatasetSnapshotReader,
     )
 
@@ -1566,9 +1567,7 @@ def cmd_dataset_show(
         if version:
             sys.stderr.write(f" (version {version})")
         sys.stderr.write("\n")
-        sys.stderr.write(
-            f"Hint: Check data/datasets/ or provide a path to a JSON manifest.\n"
-        )
+        sys.stderr.write("Hint: Check data/datasets/ or provide a path to a JSON manifest.\n")
         return 2
 
     # Load the snapshot
@@ -1628,16 +1627,13 @@ def cmd_dataset_show(
         if stats.by_artifact_type:
             lines.append("  By artifact type:")
             for atype, info in stats.by_artifact_type.items():
-                lines.append(
-                    f"    {atype}: {info.get('count', 0)} "
-                    f"({_format_bytes(info.get('total_bytes', 0))})"
-                )
+                lines.append(f"    {atype}: {info.get('count', 0)} ({_format_bytes(info.get('total_bytes', 0))})")
         if stats.unique_coupons:
             lines.append(f"  Unique coupons: {stats.unique_coupons}")
         if stats.frequency_range_hz:
             fmin = stats.frequency_range_hz.get("min", 0)
             fmax = stats.frequency_range_hz.get("max", 0)
-            lines.append(f"  Frequency range: {fmin/1e6:.1f} MHz - {fmax/1e9:.1f} GHz")
+            lines.append(f"  Frequency range: {fmin / 1e6:.1f} MHz - {fmax / 1e9:.1f} GHz")
         if stats.parameter_ranges:
             lines.append("  Parameter ranges:")
             for param, ranges in stats.parameter_ranges.items():
@@ -1650,10 +1646,7 @@ def cmd_dataset_show(
     if snapshot.splits:
         lines.append("Splits:")
         for split_name, split_def in snapshot.splits.items():
-            lines.append(
-                f"  {split_name}: {split_def.count} members "
-                f"({split_def.fraction * 100:.1f}%)"
-            )
+            lines.append(f"  {split_name}: {split_def.count} members ({split_def.fraction * 100:.1f}%)")
         lines.append("")
 
     # Tags
@@ -1669,10 +1662,7 @@ def cmd_dataset_show(
         for i, member in enumerate(snapshot.members, 1):
             lines.append(f"  [{i}] {member.artifact_id}")
             lines.append(f"      Type: {member.artifact_type}, Role: {member.role}")
-            lines.append(
-                f"      Size: {_format_bytes(member.byte_size)}, "
-                f"Hash: {member.content_hash.digest[:12]}..."
-            )
+            lines.append(f"      Size: {_format_bytes(member.byte_size)}, Hash: {member.content_hash.digest[:12]}...")
             if member.storage_path:
                 lines.append(f"      Path: {member.storage_path}")
         lines.append("")
@@ -1705,7 +1695,6 @@ def cmd_dataset_diff(
     """
     from formula_foundry.m3.dataset_snapshot import (
         DatasetNotFoundError,
-        DatasetSnapshot,
         DatasetSnapshotReader,
     )
 
@@ -1825,10 +1814,7 @@ def cmd_dataset_diff(
             for artifact_id in sorted(added_ids):
                 member = members_b[artifact_id]
                 lines.append(f"  + {artifact_id}")
-                lines.append(
-                    f"    Type: {member.artifact_type}, "
-                    f"Size: {_format_bytes(member.byte_size)}"
-                )
+                lines.append(f"    Type: {member.artifact_type}, Size: {_format_bytes(member.byte_size)}")
             lines.append("")
 
         if removed_ids:
@@ -1836,10 +1822,7 @@ def cmd_dataset_diff(
             for artifact_id in sorted(removed_ids):
                 member = members_a[artifact_id]
                 lines.append(f"  - {artifact_id}")
-                lines.append(
-                    f"    Type: {member.artifact_type}, "
-                    f"Size: {_format_bytes(member.byte_size)}"
-                )
+                lines.append(f"    Type: {member.artifact_type}, Size: {_format_bytes(member.byte_size)}")
             lines.append("")
 
         if modified_ids:
@@ -1848,14 +1831,8 @@ def cmd_dataset_diff(
                 old_member = members_a[artifact_id]
                 new_member = members_b[artifact_id]
                 lines.append(f"  ~ {artifact_id}")
-                lines.append(
-                    f"    Old hash: {old_member.content_hash.digest[:12]}... "
-                    f"({_format_bytes(old_member.byte_size)})"
-                )
-                lines.append(
-                    f"    New hash: {new_member.content_hash.digest[:12]}... "
-                    f"({_format_bytes(new_member.byte_size)})"
-                )
+                lines.append(f"    Old hash: {old_member.content_hash.digest[:12]}... ({_format_bytes(old_member.byte_size)})")
+                lines.append(f"    New hash: {new_member.content_hash.digest[:12]}... ({_format_bytes(new_member.byte_size)})")
             lines.append("")
 
     # Size delta
@@ -2314,7 +2291,7 @@ def cmd_gc(
     # Determine actual dry_run mode (execute overrides dry_run)
     actual_dry_run = not execute
 
-    _log(f"M3 Garbage Collection", quiet)
+    _log("M3 Garbage Collection", quiet)
     _log(f"  Policy: {policy}", quiet)
     _log(f"  Mode: {'dry-run' if actual_dry_run else 'EXECUTE'}", quiet)
     _log("", quiet)
@@ -2372,11 +2349,11 @@ def cmd_gc(
         _log(f"  Artifacts {'to delete' if actual_dry_run else 'deleted'}: {result.artifacts_deleted}", quiet)
         _log(f"  Space {'to free' if actual_dry_run else 'freed'}: {format_bytes(result.bytes_freed)}", quiet)
         _log("", quiet)
-        _log(f"Protection summary:", quiet)
+        _log("Protection summary:", quiet)
         _log(f"  Pinned artifacts: {result.pinned_protected}", quiet)
         _log(f"  With descendants: {result.descendant_protected}", quiet)
         _log("", quiet)
-        _log(f"Storage:", quiet)
+        _log("Storage:", quiet)
         _log(f"  Before: {format_bytes(result.bytes_total_before)}", quiet)
         _log(f"  After: {format_bytes(result.bytes_total_after)}", quiet)
 
@@ -2573,18 +2550,18 @@ def cmd_gc_estimate(
         sys.stdout.write(json.dumps(estimate, indent=2) + "\n")
     else:
         sys.stdout.write(f"GC Estimate for policy: {policy}\n")
-        sys.stdout.write(f"\n")
+        sys.stdout.write("\n")
         sys.stdout.write(f"  Total artifacts: {estimate['total_artifacts']}\n")
         sys.stdout.write(f"  To delete: {estimate['artifacts_to_delete']}\n")
         sys.stdout.write(f"  To keep: {estimate['artifacts_to_keep']}\n")
-        sys.stdout.write(f"\n")
+        sys.stdout.write("\n")
         sys.stdout.write(f"  Current size: {format_bytes(estimate['current_total_bytes'])}\n")
         sys.stdout.write(f"  Space to free: {format_bytes(estimate['bytes_to_delete'])}\n")
         sys.stdout.write(f"  Size after GC: {format_bytes(estimate['estimated_after_bytes'])}\n")
-        if estimate['space_budget_bytes']:
-            sys.stdout.write(f"\n")
+        if estimate["space_budget_bytes"]:
+            sys.stdout.write("\n")
             sys.stdout.write(f"  Space budget: {format_bytes(estimate['space_budget_bytes'])}\n")
-            status = "within budget" if estimate['within_budget'] else "OVER BUDGET"
+            status = "within budget" if estimate["within_budget"] else "OVER BUDGET"
             sys.stdout.write(f"  Status: {status}\n")
 
     registry.close()
@@ -2765,9 +2742,7 @@ def cmd_audit(
                         missing = set(roles_list) - root_roles
                         if missing:
                             result["status"] = "missing_roles"
-                            result["issues"].append(
-                                f"Required roles not found in roots: {sorted(missing)}"
-                            )
+                            result["issues"].append(f"Required roles not found in roots: {sorted(missing)}")
                             missing_roles.append(art_id)
                         result["root_roles"] = sorted(root_roles)
 
@@ -2902,16 +2877,13 @@ def cmd_verify(
         2 on errors (integrity problems found).
     """
     from formula_foundry.m3.artifact_store import (
-        ArtifactStore,
         ArtifactNotFoundError,
-        ArtifactType,
-        ArtifactRole,
+        ArtifactStore,
     )
     from formula_foundry.m3.lineage_graph import (
         LineageGraph,
-        NodeNotFoundError,
     )
-    from formula_foundry.m3.registry import ArtifactRegistry, ArtifactNotIndexedError
+    from formula_foundry.m3.registry import ArtifactNotIndexedError, ArtifactRegistry
 
     # Determine which checks to run
     if full:
@@ -2996,20 +2968,47 @@ def cmd_verify(
 
     # Define valid types and roles for schema validation
     valid_types: set[str] = {
-        "coupon_spec", "resolved_design", "kicad_board", "kicad_project",
-        "gerber", "drill_file", "fab_package", "em_simulation_config",
-        "em_simulation_result", "touchstone", "sparam_matrix", "dataset_index",
-        "dataset_snapshot", "model_checkpoint", "formula_candidate",
-        "validation_report", "drc_report", "manifest", "log", "other",
+        "coupon_spec",
+        "resolved_design",
+        "kicad_board",
+        "kicad_project",
+        "gerber",
+        "drill_file",
+        "fab_package",
+        "em_simulation_config",
+        "em_simulation_result",
+        "touchstone",
+        "sparam_matrix",
+        "dataset_index",
+        "dataset_snapshot",
+        "model_checkpoint",
+        "formula_candidate",
+        "validation_report",
+        "drc_report",
+        "manifest",
+        "log",
+        "other",
     }
     valid_roles: set[str] = {
-        "geometry", "config", "oracle_output", "intermediate", "final_output",
-        "validation", "metadata", "cache", "checkpoint", "dataset_member",
+        "geometry",
+        "config",
+        "oracle_output",
+        "intermediate",
+        "final_output",
+        "validation",
+        "metadata",
+        "cache",
+        "checkpoint",
+        "dataset_member",
         "root_input",
     }
     valid_relations: set[str] = {
-        "derived_from", "generated_by", "validated_by", "config_from",
-        "sibling_of", "supersedes",
+        "derived_from",
+        "generated_by",
+        "validated_by",
+        "config_from",
+        "sibling_of",
+        "supersedes",
     }
 
     # Prepare verification results
@@ -3080,9 +3079,7 @@ def cmd_verify(
 
                 result["checks"]["lineage"] = lineage_check
                 if not lineage_check["passed"]:
-                    result["issues"].append(
-                        f"Missing input artifacts: {lineage_check['missing_inputs']}"
-                    )
+                    result["issues"].append(f"Missing input artifacts: {lineage_check['missing_inputs']}")
                     has_error = True
 
             # Check 3: Manifest schema validation
@@ -3096,9 +3093,7 @@ def cmd_verify(
 
                 # Validate artifact_type
                 if manifest.artifact_type not in valid_types:
-                    manifest_check["issues"].append(
-                        f"Invalid artifact_type: {manifest.artifact_type}"
-                    )
+                    manifest_check["issues"].append(f"Invalid artifact_type: {manifest.artifact_type}")
                     manifest_check["passed"] = False
 
                 # Validate roles
@@ -3114,16 +3109,12 @@ def cmd_verify(
                 # Validate lineage references
                 for inp in manifest.lineage.inputs:
                     if inp.relation not in valid_relations:
-                        manifest_check["issues"].append(
-                            f"Invalid relation '{inp.relation}' for input {inp.artifact_id}"
-                        )
+                        manifest_check["issues"].append(f"Invalid relation '{inp.relation}' for input {inp.artifact_id}")
                         manifest_check["passed"] = False
 
                 # Validate content hash format
                 if manifest.content_hash.algorithm not in ("sha256", "sha384", "sha512", "blake3"):
-                    manifest_check["issues"].append(
-                        f"Invalid hash algorithm: {manifest.content_hash.algorithm}"
-                    )
+                    manifest_check["issues"].append(f"Invalid hash algorithm: {manifest.content_hash.algorithm}")
                     manifest_check["passed"] = False
 
                 if len(manifest.content_hash.digest) < 64:
@@ -3164,8 +3155,7 @@ def cmd_verify(
                     if registry_record.artifact_type != manifest.artifact_type:
                         registry_check["passed"] = False
                         registry_check["issues"].append(
-                            f"Registry type mismatch: registry={registry_record.artifact_type}, "
-                            f"manifest={manifest.artifact_type}"
+                            f"Registry type mismatch: registry={registry_record.artifact_type}, manifest={manifest.artifact_type}"
                         )
                         has_error = True
 

@@ -10,6 +10,7 @@ following the same patterns established in coupongen/spec.py:
 The SimulationSpec defines everything needed to run a deterministic openEMS
 FDTD simulation on a coupon geometry.
 """
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -61,9 +62,7 @@ class ExcitationSpec(_SpecBase):
     A Gaussian pulse is standard for broadband S-parameter extraction.
     """
 
-    type: Literal["gaussian", "sinusoidal", "custom"] = Field(
-        "gaussian", description="Excitation waveform type"
-    )
+    type: Literal["gaussian", "sinusoidal", "custom"] = Field("gaussian", description="Excitation waveform type")
     f0_hz: FrequencyHz = Field(..., description="Center frequency (Hz)")
     fc_hz: FrequencyHz = Field(..., description="Cutoff frequency for Gaussian (20dB bandwidth)")
 
@@ -111,26 +110,16 @@ class MeshResolutionSpec(_SpecBase):
     Finer meshing near discontinuities (via transitions, antipads) is critical for accuracy.
     """
 
-    lambda_resolution: int = Field(
-        20, ge=10, le=100, description="Cells per wavelength at max frequency"
-    )
-    metal_edge_resolution_nm: LengthNM = Field(
-        50_000, description="Maximum cell size near metal edges (nm)"
-    )
-    via_resolution_nm: LengthNM = Field(
-        25_000, description="Maximum cell size near via barrels (nm)"
-    )
-    substrate_resolution_nm: LengthNM | None = Field(
-        None, description="Override for substrate vertical resolution (nm)"
-    )
+    lambda_resolution: int = Field(20, ge=10, le=100, description="Cells per wavelength at max frequency")
+    metal_edge_resolution_nm: LengthNM = Field(50_000, description="Maximum cell size near metal edges (nm)")
+    via_resolution_nm: LengthNM = Field(25_000, description="Maximum cell size near via barrels (nm)")
+    substrate_resolution_nm: LengthNM | None = Field(None, description="Override for substrate vertical resolution (nm)")
 
 
 class MeshSmoothingSpec(_SpecBase):
     """Mesh smoothing/grading controls."""
 
-    max_ratio: float = Field(
-        1.5, ge=1.0, le=3.0, description="Maximum adjacent cell size ratio"
-    )
+    max_ratio: float = Field(1.5, ge=1.0, le=3.0, description="Maximum adjacent cell size ratio")
     smooth_mesh_lines: bool = Field(True, description="Enable automatic mesh smoothing")
 
 
@@ -139,15 +128,9 @@ class MeshSpec(_SpecBase):
 
     resolution: MeshResolutionSpec = Field(default_factory=lambda: MeshResolutionSpec())
     smoothing: MeshSmoothingSpec = Field(default_factory=lambda: MeshSmoothingSpec())
-    fixed_lines_x_nm: list[LengthNM] = Field(
-        default_factory=list, description="Fixed mesh lines in x (nm)"
-    )
-    fixed_lines_y_nm: list[LengthNM] = Field(
-        default_factory=list, description="Fixed mesh lines in y (nm)"
-    )
-    fixed_lines_z_nm: list[LengthNM] = Field(
-        default_factory=list, description="Fixed mesh lines in z (nm)"
-    )
+    fixed_lines_x_nm: list[LengthNM] = Field(default_factory=list, description="Fixed mesh lines in x (nm)")
+    fixed_lines_y_nm: list[LengthNM] = Field(default_factory=list, description="Fixed mesh lines in y (nm)")
+    fixed_lines_z_nm: list[LengthNM] = Field(default_factory=list, description="Fixed mesh lines in z (nm)")
 
 
 # =============================================================================
@@ -166,9 +149,7 @@ class DeembedConfigSpec(_SpecBase):
     """
 
     enabled: bool = Field(False, description="Whether de-embedding is enabled")
-    distance_nm: LengthNM | None = Field(
-        None, description="Reference plane shift distance (nm)"
-    )
+    distance_nm: LengthNM | None = Field(None, description="Reference plane shift distance (nm)")
     epsilon_r_eff: float | None = Field(
         None,
         gt=0,
@@ -191,42 +172,24 @@ class PortSpec(_SpecBase):
     impedance_ohm: float = Field(50.0, gt=0, description="Reference impedance (Ohm)")
     excite: bool = Field(False, description="Whether this port is excited")
 
-    position_nm: tuple[LengthNM, LengthNM, LengthNM] = Field(
-        ..., description="Port center position [x, y, z] in nm"
-    )
-    direction: Literal["x", "y", "z", "-x", "-y", "-z"] = Field(
-        ..., description="Port excitation direction"
-    )
+    position_nm: tuple[LengthNM, LengthNM, LengthNM] = Field(..., description="Port center position [x, y, z] in nm")
+    direction: Literal["x", "y", "z", "-x", "-y", "-z"] = Field(..., description="Port excitation direction")
 
     # Geometry for waveguide/MSL ports
     width_nm: LengthNM | None = Field(None, description="Port width for MSL/waveguide ports (nm)")
-    height_nm: LengthNM | None = Field(
-        None, description="Port height for MSL/waveguide ports (nm)"
-    )
-    signal_width_nm: LengthNM | None = Field(
-        None, description="Signal trace width at port (nm), for CPW/CPWG"
-    )
-    gap_nm: LengthNM | None = Field(
-        None, description="Gap to ground for CPW/CPWG ports (nm)"
-    )
+    height_nm: LengthNM | None = Field(None, description="Port height for MSL/waveguide ports (nm)")
+    signal_width_nm: LengthNM | None = Field(None, description="Signal trace width at port (nm), for CPW/CPWG")
+    gap_nm: LengthNM | None = Field(None, description="Gap to ground for CPW/CPWG ports (nm)")
 
     # Impedance matching
-    match_to_line: bool = Field(
-        False, description="Auto-match reference impedance to calculated line impedance"
-    )
-    calculated_z0_ohm: float | None = Field(
-        None, gt=0, description="Calculated line characteristic impedance (Ohm)"
-    )
+    match_to_line: bool = Field(False, description="Auto-match reference impedance to calculated line impedance")
+    calculated_z0_ohm: float | None = Field(None, gt=0, description="Calculated line characteristic impedance (Ohm)")
 
     # De-embedding
-    deembed: DeembedConfigSpec = Field(
-        default_factory=DeembedConfigSpec, description="De-embedding configuration"
-    )
+    deembed: DeembedConfigSpec = Field(default_factory=DeembedConfigSpec, description="De-embedding configuration")
 
     # Excitation control
-    excite_weight: float = Field(
-        1.0, gt=0, description="Excitation amplitude weight for multi-port simulations"
-    )
+    excite_weight: float = Field(1.0, gt=0, description="Excitation amplitude weight for multi-port simulations")
 
     # Mode selection
     polarization: Literal["E_transverse", "H_transverse"] | None = Field(
@@ -270,26 +233,16 @@ class MaterialsSpec(_SpecBase):
 class TerminationSpec(_SpecBase):
     """Simulation termination criteria."""
 
-    end_criteria_db: float = Field(
-        -50.0, le=0, description="Energy decay threshold in dB for auto-termination"
-    )
-    max_timesteps: int = Field(
-        1_000_000, gt=0, description="Maximum number of timesteps"
-    )
-    max_time_ps: TimePS | None = Field(
-        None, description="Maximum simulation time (ps), optional"
-    )
+    end_criteria_db: float = Field(-50.0, le=0, description="Energy decay threshold in dB for auto-termination")
+    max_timesteps: int = Field(1_000_000, gt=0, description="Maximum number of timesteps")
+    max_time_ps: TimePS | None = Field(None, description="Maximum simulation time (ps), optional")
 
 
 class EngineSpec(_SpecBase):
     """FDTD engine configuration."""
 
-    type: Literal["basic", "sse", "sse-compressed", "multithreaded"] = Field(
-        "multithreaded", description="Engine type"
-    )
-    num_threads: int | None = Field(
-        None, ge=1, description="Number of threads (None = auto)"
-    )
+    type: Literal["basic", "sse", "sse-compressed", "multithreaded"] = Field("multithreaded", description="Engine type")
+    num_threads: int | None = Field(None, ge=1, description="Number of threads (None = auto)")
 
 
 class SimulationControlSpec(_SpecBase):
@@ -311,9 +264,7 @@ class OutputSpec(_SpecBase):
 
     outputs_dir: str = Field("sim_outputs/", min_length=1, description="Output directory")
     s_params: bool = Field(True, description="Compute and export S-parameters")
-    s_params_format: Literal["touchstone", "csv", "both"] = Field(
-        "touchstone", description="S-parameter output format"
-    )
+    s_params_format: Literal["touchstone", "csv", "both"] = Field("touchstone", description="S-parameter output format")
     port_signals: bool = Field(True, description="Save port voltage/current time signals")
     energy_decay: bool = Field(True, description="Save energy decay curve")
     nf2ff: bool = Field(False, description="Near-to-far-field transformation (optional)")
@@ -337,9 +288,7 @@ class GeometryRefSpec(_SpecBase):
         min_length=1,
         description="SHA256 design hash of the coupon's ResolvedDesign",
     )
-    coupon_id: str | None = Field(
-        None, description="Human-readable coupon ID (optional, derived from hash)"
-    )
+    coupon_id: str | None = Field(None, description="Human-readable coupon ID (optional, derived from hash)")
 
 
 # =============================================================================
@@ -358,12 +307,8 @@ class SimulationSpec(_SpecBase):
     """
 
     schema_version: int = Field(1, ge=1, description="Schema version for compatibility")
-    simulation_id: str | None = Field(
-        None, description="Optional unique simulation identifier"
-    )
-    units: Literal["nm", "Hz", "ps"] = Field(
-        "nm", description="Primary units (lengths in nm, frequencies in Hz, times in ps)"
-    )
+    simulation_id: str | None = Field(None, description="Optional unique simulation identifier")
+    units: Literal["nm", "Hz", "ps"] = Field("nm", description="Primary units (lengths in nm, frequencies in Hz, times in ps)")
 
     toolchain: ToolchainSpec
     geometry_ref: GeometryRefSpec

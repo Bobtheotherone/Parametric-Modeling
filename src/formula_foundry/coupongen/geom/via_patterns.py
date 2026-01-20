@@ -9,6 +9,7 @@ in PCB design:
 All coordinates use integer nanometers (LengthNM) to ensure determinism and
 avoid cross-platform rounding drift.
 """
+
 from __future__ import annotations
 
 import math
@@ -280,10 +281,10 @@ def generate_return_via_quadrant(
     offset = int(radius_nm / math.sqrt(2))
 
     positions = [
-        PositionNM(center.x + offset, center.y + offset),    # Q1: 45°
-        PositionNM(center.x - offset, center.y + offset),    # Q2: 135°
-        PositionNM(center.x - offset, center.y - offset),    # Q3: 225°
-        PositionNM(center.x + offset, center.y - offset),    # Q4: 315°
+        PositionNM(center.x + offset, center.y + offset),  # Q1: 45°
+        PositionNM(center.x - offset, center.y + offset),  # Q2: 135°
+        PositionNM(center.x - offset, center.y - offset),  # Q3: 225°
+        PositionNM(center.x + offset, center.y - offset),  # Q4: 315°
     ]
 
     vias = [

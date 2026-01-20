@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -24,7 +23,6 @@ from formula_foundry.m3.dataset_snapshot import (
     DatasetSnapshotReader,
     DatasetSnapshotWriter,
     DatasetStatistics,
-    ParquetNotAvailableError,
     SplitDefinition,
     compute_manifest_hash,
 )
@@ -88,9 +86,7 @@ class TestDatasetMember:
             lineage=Lineage(run_id="run-001"),
             storage_path="objects/cc/ccc...",
         )
-        member = DatasetMember.from_manifest(
-            manifest, role="oracle_output", features={"freq": 1e9}
-        )
+        member = DatasetMember.from_manifest(manifest, role="oracle_output", features={"freq": 1e9})
 
         assert member.artifact_id == "art-003"
         assert member.content_hash.digest == "c" * 64

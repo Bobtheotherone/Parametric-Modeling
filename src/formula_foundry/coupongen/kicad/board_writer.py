@@ -24,24 +24,7 @@ from typing import TYPE_CHECKING
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
 from ..families import FAMILY_F1
 from ..geom.primitives import (
-    ArcTrack,
-    BoardOutline,
-    CoordinateFrame,
-    FootprintInstance,
-    Net,
-    NetClass,
     OriginMode,
-    Pad,
-    PadShape,
-    Polygon,
-    PolygonType,
-    PositionNM,
-    RuleArea,
-    Text,
-    TextJustify,
-    TextLayer,
-    TrackSegment,
-    Via,
     create_coordinate_frame,
 )
 from ..resolve import ResolvedDesign
@@ -50,7 +33,7 @@ from . import sexpr
 from .sexpr import SExprList, nm_to_mm
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    pass
 
 # UUIDv5 namespace for coupongen deterministic IDs
 _UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "coupongen")
@@ -423,7 +406,14 @@ class BoardWriter:
                 ["connect_pads", ["clearance", 0]],
                 ["min_thickness", 0.1],
                 ["filled_areas_thickness", "no"],
-                ["keepout", ["tracks", "not_allowed"], ["vias", "not_allowed"], ["pads", "not_allowed"], ["copperpour", "not_allowed"], ["footprints", "allowed"]],
+                [
+                    "keepout",
+                    ["tracks", "not_allowed"],
+                    ["vias", "not_allowed"],
+                    ["pads", "not_allowed"],
+                    ["copperpour", "not_allowed"],
+                    ["footprints", "allowed"],
+                ],
                 ["fill", ["thermal_gap", 0.5], ["thermal_bridge_width", 0.5]],
                 ["polygon", pts],
             ]
@@ -464,7 +454,14 @@ class BoardWriter:
                 ["connect_pads", ["clearance", 0]],
                 ["min_thickness", 0.1],
                 ["filled_areas_thickness", "no"],
-                ["keepout", ["tracks", "not_allowed"], ["vias", "not_allowed"], ["pads", "not_allowed"], ["copperpour", "not_allowed"], ["footprints", "allowed"]],
+                [
+                    "keepout",
+                    ["tracks", "not_allowed"],
+                    ["vias", "not_allowed"],
+                    ["pads", "not_allowed"],
+                    ["copperpour", "not_allowed"],
+                    ["footprints", "allowed"],
+                ],
                 ["fill", ["thermal_gap", 0.5], ["thermal_bridge_width", 0.5]],
                 ["polygon", pts],
             ]
@@ -511,9 +508,7 @@ def build_board_text(spec: CouponSpec, resolved: ResolvedDesign) -> str:
     return sexpr.dump(board)
 
 
-def write_board(
-    spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path
-) -> Path:
+def write_board(spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
     """Write board file to output directory.
 
     Args:

@@ -18,6 +18,7 @@ Key concepts:
 - Mesh grading: Smooth transitions between cell sizes (respecting max_ratio)
 - Feature alignment: Mesh lines placed at critical geometry boundaries
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -182,7 +183,7 @@ class MeshLineGenerator:
         Returns:
             List of intermediate mesh line positions.
         """
-        gap = end - start
+        end - start
         lines: list[int] = []
 
         # Determine target cell sizes at start and end based on nearby refinement zones
@@ -226,9 +227,7 @@ class MeshLineGenerator:
             pos += direction * cell
             accumulated += cell
 
-            if direction > 0 and pos < end:
-                lines.append(pos)
-            elif direction < 0 and pos > end:
+            if direction > 0 and pos < end or direction < 0 and pos > end:
                 lines.append(pos)
 
             # Grade cell size up (coarser) as we move away from refinement

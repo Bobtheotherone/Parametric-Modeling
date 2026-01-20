@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import Any
 from unittest import mock
-
-import pytest
 
 from formula_foundry.substrate import (
     ArtifactEntry,
@@ -264,10 +260,12 @@ class TestLogRunArtifacts:
     def test_log_run_artifacts_with_manifest(self, tmp_path: Path) -> None:
         """log_run_artifacts logs artifact references from manifest."""
         run_artifacts = _create_test_run_artifacts(tmp_path)
-        artifact_manifest = ArtifactManifest.from_entries([
-            ArtifactEntry(path="file1.txt", digest="f" * 64, size_bytes=100),
-            ArtifactEntry(path="file2.txt", digest="0" * 64, size_bytes=200),
-        ])
+        artifact_manifest = ArtifactManifest.from_entries(
+            [
+                ArtifactEntry(path="file1.txt", digest="f" * 64, size_bytes=100),
+                ArtifactEntry(path="file2.txt", digest="0" * 64, size_bytes=200),
+            ]
+        )
 
         logged_paths: list[str] = []
 

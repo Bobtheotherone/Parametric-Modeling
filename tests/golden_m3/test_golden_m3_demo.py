@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,15 +27,11 @@ from formula_foundry.m3.artifact_store import (
     LineageReference,
 )
 from formula_foundry.m3.cli_main import (
-    build_parser,
     cmd_audit,
-    cmd_gc,
     cmd_init,
-    main,
 )
 from formula_foundry.m3.dataset_snapshot import (
     DatasetMember,
-    DatasetSnapshot,
     DatasetSnapshotReader,
     DatasetSnapshotWriter,
     compute_manifest_hash,
@@ -705,17 +700,11 @@ class TestPhase4DatasetSnapshot:
     ) -> None:
         """Dataset manifest hash should be deterministic regardless of member order."""
         # Create members in order 0, 1, 2, 3, 4
-        members_forward = [
-            DatasetMember.from_manifest(m, role="test")
-            for m in dataset_artifacts
-        ]
+        members_forward = [DatasetMember.from_manifest(m, role="test") for m in dataset_artifacts]
         hash_forward = compute_manifest_hash(members_forward)
 
         # Create members in reverse order 4, 3, 2, 1, 0
-        members_reverse = [
-            DatasetMember.from_manifest(m, role="test")
-            for m in reversed(dataset_artifacts)
-        ]
+        members_reverse = [DatasetMember.from_manifest(m, role="test") for m in reversed(dataset_artifacts)]
         hash_reverse = compute_manifest_hash(members_reverse)
 
         # Hashes should be identical (order-independent)
@@ -930,7 +919,7 @@ class TestPhase5GarbageCollection:
     def test_gc_actual_deletion(self, gc_setup: dict[str, Any]) -> None:
         """GC should actually delete artifacts when not in dry-run mode."""
         gc = gc_setup["gc"]
-        store = gc_setup["store"]
+        gc_setup["store"]
         registry = gc_setup["registry"]
 
         initial_count = registry.count_artifacts()

@@ -11,14 +11,11 @@ These tests verify:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Test configuration loading
@@ -78,9 +75,7 @@ class TestMLflowConfigLoading:
             load_mlflow_config,
         )
 
-        config = load_mlflow_config(
-            config_path=tmp_path / "nonexistent.yaml", project_root=tmp_path
-        )
+        config = load_mlflow_config(config_path=tmp_path / "nonexistent.yaml", project_root=tmp_path)
 
         assert config.tracking.backend_store_uri == DEFAULT_BACKEND_STORE_URI
         assert config.tracking.artifact_root == DEFAULT_ARTIFACT_ROOT

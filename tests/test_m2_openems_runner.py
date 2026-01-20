@@ -4,6 +4,7 @@ REQ-M2-005: The OpenEMSRunner MUST provide version_metadata() that probes
 openEMS version and returns structured metadata including openems_version
 and csxcad_version.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -48,9 +49,7 @@ def test_openems_runner_version_metadata(tmp_path: Path) -> None:
     stub = tmp_path / "openEMS"
     _write_executable(
         stub,
-        "#!/usr/bin/env bash\n"
-        "echo 'openEMS version: 0.0.35'\n"
-        "echo 'CSXCAD version: 0.6.3'\n",
+        "#!/usr/bin/env bash\necho 'openEMS version: 0.0.35'\necho 'CSXCAD version: 0.6.3'\n",
     )
     runner = OpenEMSRunner(mode="local", openems_bin=str(stub))
     payload = runner.version_metadata(workdir=tmp_path)

@@ -37,19 +37,15 @@ from .core import (
     resolve_fab_limits_from_profile,
 )
 
-# Export tiered constraint system (new in M1-CONSTRAINTS-TIERS)
-from .tiers import (
-    ConstraintViolationError,
-    Tier0Checker,
-    Tier1Checker,
-    Tier2Checker,
-    Tier3Checker,
-    TieredConstraintProof,
-    TieredConstraintSystem,
-    evaluate_tiered_constraints,
+# Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
+from .gpu_filter import (
+    BatchFilterResult,
+    FamilyF1ParameterSpace,
+    GPUConstraintFilter,
+    ParameterMapping,
+    batch_filter,
+    is_gpu_available,
 )
-# Import ConstraintResult from tiers as TieredConstraintResult to avoid name collision
-from .tiers import ConstraintResult as TieredConstraintResult
 
 # Export REPAIR mode and constraint proof generation (new in M1-CONSTRAINTS-REPAIR)
 from .repair import (
@@ -62,14 +58,19 @@ from .repair import (
     write_constraint_proof,
 )
 
-# Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
-from .gpu_filter import (
-    BatchFilterResult,
-    FamilyF1ParameterSpace,
-    GPUConstraintFilter,
-    ParameterMapping,
-    batch_filter,
-    is_gpu_available,
+# Import ConstraintResult from tiers as TieredConstraintResult to avoid name collision
+from .tiers import ConstraintResult as TieredConstraintResult
+
+# Export tiered constraint system (new in M1-CONSTRAINTS-TIERS)
+from .tiers import (
+    ConstraintViolationError,
+    Tier0Checker,
+    Tier1Checker,
+    Tier2Checker,
+    Tier3Checker,
+    TieredConstraintProof,
+    TieredConstraintSystem,
+    evaluate_tiered_constraints,
 )
 
 __all__ = [

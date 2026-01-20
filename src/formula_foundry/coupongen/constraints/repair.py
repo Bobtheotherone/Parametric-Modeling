@@ -18,14 +18,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from .tiers import (
-    ConstraintResult,
+    _TIERS,
     ConstraintTier,
     TieredConstraintProof,
     TieredConstraintSystem,
-    _TIERS,
 )
 
 if TYPE_CHECKING:
@@ -211,9 +210,7 @@ class RepairEngine:
         self.fab_limits = fab_limits
         self.actions: list[RepairAction] = []
 
-    def _record(
-        self, path: str, before: int, after: int, reason: str, constraint_id: str
-    ) -> int:
+    def _record(self, path: str, before: int, after: int, reason: str, constraint_id: str) -> int:
         """Record a repair action and return the repaired value."""
         if before != after:
             self.actions.append(
@@ -672,16 +669,18 @@ def generate_constraint_proof(
     """
     constraints_list: list[dict[str, Any]] = []
     for c in proof.constraints:
-        constraints_list.append({
-            "id": c.constraint_id,
-            "description": c.description,
-            "tier": c.tier,
-            "value": c.value,
-            "limit": c.limit,
-            "margin": c.margin,  # Signed margin
-            "passed": c.passed,
-            "reason": c.reason,
-        })
+        constraints_list.append(
+            {
+                "id": c.constraint_id,
+                "description": c.description,
+                "tier": c.tier,
+                "value": c.value,
+                "limit": c.limit,
+                "margin": c.margin,  # Signed margin
+                "passed": c.passed,
+                "reason": c.reason,
+            }
+        )
 
     tiers_dict: dict[ConstraintTier, list[str]] = {}
     for tier in _TIERS:

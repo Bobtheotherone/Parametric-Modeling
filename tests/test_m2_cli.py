@@ -8,6 +8,7 @@ Tests cover:
 - sparam extract command
 - validate command
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,9 +19,7 @@ from typing import Any
 
 import pytest
 
-from formula_foundry.openems import cli_main
 from formula_foundry.openems.cli_main import build_parser, main
-
 
 # =============================================================================
 # Parser Structure Tests
@@ -55,12 +54,19 @@ def test_sim_subcommands_exist() -> None:
 def test_sim_run_parser() -> None:
     """sim run should accept config and required --out."""
     parser = build_parser()
-    args = parser.parse_args([
-        "sim", "run", "test_config.json",
-        "--out", "/tmp/output",
-        "--timeout", "1800",
-        "--solver-mode", "stub",
-    ])
+    args = parser.parse_args(
+        [
+            "sim",
+            "run",
+            "test_config.json",
+            "--out",
+            "/tmp/output",
+            "--timeout",
+            "1800",
+            "--solver-mode",
+            "stub",
+        ]
+    )
     assert args.config == Path("test_config.json")
     assert args.out == Path("/tmp/output")
     assert args.timeout == 1800.0
@@ -70,12 +76,18 @@ def test_sim_run_parser() -> None:
 def test_sim_batch_parser() -> None:
     """sim batch should accept config_dir and required --out."""
     parser = build_parser()
-    args = parser.parse_args([
-        "sim", "batch", "/configs",
-        "--out", "/output",
-        "--max-workers", "8",
-        "--fail-fast",
-    ])
+    args = parser.parse_args(
+        [
+            "sim",
+            "batch",
+            "/configs",
+            "--out",
+            "/output",
+            "--max-workers",
+            "8",
+            "--fail-fast",
+        ]
+    )
     assert args.config_dir == Path("/configs")
     assert args.out == Path("/output")
     assert args.max_workers == 8
@@ -92,10 +104,15 @@ def test_sim_status_parser() -> None:
 def test_sparam_extract_parser() -> None:
     """sparam extract should accept sim_dir."""
     parser = build_parser()
-    args = parser.parse_args([
-        "sparam", "extract", "/sim/output",
-        "--format", "both",
-    ])
+    args = parser.parse_args(
+        [
+            "sparam",
+            "extract",
+            "/sim/output",
+            "--format",
+            "both",
+        ]
+    )
     assert args.sim_dir == Path("/sim/output")
     assert args.format == "both"
 
@@ -174,12 +191,18 @@ def test_sim_run_with_stub_mode(sample_sim_config: dict[str, Any]) -> None:
 
         # Run command
         output_dir = tmppath / "output"
-        result = main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        result = main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         assert result == 0
         assert output_dir.exists()
@@ -200,13 +223,20 @@ def test_sim_run_with_json_output(sample_sim_config: dict[str, Any]) -> None:
         output_dir = tmppath / "output"
         json_out = tmppath / "result.json"
 
-        result = main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-            "--json", str(json_out),
-        ])
+        result = main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+                "--json",
+                str(json_out),
+            ]
+        )
 
         assert result == 0
         assert json_out.exists()
@@ -232,13 +262,20 @@ def test_sim_batch_with_stub_mode(sample_sim_config: dict[str, Any]) -> None:
             config_path.write_text(json.dumps(config), encoding="utf-8")
 
         output_dir = tmppath / "batch_output"
-        result = main([
-            "sim", "batch", str(config_dir),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--max-workers", "2",
-            "--no-convergence",
-        ])
+        main(
+            [
+                "sim",
+                "batch",
+                str(config_dir),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--max-workers",
+                "2",
+                "--no-convergence",
+            ]
+        )
 
         # May return non-zero due to convergence checks, but should complete
         assert output_dir.exists()
@@ -261,12 +298,18 @@ def test_sim_status_completed(sample_sim_config: dict[str, Any]) -> None:
         config_path.write_text(json.dumps(sample_sim_config), encoding="utf-8")
 
         output_dir = tmppath / "sim_run"
-        main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         # Check status
         result = main(["sim", "status", str(output_dir)])
@@ -290,20 +333,32 @@ def test_sparam_extract_from_stub_sim(sample_sim_config: dict[str, Any]) -> None
         config_path.write_text(json.dumps(sample_sim_config), encoding="utf-8")
 
         output_dir = tmppath / "sim_run"
-        main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         # Extract S-parameters
         extract_out = tmppath / "sparams"
-        result = main([
-            "sparam", "extract", str(output_dir),
-            "--out", str(extract_out),
-            "--config", str(config_path),
-        ])
+        result = main(
+            [
+                "sparam",
+                "extract",
+                str(output_dir),
+                "--out",
+                str(extract_out),
+                "--config",
+                str(config_path),
+            ]
+        )
 
         assert result == 0
         assert extract_out.exists()
@@ -409,20 +464,30 @@ def test_validate_missing_file() -> None:
 def test_sim_run_missing_config() -> None:
     """sim run should fail gracefully for missing config."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        result = main([
-            "sim", "run", f"{tmpdir}/nonexistent.json",
-            "--out", f"{tmpdir}/output",
-        ])
+        result = main(
+            [
+                "sim",
+                "run",
+                f"{tmpdir}/nonexistent.json",
+                "--out",
+                f"{tmpdir}/output",
+            ]
+        )
         assert result == 1
 
 
 def test_sim_batch_missing_dir() -> None:
     """sim batch should fail for missing config directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        result = main([
-            "sim", "batch", f"{tmpdir}/nonexistent",
-            "--out", f"{tmpdir}/output",
-        ])
+        result = main(
+            [
+                "sim",
+                "batch",
+                f"{tmpdir}/nonexistent",
+                "--out",
+                f"{tmpdir}/output",
+            ]
+        )
         assert result == 1
 
 
@@ -432,10 +497,15 @@ def test_sim_batch_empty_dir() -> None:
         config_dir = Path(tmpdir) / "empty_configs"
         config_dir.mkdir()
 
-        result = main([
-            "sim", "batch", str(config_dir),
-            "--out", f"{tmpdir}/output",
-        ])
+        result = main(
+            [
+                "sim",
+                "batch",
+                str(config_dir),
+                "--out",
+                f"{tmpdir}/output",
+            ]
+        )
         assert result == 1
 
 

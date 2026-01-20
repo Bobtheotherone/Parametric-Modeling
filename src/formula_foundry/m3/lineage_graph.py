@@ -18,11 +18,12 @@ import json
 import sqlite3
 import threading
 from collections import deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from formula_foundry.m3.artifact_store import ArtifactManifest, ArtifactStore
@@ -806,29 +807,19 @@ class LineageGraph:
         edge_count = cursor.fetchone()[0]
         cursor.close()
 
-        cursor = conn.execute(
-            "SELECT artifact_type, COUNT(*) FROM nodes GROUP BY artifact_type;"
-        )
+        cursor = conn.execute("SELECT artifact_type, COUNT(*) FROM nodes GROUP BY artifact_type;")
         nodes_by_type = {row[0]: row[1] for row in cursor.fetchall()}
         cursor.close()
 
-        cursor = conn.execute(
-            "SELECT relation, COUNT(*) FROM edges GROUP BY relation;"
-        )
+        cursor = conn.execute("SELECT relation, COUNT(*) FROM edges GROUP BY relation;")
         edges_by_relation = {row[0]: row[1] for row in cursor.fetchall()}
         cursor.close()
 
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM nodes WHERE artifact_id NOT IN "
-            "(SELECT target_id FROM edges);"
-        )
+        cursor = conn.execute("SELECT COUNT(*) FROM nodes WHERE artifact_id NOT IN (SELECT target_id FROM edges);")
         root_count = cursor.fetchone()[0]
         cursor.close()
 
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM nodes WHERE artifact_id NOT IN "
-            "(SELECT source_id FROM edges);"
-        )
+        cursor = conn.execute("SELECT COUNT(*) FROM nodes WHERE artifact_id NOT IN (SELECT source_id FROM edges);")
         leaf_count = cursor.fetchone()[0]
         cursor.close()
 
@@ -850,8 +841,7 @@ class LineageGraph:
         conn = self._get_connection()
 
         cursor = conn.execute("SELECT * FROM nodes ORDER BY artifact_id;")
-        nodes = {row["artifact_id"]: LineageNode.from_row(row).to_dict()
-                 for row in cursor.fetchall()}
+        nodes = {row["artifact_id"]: LineageNode.from_row(row).to_dict() for row in cursor.fetchall()}
         cursor.close()
 
         cursor = conn.execute("SELECT * FROM edges ORDER BY id;")

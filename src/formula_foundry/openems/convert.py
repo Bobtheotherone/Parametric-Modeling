@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
 from formula_foundry.coupongen.resolve import ResolvedDesign
@@ -14,8 +14,6 @@ from .ports import (
     PortBuilder,
     PortType,
     WaveguidePortSpec,
-    build_ports_from_resolved,
-    waveguide_port_to_basic_port_spec,
 )
 from .spec import (
     ConductorMaterialSpec,

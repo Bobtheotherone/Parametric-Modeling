@@ -91,9 +91,7 @@ class TestCmdInit:
         # Verify schema was created
         conn = sqlite3.connect(str(registry_db))
         conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")
         tables = {row["name"] for row in cursor.fetchall()}
         conn.close()
 

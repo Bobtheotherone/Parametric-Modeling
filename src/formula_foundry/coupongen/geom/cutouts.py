@@ -10,6 +10,7 @@ clearances around vias and other structures. Supported shapes include:
 All coordinates use integer nanometers (LengthNM) to ensure determinism and
 avoid cross-platform rounding drift.
 """
+
 from __future__ import annotations
 
 import math

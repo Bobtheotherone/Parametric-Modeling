@@ -14,9 +14,7 @@ def test_verify_include_m0_required_for_completion() -> None:
     assert "--include-m0" in verify_args_for_completion("M2")
 
 
-def test_orchestrator_completion_gate_includes_m0(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_orchestrator_completion_gate_includes_m0(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     design_doc = tmp_path / "DESIGN_DOCUMENT.md"
     design_doc.write_text("**Milestone:** M1 — test\n", encoding="utf-8")
 

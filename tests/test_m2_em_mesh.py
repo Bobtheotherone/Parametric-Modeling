@@ -7,6 +7,7 @@ Tests cover:
 - Wavelength calculations
 - Integration with GeometrySpec
 """
+
 from __future__ import annotations
 
 import pytest

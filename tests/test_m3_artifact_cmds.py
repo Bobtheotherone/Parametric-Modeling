@@ -53,10 +53,17 @@ class TestBuildParserArtifact:
     def test_artifact_show_with_all_options(self) -> None:
         """artifact show should accept all options."""
         parser = build_parser()
-        args = parser.parse_args([
-            "artifact", "show", "test-id",
-            "--json", "--content", "--verify", "-q",
-        ])
+        args = parser.parse_args(
+            [
+                "artifact",
+                "show",
+                "test-id",
+                "--json",
+                "--content",
+                "--verify",
+                "-q",
+            ]
+        )
         assert args.output_json is True
         assert args.content is True
         assert args.verify is True
@@ -94,43 +101,62 @@ class TestBuildParserArtifact:
     def test_artifact_list_with_role_filter(self) -> None:
         """artifact list should accept multiple --role filters."""
         parser = build_parser()
-        args = parser.parse_args([
-            "artifact", "list",
-            "--role", "metadata",
-            "--role", "validation",
-        ])
+        args = parser.parse_args(
+            [
+                "artifact",
+                "list",
+                "--role",
+                "metadata",
+                "--role",
+                "validation",
+            ]
+        )
         assert args.roles == ["metadata", "validation"]
 
     def test_artifact_list_with_date_filters(self) -> None:
         """artifact list should accept --after and --before filters."""
         parser = build_parser()
-        args = parser.parse_args([
-            "artifact", "list",
-            "--after", "2025-01-01T00:00:00Z",
-            "--before", "2025-12-31T23:59:59Z",
-        ])
+        args = parser.parse_args(
+            [
+                "artifact",
+                "list",
+                "--after",
+                "2025-01-01T00:00:00Z",
+                "--before",
+                "2025-12-31T23:59:59Z",
+            ]
+        )
         assert args.created_after == "2025-01-01T00:00:00Z"
         assert args.created_before == "2025-12-31T23:59:59Z"
 
     def test_artifact_list_with_pagination(self) -> None:
         """artifact list should accept pagination options."""
         parser = build_parser()
-        args = parser.parse_args([
-            "artifact", "list",
-            "-n", "50",
-            "--offset", "100",
-        ])
+        args = parser.parse_args(
+            [
+                "artifact",
+                "list",
+                "-n",
+                "50",
+                "--offset",
+                "100",
+            ]
+        )
         assert args.limit == 50
         assert args.offset == 100
 
     def test_artifact_list_with_ordering(self) -> None:
         """artifact list should accept ordering options."""
         parser = build_parser()
-        args = parser.parse_args([
-            "artifact", "list",
-            "--order-by", "byte_size",
-            "--asc",
-        ])
+        args = parser.parse_args(
+            [
+                "artifact",
+                "list",
+                "--order-by",
+                "byte_size",
+                "--asc",
+            ]
+        )
         assert args.order_by == "byte_size"
         assert args.order_asc is True
 
@@ -612,20 +638,29 @@ class TestMainArtifact:
 
     def test_main_artifact_show(self, project_with_artifacts: Path) -> None:
         """main should handle artifact show command."""
-        result = main([
-            "artifact", "show", "art-touchstone-001",
-            "--root", str(project_with_artifacts),
-            "-q",
-        ])
+        result = main(
+            [
+                "artifact",
+                "show",
+                "art-touchstone-001",
+                "--root",
+                str(project_with_artifacts),
+                "-q",
+            ]
+        )
         assert result == 0
 
     def test_main_artifact_list(self, project_with_artifacts: Path) -> None:
         """main should handle artifact list command."""
-        result = main([
-            "artifact", "list",
-            "--root", str(project_with_artifacts),
-            "-q",
-        ])
+        result = main(
+            [
+                "artifact",
+                "list",
+                "--root",
+                str(project_with_artifacts),
+                "-q",
+            ]
+        )
         assert result == 0
 
     def test_main_artifact_list_with_filters(
@@ -633,13 +668,19 @@ class TestMainArtifact:
         project_with_artifacts: Path,
     ) -> None:
         """main should handle artifact list with filters."""
-        result = main([
-            "artifact", "list",
-            "--root", str(project_with_artifacts),
-            "-t", "touchstone",
-            "-n", "10",
-            "-q",
-        ])
+        result = main(
+            [
+                "artifact",
+                "list",
+                "--root",
+                str(project_with_artifacts),
+                "-t",
+                "touchstone",
+                "-n",
+                "10",
+                "-q",
+            ]
+        )
         assert result == 0
 
     def test_main_artifact_show_json(
@@ -648,11 +689,16 @@ class TestMainArtifact:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """main artifact show --json should output valid JSON."""
-        result = main([
-            "artifact", "show", "art-coupon-spec-001",
-            "--root", str(project_with_artifacts),
-            "--json",
-        ])
+        result = main(
+            [
+                "artifact",
+                "show",
+                "art-coupon-spec-001",
+                "--root",
+                str(project_with_artifacts),
+                "--json",
+            ]
+        )
         assert result == 0
 
         captured = capsys.readouterr()

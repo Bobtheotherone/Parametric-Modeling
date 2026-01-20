@@ -19,6 +19,7 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 9.3):
     - verification (DRC summary + constraint_proof summary)
     - lineage (git commit hash, UTC timestamp)
 """
+
 from __future__ import annotations
 
 import json
@@ -85,10 +86,7 @@ def build_manifest(
     """
     resolved_git_sha = _resolve_git_sha(git_sha)
     timestamp = timestamp_utc or _utc_timestamp()
-    exports = [
-        {"path": path, "hash": export_hashes[path]}
-        for path in sorted(export_hashes.keys())
-    ]
+    exports = [{"path": path, "hash": export_hashes[path]} for path in sorted(export_hashes.keys())]
     failed_constraints = [result.constraint_id for result in proof.constraints if not result.passed]
     return {
         "schema_version": spec.schema_version,

@@ -237,10 +237,7 @@ def resolve_fab_limits(spec: CouponSpec) -> dict[str, int]:
         }
 
     # Apply overrides
-    return {
-        key: int(overrides.get(key, base_limits.get(key, 100_000)))
-        for key in base_limits
-    }
+    return {key: int(overrides.get(key, base_limits.get(key, 100_000))) for key in base_limits}
 
 
 def resolve_fab_limits_from_profile(profile: FabCapabilityProfile) -> dict[str, int]:

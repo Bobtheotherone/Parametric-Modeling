@@ -23,11 +23,12 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from formula_foundry.m3.artifact_store import ArtifactManifest, ArtifactStore
@@ -1021,25 +1022,19 @@ class ArtifactRegistry:
         conn = self._get_connection()
 
         # Total artifacts and bytes
-        cursor = conn.execute(
-            "SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM artifacts;"
-        )
+        cursor = conn.execute("SELECT COUNT(*), COALESCE(SUM(byte_size), 0) FROM artifacts;")
         row = cursor.fetchone()
         total_artifacts = row[0]
         total_bytes = row[1]
         cursor.close()
 
         # Artifacts by type
-        cursor = conn.execute(
-            "SELECT artifact_type, COUNT(*) FROM artifacts GROUP BY artifact_type;"
-        )
+        cursor = conn.execute("SELECT artifact_type, COUNT(*) FROM artifacts GROUP BY artifact_type;")
         artifacts_by_type = {row[0]: row[1] for row in cursor.fetchall()}
         cursor.close()
 
         # Unique content hashes
-        cursor = conn.execute(
-            "SELECT COUNT(DISTINCT content_hash_digest) FROM artifacts;"
-        )
+        cursor = conn.execute("SELECT COUNT(DISTINCT content_hash_digest) FROM artifacts;")
         unique_hashes = cursor.fetchone()[0]
         cursor.close()
 
@@ -1048,7 +1043,5 @@ class ArtifactRegistry:
             "total_bytes": total_bytes,
             "artifacts_by_type": artifacts_by_type,
             "unique_hashes": unique_hashes,
-            "deduplication_ratio": (
-                total_artifacts / unique_hashes if unique_hashes > 0 else 1.0
-            ),
+            "deduplication_ratio": (total_artifacts / unique_hashes if unique_hashes > 0 else 1.0),
         }

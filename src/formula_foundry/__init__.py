@@ -42,15 +42,6 @@ from formula_foundry.coupongen.api import (
     validate_spec,
 )
 
-# Alias resolve_spec as resolve for cleaner top-level API
-from formula_foundry.coupongen.resolve import (
-    ResolvedDesign,
-    resolve,
-)
-
-# Core spec types
-from formula_foundry.coupongen.spec import CouponSpec
-
 # Constraint types
 from formula_foundry.coupongen.constraints import (
     ConstraintEvaluation,
@@ -59,6 +50,15 @@ from formula_foundry.coupongen.constraints import (
     ConstraintViolation,
     RepairInfo,
 )
+
+# Alias resolve_spec as resolve for cleaner top-level API
+from formula_foundry.coupongen.resolve import (
+    ResolvedDesign,
+    resolve,
+)
+
+# Core spec types
+from formula_foundry.coupongen.spec import CouponSpec
 
 if TYPE_CHECKING:
     from formula_foundry.coupongen.kicad.cli import KicadCliMode

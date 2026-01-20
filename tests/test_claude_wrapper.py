@@ -369,7 +369,7 @@ def test_claude_wrapper_json_sequence_concatenated(tmp_path: Path) -> None:
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 if [[ "$1" == "--help" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
   exit 0
@@ -405,7 +405,7 @@ result_event = {"type": "result", "result": json.dumps(turn)}
 # Print two JSON values concatenated (no newline between them)
 print(json.dumps(init_array) + json.dumps(result_event))
 PY
-''',
+""",
     )
 
     prompt_path = tmp_path / "prompt.txt"
@@ -438,7 +438,7 @@ def test_claude_wrapper_pretty_printed_multiline_json(tmp_path: Path) -> None:
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 if [[ "$1" == "--help" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
   exit 0
@@ -475,7 +475,7 @@ events = [
 ]
 print(json.dumps(events, indent=2))
 PY
-''',
+""",
     )
 
     prompt_path = tmp_path / "prompt.txt"
@@ -505,7 +505,7 @@ def test_claude_wrapper_assistant_message_format(tmp_path: Path) -> None:
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 if [[ "$1" == "--help" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
   exit 0
@@ -549,7 +549,7 @@ events = [
 ]
 print(json.dumps(events))
 PY
-''',
+""",
     )
 
     prompt_path = tmp_path / "prompt.txt"
@@ -612,7 +612,7 @@ def test_claude_wrapper_result_event_priority(tmp_path: Path) -> None:
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
-        '''#!/usr/bin/env bash
+        """#!/usr/bin/env bash
 if [[ "$1" == "--help" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
   exit 0
@@ -664,7 +664,7 @@ events = [
 ]
 print(json.dumps(events))
 PY
-''',
+""",
     )
 
     prompt_path = tmp_path / "prompt.txt"

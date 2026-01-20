@@ -18,6 +18,7 @@ For coupon geometries, we primarily use:
 - Cylinder for via barrels
 - Polygon for antipad cutouts and non-rectangular shapes
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
 
 # Conversion factor: nanometers to meters
 NM_TO_M = 1e-9

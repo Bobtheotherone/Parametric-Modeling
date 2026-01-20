@@ -11,8 +11,8 @@ Satisfies REQ-M1-005.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from formula_foundry.substrate import sha256_bytes
 
@@ -126,9 +126,7 @@ def canonicalize_export(text: str) -> str:
     for line in normalized.split("\n"):
         stripped = line.rstrip()
         # Skip both Gerber G04 comments and Excellon semicolon comments
-        if stripped.startswith(_GERBER_COMMENT_PREFIX) or stripped.startswith(
-            _EXCELLON_COMMENT_PREFIX
-        ):
+        if stripped.startswith(_GERBER_COMMENT_PREFIX) or stripped.startswith(_EXCELLON_COMMENT_PREFIX):
             continue
         lines.append(stripped)
     return "\n".join(lines)

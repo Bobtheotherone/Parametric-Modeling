@@ -13,7 +13,6 @@ These tests verify:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -23,11 +22,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from formula_foundry.m3.cli_main import (
-    GitInfo,
-    RunMetadata,
-    RunProvenance,
     RunInputs,
+    RunMetadata,
     RunOutputs,
+    RunProvenance,
     StageExecution,
     ToolVersion,
     _get_git_info,
@@ -37,7 +35,6 @@ from formula_foundry.m3.cli_main import (
     build_parser,
     cmd_init,
     cmd_run,
-    main,
 )
 
 if TYPE_CHECKING:
@@ -105,11 +102,16 @@ class TestBuildParserRun:
     def test_run_with_tags(self) -> None:
         """Run command should accept multiple --tag arguments."""
         parser = build_parser()
-        args = parser.parse_args([
-            "run", "stage",
-            "--tag", "env=test",
-            "-t", "version=1.0",
-        ])
+        args = parser.parse_args(
+            [
+                "run",
+                "stage",
+                "--tag",
+                "env=test",
+                "-t",
+                "version=1.0",
+            ]
+        )
         assert args.tags == ["env=test", "version=1.0"]
 
     def test_run_stage_required(self) -> None:
@@ -122,31 +124,34 @@ class TestBuildParserRun:
 class TestRunTypeInference:
     """Tests for run type inference from stage name."""
 
-    @pytest.mark.parametrize("stage,expected", [
-        ("generate_coupon", "coupon_generation"),
-        ("coupon_gen", "coupon_generation"),
-        ("run_drc", "drc_validation"),
-        ("drc_check", "drc_validation"),
-        ("run_simulation", "em_simulation"),
-        ("em_sweep", "em_simulation"),
-        ("sim_run", "em_simulation"),
-        ("create_dataset", "dataset_build"),
-        ("build_dataset", "dataset_build"),
-        ("train_model", "model_training"),
-        ("model_training", "model_training"),
-        ("eval_model", "model_evaluation"),
-        ("formula_discovery", "formula_discovery"),
-        ("discover_formula", "formula_discovery"),
-        ("validate_formula", "formula_validation"),
-        ("export_gerbers", "export"),
-        ("gerber_export", "export"),
-        ("gc_sweep", "gc_sweep"),
-        ("run_gc", "gc_sweep"),
-        ("verify_data", "integrity_check"),
-        ("integrity_check", "integrity_check"),
-        ("random_stage", "other"),
-        ("my_custom_step", "other"),
-    ])
+    @pytest.mark.parametrize(
+        "stage,expected",
+        [
+            ("generate_coupon", "coupon_generation"),
+            ("coupon_gen", "coupon_generation"),
+            ("run_drc", "drc_validation"),
+            ("drc_check", "drc_validation"),
+            ("run_simulation", "em_simulation"),
+            ("em_sweep", "em_simulation"),
+            ("sim_run", "em_simulation"),
+            ("create_dataset", "dataset_build"),
+            ("build_dataset", "dataset_build"),
+            ("train_model", "model_training"),
+            ("model_training", "model_training"),
+            ("eval_model", "model_evaluation"),
+            ("formula_discovery", "formula_discovery"),
+            ("discover_formula", "formula_discovery"),
+            ("validate_formula", "formula_validation"),
+            ("export_gerbers", "export"),
+            ("gerber_export", "export"),
+            ("gc_sweep", "gc_sweep"),
+            ("run_gc", "gc_sweep"),
+            ("verify_data", "integrity_check"),
+            ("integrity_check", "integrity_check"),
+            ("random_stage", "other"),
+            ("my_custom_step", "other"),
+        ],
+    )
     def test_infer_run_type(self, stage: str, expected: str) -> None:
         """Run type should be correctly inferred from stage name."""
         assert _infer_run_type(stage) == expected
@@ -188,20 +193,11 @@ class TestGitInfo:
         """Should capture git info in a git repository."""
         # Create a minimal git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
 
         git_info = _get_git_info(tmp_path)
 
@@ -216,20 +212,11 @@ class TestGitInfo:
         """Should detect dirty working directory."""
         # Create a minimal git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
 
         # Make it dirty
         (tmp_path / "dirty.txt").write_text("uncommitted")
@@ -392,20 +379,11 @@ class TestCmdRunPrerequisites:
         """Run should fail if M3 is not initialized."""
         # Create git repo but no M3 init
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "dvc.yaml").write_text("stages: {}")
 
         result = cmd_run(
@@ -442,20 +420,11 @@ class TestCmdRunPrerequisites:
         """Run should fail if dvc.yaml is not found."""
         # Init M3 and git but no dvc.yaml
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
         cmd_init(root=tmp_path, force=False, quiet=True)
 
         result = cmd_run(
@@ -478,20 +447,11 @@ class TestCmdRunDryRun:
         """Dry run should return 0 without executing."""
         # Setup minimal environment
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
         cmd_init(root=tmp_path, force=False, quiet=True)
         (tmp_path / "dvc.yaml").write_text("stages:\n  test_stage:\n    cmd: echo hello")
 
@@ -511,20 +471,11 @@ class TestCmdRunDryRun:
         """Dry run should not create any artifacts."""
         # Setup minimal environment
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
         cmd_init(root=tmp_path, force=False, quiet=True)
         (tmp_path / "dvc.yaml").write_text("stages:\n  test_stage:\n    cmd: echo hello")
 
@@ -559,28 +510,17 @@ class TestCmdRunWithMockedDVC:
     def _setup_test_env(self, tmp_path: Path) -> None:
         """Set up a minimal test environment with git and M3."""
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
         cmd_init(root=tmp_path, force=False, quiet=True)
         (tmp_path / "dvc.yaml").write_text("stages:\n  test_stage:\n    cmd: echo hello")
 
     @patch("formula_foundry.m3.cli_main._run_dvc_stage")
     @patch("formula_foundry.m3.cli_main.shutil.which")
-    def test_run_success_creates_run_record(
-        self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_run_success_creates_run_record(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
         """Successful run should create a run record in registry."""
         self._setup_test_env(tmp_path)
         mock_which.return_value = "/usr/bin/dvc"
@@ -613,9 +553,7 @@ class TestCmdRunWithMockedDVC:
 
     @patch("formula_foundry.m3.cli_main._run_dvc_stage")
     @patch("formula_foundry.m3.cli_main.shutil.which")
-    def test_run_creates_metadata_artifact(
-        self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_run_creates_metadata_artifact(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
         """Run should create a metadata artifact in the store."""
         self._setup_test_env(tmp_path)
         mock_which.return_value = "/usr/bin/dvc"
@@ -643,9 +581,7 @@ class TestCmdRunWithMockedDVC:
 
     @patch("formula_foundry.m3.cli_main._run_dvc_stage")
     @patch("formula_foundry.m3.cli_main.shutil.which")
-    def test_run_failure_records_error(
-        self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_run_failure_records_error(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
         """Failed run should record error in metadata."""
         self._setup_test_env(tmp_path)
         mock_which.return_value = "/usr/bin/dvc"
@@ -666,9 +602,7 @@ class TestCmdRunWithMockedDVC:
         # Verify run was recorded as failed
         conn = sqlite3.connect(str(tmp_path / "data" / "registry.db"))
         conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            "SELECT * FROM runs WHERE stage_name = 'test_stage' ORDER BY indexed_utc DESC"
-        )
+        cursor = conn.execute("SELECT * FROM runs WHERE stage_name = 'test_stage' ORDER BY indexed_utc DESC")
         run = cursor.fetchone()
         conn.close()
 
@@ -676,9 +610,7 @@ class TestCmdRunWithMockedDVC:
 
     @patch("formula_foundry.m3.cli_main._run_dvc_stage")
     @patch("formula_foundry.m3.cli_main.shutil.which")
-    def test_run_with_custom_run_type(
-        self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_run_with_custom_run_type(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
         """Run should use custom run_type when provided."""
         self._setup_test_env(tmp_path)
         mock_which.return_value = "/usr/bin/dvc"
@@ -697,9 +629,7 @@ class TestCmdRunWithMockedDVC:
         # Verify config has correct run_type
         conn = sqlite3.connect(str(tmp_path / "data" / "registry.db"))
         conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            "SELECT * FROM runs WHERE stage_name = 'test_stage' ORDER BY indexed_utc DESC"
-        )
+        cursor = conn.execute("SELECT * FROM runs WHERE stage_name = 'test_stage' ORDER BY indexed_utc DESC")
         run = cursor.fetchone()
         conn.close()
 
@@ -708,9 +638,7 @@ class TestCmdRunWithMockedDVC:
 
     @patch("formula_foundry.m3.cli_main._run_dvc_stage")
     @patch("formula_foundry.m3.cli_main.shutil.which")
-    def test_run_cached_stage(
-        self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_run_cached_stage(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
         """Cached stage should be recorded with cached status."""
         self._setup_test_env(tmp_path)
         mock_which.return_value = "/usr/bin/dvc"
@@ -752,15 +680,21 @@ class TestMainWithRunCommand:
         from formula_foundry.m3.cli_main import build_parser
 
         parser = build_parser()
-        args = parser.parse_args([
-            "run", "my_stage",
-            "--root", str(tmp_path),
-            "--run-type", "em_simulation",
-            "--dry-run",
-            "--force",
-            "-q",
-            "-t", "env=test",
-        ])
+        args = parser.parse_args(
+            [
+                "run",
+                "my_stage",
+                "--root",
+                str(tmp_path),
+                "--run-type",
+                "em_simulation",
+                "--dry-run",
+                "--force",
+                "-q",
+                "-t",
+                "env=test",
+            ]
+        )
 
         assert args.command == "run"
         assert args.stage == "my_stage"

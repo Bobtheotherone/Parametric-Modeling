@@ -41,9 +41,7 @@ class TestParameterMapping:
 
     def test_linear_mapping_to_physical(self) -> None:
         """Linear mapping should correctly transform [0,1] to [min, max]."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=100.0, max_val=500.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=100.0, max_val=500.0)
 
         # Test endpoints
         assert mapping.to_physical(0.0, np) == 100.0
@@ -54,9 +52,7 @@ class TestParameterMapping:
 
     def test_linear_mapping_to_normalized(self) -> None:
         """Linear mapping should correctly transform [min, max] to [0,1]."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=100.0, max_val=500.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=100.0, max_val=500.0)
 
         assert mapping.to_normalized(100.0, np) == pytest.approx(0.0)
         assert mapping.to_normalized(500.0, np) == pytest.approx(1.0)
@@ -64,9 +60,7 @@ class TestParameterMapping:
 
     def test_log_mapping_to_physical(self) -> None:
         """Log mapping should correctly transform using logarithmic scale."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="log", min_val=10.0, max_val=1000.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="log", min_val=10.0, max_val=1000.0)
 
         assert mapping.to_physical(0.0, np) == pytest.approx(10.0)
         assert mapping.to_physical(1.0, np) == pytest.approx(1000.0)
@@ -75,9 +69,7 @@ class TestParameterMapping:
 
     def test_vectorized_mapping(self) -> None:
         """Mapping should work on arrays."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=0.0, max_val=100.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=0.0, max_val=100.0)
 
         u = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
         expected = np.array([0.0, 25.0, 50.0, 75.0, 100.0])

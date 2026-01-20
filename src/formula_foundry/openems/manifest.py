@@ -13,11 +13,12 @@ The manifest provides complete provenance information for simulation results inc
 The manifest follows the same canonical JSON serialization patterns as M1
 to ensure deterministic hashing and provenance tracking.
 """
+
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,9 @@ from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_
 from .geometry import GeometrySpec, geometry_canonical_json
 from .mesh_generator import mesh_line_summary
 from .sim_runner import SimulationResult
+from .sparam_extract import ExtractionResult
+from .sparam_extract import build_manifest_entry as build_sparam_manifest_entry
 from .spec import MeshSpec, SimulationSpec
-from .sparam_extract import ExtractionResult, build_manifest_entry as build_sparam_manifest_entry
 
 logger = logging.getLogger(__name__)
 
@@ -341,8 +343,7 @@ class M2ManifestBuilder:
 
         # Build output file entries
         outputs = [
-            {"path": path, "hash": hash_value}
-            for path, hash_value in sorted(self.simulation_result.output_hashes.items())
+            {"path": path, "hash": hash_value} for path, hash_value in sorted(self.simulation_result.output_hashes.items())
         ]
 
         # Compute hashes
@@ -400,11 +401,7 @@ class M2ManifestBuilder:
             manifest["execution_time_sec"] = self.simulation_result.execution_time_sec
 
         if self.simulation_result.sparam_path is not None:
-            manifest["sparam_path"] = str(
-                self.simulation_result.sparam_path.relative_to(
-                    self.simulation_result.output_dir
-                )
-            )
+            manifest["sparam_path"] = str(self.simulation_result.sparam_path.relative_to(self.simulation_result.output_dir))
 
         return manifest
 
@@ -555,10 +552,7 @@ def validate_m2_manifest(manifest: Mapping[str, Any]) -> list[str]:
         if not isinstance(manifest["schema_version"], int):
             errors.append("schema_version must be an integer")
         elif manifest["schema_version"] != _M2_MANIFEST_SCHEMA_VERSION:
-            errors.append(
-                f"Unsupported schema_version: {manifest['schema_version']} "
-                f"(expected {_M2_MANIFEST_SCHEMA_VERSION})"
-            )
+            errors.append(f"Unsupported schema_version: {manifest['schema_version']} (expected {_M2_MANIFEST_SCHEMA_VERSION})")
 
     if "simulation_hash" in manifest:
         if not isinstance(manifest["simulation_hash"], str) or len(manifest["simulation_hash"]) != 64:
@@ -580,9 +574,8 @@ def validate_m2_manifest(manifest: Mapping[str, Any]) -> list[str]:
         elif len(manifest["ports"]) == 0:
             errors.append("ports must contain at least one port")
 
-    if "outputs" in manifest:
-        if not isinstance(manifest["outputs"], list):
-            errors.append("outputs must be a list")
+    if "outputs" in manifest and not isinstance(manifest["outputs"], list):
+        errors.append("outputs must be a list")
 
     return errors
 

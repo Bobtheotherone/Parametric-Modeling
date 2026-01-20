@@ -330,16 +330,14 @@ class SExprTokenizer:
             else:
                 chars.append(self._advance())
 
-        raise SExprParseError(
-            "Unterminated string", self.pos, self.line, self.column
-        )
+        raise SExprParseError("Unterminated string", self.pos, self.line, self.column)
 
     def _read_atom(self) -> str:
         """Read an unquoted atom value."""
         chars: list[str] = []
         while self.pos < len(self.text):
             char = self.text[self.pos]
-            if char in " \t\n\r()\"":
+            if char in ' \t\n\r()"':
                 break
             chars.append(self._advance())
         return "".join(chars)

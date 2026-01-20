@@ -14,7 +14,6 @@ Satisfies:
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,28 +26,22 @@ from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
 from .kicad import BackendA, KicadCliRunner
 from .kicad.cli import KicadCliMode
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
-from .resolve import ResolvedDesign, design_hash, resolve
+from .resolve import ResolvedDesign, design_hash
 from .spec import CouponSpec, KicadToolchain
 
 
 class KicadRunnerProtocol(Protocol):
     """Protocol for KiCad CLI runner implementations."""
 
-    def run_drc(
-        self, board_path: Path, report_path: Path
-    ) -> Any:  # subprocess.CompletedProcess[str]
+    def run_drc(self, board_path: Path, report_path: Path) -> Any:  # subprocess.CompletedProcess[str]
         """Run DRC check on the board."""
         ...
 
-    def export_gerbers(
-        self, board_path: Path, out_dir: Path
-    ) -> Any:  # subprocess.CompletedProcess[str]
+    def export_gerbers(self, board_path: Path, out_dir: Path) -> Any:  # subprocess.CompletedProcess[str]
         """Export Gerber files from the board."""
         ...
 
-    def export_drill(
-        self, board_path: Path, out_dir: Path
-    ) -> Any:  # subprocess.CompletedProcess[str]
+    def export_drill(self, board_path: Path, out_dir: Path) -> Any:  # subprocess.CompletedProcess[str]
         """Export drill files from the board."""
         ...
 
@@ -71,10 +64,7 @@ class CacheKey:
 
     def matches(self, manifest: dict[str, Any]) -> bool:
         """Check if this cache key matches a manifest's hashes."""
-        return (
-            manifest.get("design_hash") == self.design_hash
-            and manifest.get("toolchain_hash") == self.toolchain_hash
-        )
+        return manifest.get("design_hash") == self.design_hash and manifest.get("toolchain_hash") == self.toolchain_hash
 
 
 @dataclass(frozen=True)
@@ -164,9 +154,7 @@ class ExportPipeline:
             return self._runner
         return KicadCliRunner(mode=self.mode, docker_image=toolchain.docker_image)
 
-    def _build_cache_key(
-        self, resolved: ResolvedDesign, spec: CouponSpec
-    ) -> CacheKey:
+    def _build_cache_key(self, resolved: ResolvedDesign, spec: CouponSpec) -> CacheKey:
         """Build a cache key from the resolved design and toolchain.
 
         Satisfies REQ-M1-020: Cache keyed by design_hash + toolchain_hash.
@@ -291,9 +279,7 @@ class ExportPipeline:
             cache_key=cache_key,
         )
 
-    def _write_validation_outputs(
-        self, evaluation: ConstraintEvaluation, out_dir: Path
-    ) -> None:
+    def _write_validation_outputs(self, evaluation: ConstraintEvaluation, out_dir: Path) -> None:
         """Write resolved design and constraint proof to output directory."""
         out_dir.mkdir(parents=True, exist_ok=True)
         resolved_payload = canonical_json_dumps(evaluation.resolved.model_dump(mode="json"))

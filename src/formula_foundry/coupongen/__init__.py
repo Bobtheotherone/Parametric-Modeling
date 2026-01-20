@@ -12,16 +12,6 @@ from .api import (
     run_drc,
     validate_spec,
 )
-from .export import (
-    CacheKey,
-    ExportPipeline,
-    ExportResult,
-    PipelineProgress,
-    PipelineStage,
-    compute_cache_key,
-    is_cache_valid,
-    run_export_pipeline,
-)
 from .constraints import (
     ConstraintEvaluation,
     ConstraintProof,
@@ -33,6 +23,16 @@ from .constraints import (
     evaluate_constraints,
     resolve_fab_limits,
     resolve_fab_limits_from_profile,
+)
+from .export import (
+    CacheKey,
+    ExportPipeline,
+    ExportResult,
+    PipelineProgress,
+    PipelineStage,
+    compute_cache_key,
+    is_cache_valid,
+    run_export_pipeline,
 )
 from .fab_profiles import (
     FAB_PROFILE_SCHEMA,

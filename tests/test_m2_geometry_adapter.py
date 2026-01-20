@@ -9,6 +9,7 @@ These tests validate:
 - Stackup Z-coordinate mapping
 - Full geometry building
 """
+
 from __future__ import annotations
 
 import pytest
@@ -29,15 +30,14 @@ from formula_foundry.openems import (
     TransmissionLineSpec,
 )
 from formula_foundry.openems.csx_primitives import (
+    NM_TO_M,
     BoundingBox3D,
     CSXBox,
     CSXCylinder,
     CSXGeometry,
-    CSXMaterial,
     CSXMaterialType,
     CSXPolygon,
     CSXViaPad,
-    NM_TO_M,
     Point3D,
     air_material,
     copper_material,
@@ -45,13 +45,10 @@ from formula_foundry.openems.csx_primitives import (
 )
 from formula_foundry.openems.geometry import StackupMaterialsSpec
 from formula_foundry.openems.geometry_adapter import (
-    DEFAULT_COPPER_THICKNESS_NM,
     GeometryAdapter,
-    LayerZInfo,
     StackupZMap,
     build_csx_geometry,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -364,11 +361,9 @@ class TestStackupZMap:
 
     def test_copper_thickness(self, sample_geometry_spec: GeometrySpec) -> None:
         """Each layer should have correct copper thickness."""
-        z_map = StackupZMap.from_geometry_spec(
-            sample_geometry_spec, copper_thickness_nm=35_000
-        )
+        z_map = StackupZMap.from_geometry_spec(sample_geometry_spec, copper_thickness_nm=35_000)
 
-        for layer_id, layer_info in z_map.layers.items():
+        for _layer_id, layer_info in z_map.layers.items():
             thickness = layer_info.z_top_nm - layer_info.z_bottom_nm
             assert thickness == 35_000
 

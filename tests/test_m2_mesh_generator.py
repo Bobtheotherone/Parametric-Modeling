@@ -8,14 +8,13 @@ Tests cover:
 - Complete generate_adaptive_mesh_lines function
 - Mesh line summary statistics
 """
+
 from __future__ import annotations
 
 import pytest
 
 from formula_foundry.em.mesh import (
     AdaptiveMeshDensity,
-    FrequencyRange,
-    MeshConfig,
     create_default_mesh_config,
 )
 from formula_foundry.openems.geometry import (
@@ -537,9 +536,7 @@ class TestMeshLineSummary:
         summary = mesh_line_summary(mesh_spec)
 
         expected_total = (
-            (len(mesh_spec.fixed_lines_x_nm) - 1)
-            * (len(mesh_spec.fixed_lines_y_nm) - 1)
-            * (len(mesh_spec.fixed_lines_z_nm) - 1)
+            (len(mesh_spec.fixed_lines_x_nm) - 1) * (len(mesh_spec.fixed_lines_y_nm) - 1) * (len(mesh_spec.fixed_lines_z_nm) - 1)
         )
         assert summary["total_cells"] == expected_total
 

@@ -474,3 +474,31 @@ class TestFrequencyHzAnnotatedType:
 
         with pytest.raises(ValidationError):
             TestModel(freq_hz="100THz")  # type: ignore[arg-type]
+
+
+# =============================================================================
+# REQ-M1-002: Integer nanometer representation requirement test
+# =============================================================================
+
+
+def test_lengthnm_parsing_integer_nm() -> None:
+    """REQ-M1-002: Verify geometry is represented as integer nanometers with deterministic parsing.
+
+    This test covers the requirement that all geometry must be internally represented
+    as integer nanometers and that parsing of mm/mil/um inputs is deterministic.
+    """
+    # Integer nanometer representation
+    assert parse_length_nm("1mm") == 1_000_000
+    assert isinstance(parse_length_nm("1mm"), int)
+
+    # Deterministic parsing of various unit inputs
+    assert parse_length_nm("250um") == 250_000
+    assert parse_length_nm("10mil") == 254_000
+    assert parse_length_nm("1000nm") == 1_000
+    assert parse_length_nm(500_000) == 500_000
+
+    # Verify integer output type for all input types
+    assert isinstance(parse_length_nm("0.5mm"), int)
+    assert isinstance(parse_length_nm("100um"), int)
+    assert isinstance(parse_length_nm("1mil"), int)
+    assert isinstance(parse_length_nm(123456), int)

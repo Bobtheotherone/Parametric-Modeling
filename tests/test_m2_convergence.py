@@ -7,11 +7,10 @@ This module tests the convergence validation functionality including:
 - Frequency resolution adequacy
 - Overall convergence report generation
 """
+
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -34,7 +33,6 @@ from formula_foundry.openems.convergence import (
     validate_convergence,
     write_convergence_report,
 )
-
 
 # =============================================================================
 # EnergyDecayData Tests
@@ -135,7 +133,7 @@ class TestCheckEnergyDecay:
         assert result.status == ConvergenceStatus.PASSED
         assert result.passed
         assert result.value == -55.0
-        assert "energy_decay" == result.name
+        assert result.name == "energy_decay"
 
     def test_unconverged_simulation(self):
         """Test detection of unconverged simulation."""
@@ -354,10 +352,7 @@ class TestCheckFrequencyResolution:
         result_diel = check_frequency_resolution(max_freq, mesh, config, epsilon_r=4.0)
 
         # Dielectric should have fewer cells per wavelength
-        assert (
-            result_diel.details["actual_cells_per_wavelength"]
-            < result_vacuum.details["actual_cells_per_wavelength"]
-        )
+        assert result_diel.details["actual_cells_per_wavelength"] < result_vacuum.details["actual_cells_per_wavelength"]
 
     def test_no_mesh_info_skipped(self):
         """Test that check is skipped when mesh info not available."""
@@ -715,14 +710,14 @@ class TestConvergenceIntegration:
             ExcitationSpec,
             FrequencySpec,
             GeometryRefSpec,
+            MeshResolutionSpec,
+            MeshSpec,
+            OpenEMSToolchainSpec,
             PortSpec,
             SimulationControlSpec,
             SimulationSpec,
             TerminationSpec,
             ToolchainSpec,
-            OpenEMSToolchainSpec,
-            MeshSpec,
-            MeshResolutionSpec,
         )
 
         spec = SimulationSpec(

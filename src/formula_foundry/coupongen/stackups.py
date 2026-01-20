@@ -33,9 +33,7 @@ class DielectricProperties(_StackupBase):
     """Dielectric material properties."""
 
     er: float = Field(..., gt=1, description="Relative permittivity (dielectric constant)")
-    loss_tangent: float = Field(
-        ..., ge=0, le=1, description="Loss tangent (tan delta)"
-    )
+    loss_tangent: float = Field(..., ge=0, le=1, description="Loss tangent (tan delta)")
     material: str | None = Field(default=None, description="Material name (e.g., 'FR4')")
 
 
@@ -43,16 +41,10 @@ class StackupLayer(_StackupBase):
     """Individual layer in a stackup."""
 
     name: str | None = Field(default=None, min_length=1, description="Layer name")
-    type: Literal["copper", "dielectric", "soldermask", "silkscreen", "paste"] = Field(
-        ..., description="Type of layer"
-    )
+    type: Literal["copper", "dielectric", "soldermask", "silkscreen", "paste"] = Field(..., description="Type of layer")
     thickness_nm: LengthNM = Field(..., ge=0, description="Layer thickness in nm")
-    copper_weight_oz: float | None = Field(
-        default=None, gt=0, description="Copper weight in oz/ft² (copper layers only)"
-    )
-    dielectric: DielectricProperties | None = Field(
-        default=None, description="Dielectric properties (dielectric layers only)"
-    )
+    copper_weight_oz: float | None = Field(default=None, gt=0, description="Copper weight in oz/ft² (copper layers only)")
+    dielectric: DielectricProperties | None = Field(default=None, description="Dielectric properties (dielectric layers only)")
 
 
 class StackupProfile(_StackupBase):
@@ -74,22 +66,16 @@ class StackupProfile(_StackupBase):
     description: str | None = Field(default=None)
     vendor: str | None = Field(default=None)
     copper_layers: int = Field(..., ge=1, le=32)
-    total_thickness_nm: LengthNM | None = Field(
-        default=None, description="Total board thickness (computed if not provided)"
-    )
+    total_thickness_nm: LengthNM | None = Field(default=None, description="Total board thickness (computed if not provided)")
     layers: list[StackupLayer] = Field(..., min_length=1)
-    dielectric_defaults: DielectricProperties | None = Field(
-        default=None, description="Default dielectric properties"
-    )
+    dielectric_defaults: DielectricProperties | None = Field(default=None, description="Default dielectric properties")
 
     @model_validator(mode="after")
-    def validate_copper_count(self) -> "StackupProfile":
+    def validate_copper_count(self) -> StackupProfile:
         """Validate that copper layer count matches layers list."""
         copper_count = sum(1 for layer in self.layers if layer.type == "copper")
         if copper_count != self.copper_layers:
-            raise ValueError(
-                f"copper_layers={self.copper_layers} but found {copper_count} copper layers in layers list"
-            )
+            raise ValueError(f"copper_layers={self.copper_layers} but found {copper_count} copper layers in layers list")
         return self
 
 
@@ -144,9 +130,7 @@ def list_available_stackups() -> list[str]:
     """
     if not STACKUPS_DIR.exists():
         return []
-    return sorted(
-        p.stem for p in STACKUPS_DIR.glob("*.json") if not p.name.endswith(".schema.json")
-    )
+    return sorted(p.stem for p in STACKUPS_DIR.glob("*.json") if not p.name.endswith(".schema.json"))
 
 
 def compute_total_thickness(stackup: StackupProfile) -> int:
@@ -171,7 +155,7 @@ def get_copper_layer_names(stackup: StackupProfile) -> list[str]:
         List of copper layer names from top to bottom
     """
     names = []
-    for i, layer in enumerate(stackup.layers):
+    for _i, layer in enumerate(stackup.layers):
         if layer.type == "copper":
             if layer.name:
                 names.append(layer.name)
@@ -180,9 +164,7 @@ def get_copper_layer_names(stackup: StackupProfile) -> list[str]:
     return names
 
 
-def get_dielectric_between_layers(
-    stackup: StackupProfile, layer1_idx: int, layer2_idx: int
-) -> list[StackupLayer]:
+def get_dielectric_between_layers(stackup: StackupProfile, layer1_idx: int, layer2_idx: int) -> list[StackupLayer]:
     """Get dielectric layers between two copper layers.
 
     Args:
@@ -193,25 +175,17 @@ def get_dielectric_between_layers(
     Returns:
         List of dielectric layers between the specified copper layers
     """
-    copper_indices = [
-        i for i, layer in enumerate(stackup.layers) if layer.type == "copper"
-    ]
+    copper_indices = [i for i, layer in enumerate(stackup.layers) if layer.type == "copper"]
     if layer1_idx >= len(copper_indices) or layer2_idx >= len(copper_indices):
         raise ValueError(f"Layer index out of range (max: {len(copper_indices) - 1})")
 
     start_idx = copper_indices[min(layer1_idx, layer2_idx)]
     end_idx = copper_indices[max(layer1_idx, layer2_idx)]
 
-    return [
-        layer
-        for layer in stackup.layers[start_idx + 1 : end_idx]
-        if layer.type == "dielectric"
-    ]
+    return [layer for layer in stackup.layers[start_idx + 1 : end_idx] if layer.type == "dielectric"]
 
 
-def get_thickness_between_layers(
-    stackup: StackupProfile, layer1_idx: int, layer2_idx: int
-) -> int:
+def get_thickness_between_layers(stackup: StackupProfile, layer1_idx: int, layer2_idx: int) -> int:
     """Get total dielectric thickness between two copper layers.
 
     Args:

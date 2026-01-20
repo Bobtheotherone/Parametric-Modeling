@@ -15,6 +15,7 @@ Key concepts:
 All lengths are in nanometers (integer) for consistency with the coupongen
 coordinate system and to ensure deterministic, reproducible results.
 """
+
 from __future__ import annotations
 
 import math
@@ -236,9 +237,7 @@ def compute_adaptive_mesh_density(
     )
 
     # Base cell size from wavelength fraction (in dielectric)
-    base_from_wavelength = int(
-        min_wavelength_in_dielectric_nm * mesh_config.min_wavelength_fraction
-    )
+    base_from_wavelength = int(min_wavelength_in_dielectric_nm * mesh_config.min_wavelength_fraction)
     base_cell_nm = max(
         mesh_config.min_cell_size_nm,
         min(base_from_wavelength, mesh_config.max_cell_size_nm),

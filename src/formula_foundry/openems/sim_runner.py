@@ -4,9 +4,10 @@ import hashlib
 import json
 import logging
 import subprocess
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
@@ -264,13 +265,9 @@ class SimulationRunner:
             raise ValueError("openems_args must be provided for cli mode")
 
         try:
-            proc = self.openems_runner.run_with_timeout(
-                args, workdir=outputs_dir, timeout_sec=timeout_sec
-            )
+            proc = self.openems_runner.run_with_timeout(args, workdir=outputs_dir, timeout_sec=timeout_sec)
         except subprocess.TimeoutExpired as e:
-            raise SimulationTimeoutError(
-                f"openEMS simulation timed out after {timeout_sec} seconds"
-            ) from e
+            raise SimulationTimeoutError(f"openEMS simulation timed out after {timeout_sec} seconds") from e
 
         if proc.returncode != 0:
             stdout = proc.stdout or ""
@@ -332,10 +329,7 @@ def _build_manifest(
     Returns:
         Manifest dictionary.
     """
-    outputs = [
-        {"path": path, "hash": output_hashes[path]}
-        for path in sorted(output_hashes.keys())
-    ]
+    outputs = [{"path": path, "hash": output_hashes[path]} for path in sorted(output_hashes.keys())]
     manifest: dict[str, Any] = {
         "schema_version": _MANIFEST_SCHEMA_VERSION,
         "simulation_id": spec.simulation_id,
@@ -574,9 +568,7 @@ def _write_stub_touchstone(path: Path, frequency: FrequencySpec, seed: int) -> N
 
 def _write_stub_csv(path: Path, frequency: FrequencySpec, seed: int) -> None:
     freqs = _frequency_axis(frequency)
-    header = (
-        "freq_hz,s11_re,s11_im,s21_re,s21_im,s12_re,s12_im,s22_re,s22_im"
-    )
+    header = "freq_hz,s11_re,s11_im,s21_re,s21_im,s12_re,s12_im,s22_re,s22_im"
     lines = [header]
     for index, freq in enumerate(freqs):
         values = _stub_sparams(seed, index)
@@ -621,7 +613,7 @@ def _write_stub_nf2ff(path: Path, seed: int) -> None:
 # =============================================================================
 
 
-def load_sparam_result(result: SimulationResult) -> "SParameterData | None":
+def load_sparam_result(result: SimulationResult) -> SParameterData | None:
     """Load S-parameter data from a simulation result.
 
     This function reads the S-parameter output file (Touchstone format)
@@ -640,7 +632,7 @@ def load_sparam_result(result: SimulationResult) -> "SParameterData | None":
         >>> if sparam_data is not None:
         ...     print(f"S21 at {sparam_data.f_min_hz} Hz: {sparam_data.s21()[0]}")
     """
-    from formula_foundry.em.touchstone import SParameterData, read_touchstone
+    from formula_foundry.em.touchstone import read_touchstone
 
     if result.sparam_path is None:
         return None

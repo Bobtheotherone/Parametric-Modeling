@@ -17,7 +17,6 @@ import subprocess
 from pathlib import Path
 from typing import get_type_hints
 
-import pytest
 import yaml  # type: ignore[import-untyped]
 
 import formula_foundry
@@ -273,9 +272,7 @@ class TestTopLevelAPIWorkflow:
 
         # Step 5: Export fab
         fab_dir = tmp_path / "fab"
-        hashes = formula_foundry.export_fab(
-            project.board_path, fab_dir, spec.toolchain.kicad, runner=runner
-        )
+        hashes = formula_foundry.export_fab(project.board_path, fab_dir, spec.toolchain.kicad, runner=runner)
         assert isinstance(hashes, dict)
         assert len(hashes) > 0
         assert "gerbers/F.Cu.gbr" in hashes
@@ -300,9 +297,7 @@ class TestTopLevelAPIWorkflow:
         spec = formula_foundry.load_spec(spec_path)
         runner = _FakeRunner()
 
-        result = formula_foundry.build_coupon(
-            spec, out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7"
-        )
+        result = formula_foundry.build_coupon(spec, out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
         assert isinstance(result, formula_foundry.BuildResult)
         assert result.manifest_path.exists()
 

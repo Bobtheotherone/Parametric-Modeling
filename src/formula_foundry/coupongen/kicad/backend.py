@@ -33,9 +33,7 @@ class IKiCadBackend(abc.ABC):
     name: str
 
     @abc.abstractmethod
-    def write_board(
-        self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path
-    ) -> Path:
+    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
         """Write a KiCad board file.
 
         Args:
@@ -59,9 +57,7 @@ class BackendA(IKiCadBackend):
 
     name = "sexpr"
 
-    def write_board(
-        self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path
-    ) -> Path:
+    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
         """Write a KiCad board file using S-expression generation.
 
         Args:

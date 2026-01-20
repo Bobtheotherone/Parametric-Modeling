@@ -63,6 +63,7 @@ def test_bootstrap_venv_installs_dev_extras_and_project() -> None:
     # Must have a line that installs the project in editable mode
     # Acceptable patterns: "uv pip install -e ." or similar
     import re
+
     editable_install_pattern = re.compile(r"uv\s+pip\s+install\s+-e\s+\.")
     assert editable_install_pattern.search(content), (
         "bootstrap_venv.sh must install project in editable mode (uv pip install -e .)"

@@ -37,9 +37,7 @@ class TestLineageGraphInit:
         graph.initialize()
 
         conn = graph._get_connection()
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
         cursor.close()
 
@@ -537,7 +535,7 @@ class TestBuildFromStore:
             run_id="run-001",
         )
 
-        m2 = store.put(
+        store.put(
             content=b"board",
             artifact_type="kicad_board",
             roles=["intermediate"],
@@ -816,10 +814,7 @@ class TestThreadSafety:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=add_nodes, args=(i,))
-            for i in range(num_threads)
-        ]
+        threads = [threading.Thread(target=add_nodes, args=(i,)) for i in range(num_threads)]
         for t in threads:
             t.start()
         for t in threads:
@@ -872,11 +867,7 @@ class TestComplexLineage:
             for i in range(4):
                 graph.add_node(f"chain{chain}-{i}", "other", f"h{chain}{i}")
                 if i > 0:
-                    graph.add_edge(
-                        f"chain{chain}-{i-1}",
-                        f"chain{chain}-{i}",
-                        "derived_from"
-                    )
+                    graph.add_edge(f"chain{chain}-{i - 1}", f"chain{chain}-{i}", "derived_from")
 
         chain0_ancestors = graph.get_ancestors("chain0-3")
         chain1_ancestors = graph.get_ancestors("chain1-3")

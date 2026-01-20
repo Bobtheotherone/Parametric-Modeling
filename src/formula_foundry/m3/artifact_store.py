@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
-
 # Type aliases for clarity
 HashAlgorithm = Literal["sha256", "sha384", "sha512", "blake3"]
 ArtifactType = Literal[
@@ -385,9 +384,7 @@ class ArtifactStore:
                 tmp_path.unlink()
             raise
 
-    def _atomic_write_stream(
-        self, path: Path, stream: BinaryIO, chunk_size: int = 65536
-    ) -> tuple[ContentHash, int]:
+    def _atomic_write_stream(self, path: Path, stream: BinaryIO, chunk_size: int = 65536) -> tuple[ContentHash, int]:
         """Write stream content atomically, computing hash during write.
 
         Args:
@@ -647,20 +644,24 @@ class ArtifactStore:
         inputs = []
         for inp in lin_data.get("inputs", []):
             inp_hash = ContentHash.from_dict(inp["content_hash"]) if "content_hash" in inp else None
-            inputs.append(LineageReference(
-                artifact_id=inp["artifact_id"],
-                relation=inp["relation"],
-                content_hash=inp_hash,
-            ))
+            inputs.append(
+                LineageReference(
+                    artifact_id=inp["artifact_id"],
+                    relation=inp["relation"],
+                    content_hash=inp_hash,
+                )
+            )
 
         outputs = []
         for out in lin_data.get("outputs", []):
             out_hash = ContentHash.from_dict(out["content_hash"]) if "content_hash" in out else None
-            outputs.append(LineageReference(
-                artifact_id=out["artifact_id"],
-                relation=out["relation"],
-                content_hash=out_hash,
-            ))
+            outputs.append(
+                LineageReference(
+                    artifact_id=out["artifact_id"],
+                    relation=out["relation"],
+                    content_hash=out_hash,
+                )
+            )
 
         lineage = Lineage(
             run_id=lin_data["run_id"],
@@ -716,10 +717,7 @@ class ArtifactStore:
         """
         if not self.manifests_dir.exists():
             return []
-        return [
-            p.stem
-            for p in self.manifests_dir.glob("*.json")
-        ]
+        return [p.stem for p in self.manifests_dir.glob("*.json")]
 
     def verify(self, artifact_id: str) -> bool:
         """Verify the integrity of a stored artifact.

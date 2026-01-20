@@ -15,8 +15,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from formula_foundry.coupongen.export import (
     CacheKey,
     ExportPipeline,

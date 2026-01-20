@@ -72,9 +72,7 @@ def test_cli_build_returns_design_hash_keyed_output(tmp_path: Path) -> None:
         toolchain_hash="toolchain123",
     )
     mock_spec = MagicMock()
-    mock_spec.model_dump.return_value = {
-        "toolchain": {"kicad": {"docker_image": "kicad/kicad:9.0.7"}}
-    }
+    mock_spec.model_dump.return_value = {"toolchain": {"kicad": {"docker_image": "kicad/kicad:9.0.7"}}}
 
     with (
         patch("formula_foundry.coupongen.cli_main.load_spec", return_value=mock_spec),
@@ -106,9 +104,7 @@ def test_cli_build_exit_code_success() -> None:
         toolchain_hash="toolchain123",
     )
     mock_spec = MagicMock()
-    mock_spec.model_dump.return_value = {
-        "toolchain": {"kicad": {"docker_image": "kicad/kicad:9.0.7"}}
-    }
+    mock_spec.model_dump.return_value = {"toolchain": {"kicad": {"docker_image": "kicad/kicad:9.0.7"}}}
 
     with (
         patch("formula_foundry.coupongen.cli_main.load_spec", return_value=mock_spec),

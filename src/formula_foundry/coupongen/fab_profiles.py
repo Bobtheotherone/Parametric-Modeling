@@ -34,12 +34,8 @@ class TraceConstraints(_FabProfileBase):
 
     min_width_nm: LengthNM = Field(..., description="Minimum trace width in nm")
     min_spacing_nm: LengthNM = Field(..., description="Minimum trace-to-trace spacing in nm")
-    min_width_outer_nm: LengthNM | None = Field(
-        default=None, description="Minimum trace width on outer layers (optional)"
-    )
-    min_width_inner_nm: LengthNM | None = Field(
-        default=None, description="Minimum trace width on inner layers (optional)"
-    )
+    min_width_outer_nm: LengthNM | None = Field(default=None, description="Minimum trace width on outer layers (optional)")
+    min_width_inner_nm: LengthNM | None = Field(default=None, description="Minimum trace width on inner layers (optional)")
 
 
 class DrillConstraints(_FabProfileBase):
@@ -47,18 +43,10 @@ class DrillConstraints(_FabProfileBase):
 
     min_diameter_nm: LengthNM = Field(..., description="Minimum drill diameter for any hole")
     min_pth_diameter_nm: LengthNM = Field(..., description="Minimum plated through-hole drill")
-    min_npth_diameter_nm: LengthNM | None = Field(
-        default=None, description="Minimum non-plated through-hole drill (optional)"
-    )
-    min_via_drill_nm: LengthNM | None = Field(
-        default=None, description="Minimum via drill diameter (optional)"
-    )
-    min_hole_to_hole_nm: LengthNM | None = Field(
-        default=None, description="Minimum hole-to-hole spacing (optional)"
-    )
-    aspect_ratio_max: float | None = Field(
-        default=None, gt=0, description="Maximum aspect ratio for PTH holes"
-    )
+    min_npth_diameter_nm: LengthNM | None = Field(default=None, description="Minimum non-plated through-hole drill (optional)")
+    min_via_drill_nm: LengthNM | None = Field(default=None, description="Minimum via drill diameter (optional)")
+    min_hole_to_hole_nm: LengthNM | None = Field(default=None, description="Minimum hole-to-hole spacing (optional)")
+    aspect_ratio_max: float | None = Field(default=None, gt=0, description="Maximum aspect ratio for PTH holes")
 
 
 class ViaConstraints(_FabProfileBase):
@@ -66,25 +54,17 @@ class ViaConstraints(_FabProfileBase):
 
     min_annular_ring_nm: LengthNM = Field(..., description="Minimum annular ring width")
     min_diameter_nm: LengthNM = Field(..., description="Minimum via pad diameter")
-    min_via_to_via_nm: LengthNM | None = Field(
-        default=None, description="Minimum via-to-via pad spacing (optional)"
-    )
-    min_via_to_trace_nm: LengthNM | None = Field(
-        default=None, description="Minimum via-to-trace spacing (optional)"
-    )
+    min_via_to_via_nm: LengthNM | None = Field(default=None, description="Minimum via-to-via pad spacing (optional)")
+    min_via_to_trace_nm: LengthNM | None = Field(default=None, description="Minimum via-to-trace spacing (optional)")
 
 
 class SoldermaskConstraints(_FabProfileBase):
     """Soldermask DFM constraints."""
 
     min_expansion_nm: LengthNM = Field(..., ge=0, description="Minimum soldermask expansion")
-    max_expansion_nm: LengthNM | None = Field(
-        default=None, ge=0, description="Maximum soldermask expansion (optional)"
-    )
+    max_expansion_nm: LengthNM | None = Field(default=None, ge=0, description="Maximum soldermask expansion (optional)")
     min_web_nm: LengthNM = Field(..., description="Minimum soldermask web/dam width")
-    min_opening_nm: LengthNM | None = Field(
-        default=None, description="Minimum soldermask opening size (optional)"
-    )
+    min_opening_nm: LengthNM | None = Field(default=None, description="Minimum soldermask opening size (optional)")
 
 
 class SilkscreenConstraints(_FabProfileBase):
@@ -92,29 +72,17 @@ class SilkscreenConstraints(_FabProfileBase):
 
     min_width_nm: LengthNM = Field(..., description="Minimum silkscreen line width")
     min_height_nm: LengthNM = Field(..., description="Minimum silkscreen text height")
-    min_clearance_nm: LengthNM = Field(
-        ..., ge=0, description="Minimum silkscreen-to-pad clearance"
-    )
+    min_clearance_nm: LengthNM = Field(..., ge=0, description="Minimum silkscreen-to-pad clearance")
 
 
 class BoardConstraints(_FabProfileBase):
     """Board outline and edge DFM constraints."""
 
-    min_edge_clearance_nm: LengthNM = Field(
-        ..., ge=0, description="Minimum copper-to-board-edge clearance"
-    )
-    min_board_width_nm: LengthNM | None = Field(
-        default=None, description="Minimum board width (optional)"
-    )
-    min_board_length_nm: LengthNM | None = Field(
-        default=None, description="Minimum board length (optional)"
-    )
-    max_board_width_nm: LengthNM | None = Field(
-        default=None, description="Maximum board width (optional)"
-    )
-    max_board_length_nm: LengthNM | None = Field(
-        default=None, description="Maximum board length (optional)"
-    )
+    min_edge_clearance_nm: LengthNM = Field(..., ge=0, description="Minimum copper-to-board-edge clearance")
+    min_board_width_nm: LengthNM | None = Field(default=None, description="Minimum board width (optional)")
+    min_board_length_nm: LengthNM | None = Field(default=None, description="Minimum board length (optional)")
+    max_board_width_nm: LengthNM | None = Field(default=None, description="Maximum board width (optional)")
+    max_board_length_nm: LengthNM | None = Field(default=None, description="Maximum board length (optional)")
 
 
 class FabCapabilityProfile(_FabProfileBase):
@@ -194,9 +162,7 @@ def list_available_profiles() -> list[str]:
     """
     if not FAB_PROFILES_DIR.exists():
         return []
-    return sorted(
-        p.stem for p in FAB_PROFILES_DIR.glob("*.json") if not p.name.endswith(".schema.json")
-    )
+    return sorted(p.stem for p in FAB_PROFILES_DIR.glob("*.json") if not p.name.endswith(".schema.json"))
 
 
 def get_fab_limits(profile: FabCapabilityProfile) -> dict[str, int]:

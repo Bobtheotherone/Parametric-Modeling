@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import copy
 import json
-import re
 import sys
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 try:
     import jsonschema
+
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
@@ -163,12 +163,12 @@ def strip_fences(s: str) -> str:
         fence_close = s.find("```", newline_after_fence)
         if fence_close != -1:
             # Extract content between fences
-            return s[newline_after_fence + 1:fence_close].strip()
+            return s[newline_after_fence + 1 : fence_close].strip()
 
     return s
 
 
-def extract_balanced_json(s: str, start: int = 0) -> tuple[Optional[str], int]:
+def extract_balanced_json(s: str, start: int = 0) -> tuple[str | None, int]:
     """Extract a balanced JSON object starting from position start.
 
     Returns (json_string, end_position) or (None, start) if no object found.
@@ -200,12 +200,12 @@ def extract_balanced_json(s: str, start: int = 0) -> tuple[Optional[str], int]:
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
-                    return s[idx:i+1], i+1
+                    return s[idx : i + 1], i + 1
 
     return None, start
 
 
-def find_all_json_objects(text: str) -> List[str]:
+def find_all_json_objects(text: str) -> list[str]:
     """Find all top-level JSON objects in a text stream."""
     objects = []
     pos = 0
@@ -218,7 +218,7 @@ def find_all_json_objects(text: str) -> List[str]:
     return objects
 
 
-def try_parse_json(s: str) -> Optional[Any]:
+def try_parse_json(s: str) -> Any | None:
     """Try to parse a string as JSON."""
     try:
         return json.loads(s)
@@ -226,7 +226,7 @@ def try_parse_json(s: str) -> Optional[Any]:
         return None
 
 
-def extract_json_from_text(text: str) -> List[Any]:
+def extract_json_from_text(text: str) -> list[Any]:
     """Extract all valid JSON objects from a text string.
 
     Tries multiple strategies:
@@ -285,7 +285,7 @@ def validate_against_schema(obj: Any, schema: dict) -> bool:
         return False
 
 
-def _try_validate_with_normalization(obj: Any, schema: dict, is_task_plan: bool) -> Optional[dict]:
+def _try_validate_with_normalization(obj: Any, schema: dict, is_task_plan: bool) -> dict | None:
     """Try to validate an object, normalizing task plans if needed.
 
     Returns the (possibly normalized) object if valid, None otherwise.
@@ -308,7 +308,7 @@ def _try_validate_with_normalization(obj: Any, schema: dict, is_task_plan: bool)
     return None
 
 
-def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
+def extract_from_claude_stream(text: str, schema: dict) -> dict | None:
     """Extract a valid JSON object from Claude CLI stream output.
 
     Claude CLI may output:
@@ -327,14 +327,14 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
     - "dependencies" -> "depends_on"
     - Missing fields get defaults
     """
-    candidates: List[dict] = []
+    candidates: list[dict] = []
     is_task_plan = is_task_plan_schema(schema)
 
     # First, try to parse the entire text as JSON sequence
     decoder = json.JSONDecoder()
     idx = 0
     n = len(text)
-    parsed_objects: List[Any] = []
+    parsed_objects: list[Any] = []
 
     while idx < n:
         # Skip whitespace
@@ -351,7 +351,7 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
             idx += 1
 
     # Flatten arrays (Claude outputs arrays of events)
-    flattened: List[Any] = []
+    flattened: list[Any] = []
     for obj in parsed_objects:
         if isinstance(obj, list):
             flattened.extend(obj)
@@ -455,7 +455,7 @@ def main() -> int:
                 f"Required keys: {schema.get('required', [])}\n"
                 f"Raw text length: {len(text)}\n"
                 f"Raw text preview:\n{text[:2000]}\n",
-                encoding="utf-8"
+                encoding="utf-8",
             )
             print(f"Debug info saved to: {debug_path}", file=sys.stderr)
         except Exception:

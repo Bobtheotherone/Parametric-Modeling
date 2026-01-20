@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from formula_foundry.m3.artifact_store import (
     ArtifactManifest,
@@ -96,9 +97,7 @@ class DatasetMember:
         )
 
     @classmethod
-    def from_manifest(
-        cls, manifest: ArtifactManifest, role: str, features: dict[str, Any] | None = None
-    ) -> DatasetMember:
+    def from_manifest(cls, manifest: ArtifactManifest, role: str, features: dict[str, Any] | None = None) -> DatasetMember:
         """Create a DatasetMember from an ArtifactManifest."""
         return cls(
             artifact_id=manifest.artifact_id,
@@ -311,10 +310,7 @@ class DatasetSnapshot:
 
         splits = None
         if "splits" in data and "splits" in data["splits"]:
-            splits = {
-                s["name"]: SplitDefinition.from_dict(s)
-                for s in data["splits"]["splits"]
-            }
+            splits = {s["name"]: SplitDefinition.from_dict(s) for s in data["splits"]["splits"]}
 
         return cls(
             dataset_id=data["dataset_id"],
@@ -542,9 +538,7 @@ class DatasetSnapshotWriter:
             ParquetNotAvailableError: If PyArrow is not installed.
         """
         if not HAS_PYARROW:
-            raise ParquetNotAvailableError(
-                "PyArrow is required for Parquet index. Install with: pip install pyarrow"
-            )
+            raise ParquetNotAvailableError("PyArrow is required for Parquet index. Install with: pip install pyarrow")
 
         output_path.mkdir(parents=True, exist_ok=True)
         parquet_path = output_path / f"{self.dataset_id}_{self.version}_index.parquet"
@@ -625,7 +619,9 @@ class DatasetSnapshotWriter:
         index_path: str | None = None
         if output_dir and write_parquet and HAS_PYARROW and self._members:
             parquet_path = self.write_parquet_index(output_dir)
-            index_path = str(parquet_path.relative_to(output_dir.parent) if output_dir.parent != parquet_path.parent else parquet_path.name)
+            index_path = str(
+                parquet_path.relative_to(output_dir.parent) if output_dir.parent != parquet_path.parent else parquet_path.name
+            )
 
         # Create snapshot
         snapshot = DatasetSnapshot(
@@ -853,8 +849,6 @@ class DatasetSnapshotReader:
 
         # Check member count matches
         if len(snapshot.members) != snapshot.member_count:
-            errors.append(
-                f"Member count mismatch: {len(snapshot.members)} vs {snapshot.member_count}"
-            )
+            errors.append(f"Member count mismatch: {len(snapshot.members)} vs {snapshot.member_count}")
 
         return (len(errors) == 0, errors)

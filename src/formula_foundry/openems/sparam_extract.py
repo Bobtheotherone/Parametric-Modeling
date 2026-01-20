@@ -18,6 +18,7 @@ The extraction pipeline:
 4. Apply de-embedding corrections if configured
 5. Package results in structured format for manifest
 """
+
 from __future__ import annotations
 
 import json
@@ -30,16 +31,16 @@ import numpy as np
 from numpy.typing import NDArray
 
 from formula_foundry.em.touchstone import (
+    FrequencyUnit,
     SParameterData,
+    SParameterFormat,
+    TouchstoneOptions,
     read_touchstone,
     write_touchstone,
-    TouchstoneOptions,
-    FrequencyUnit,
-    SParameterFormat,
 )
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
-from .spec import FrequencySpec, PortSpec, OutputSpec
+from .spec import FrequencySpec, PortSpec
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +159,8 @@ def extract_sparams_from_touchstone(
 
     # Interpolate to requested frequency grid if different
     target_freqs = config.frequencies_hz()
-    needs_interpolation = (
-        len(sparam_data.frequencies_hz) != len(target_freqs)
-        or not np.allclose(sparam_data.frequencies_hz, target_freqs, rtol=1e-6)
+    needs_interpolation = len(sparam_data.frequencies_hz) != len(target_freqs) or not np.allclose(
+        sparam_data.frequencies_hz, target_freqs, rtol=1e-6
     )
     if needs_interpolation:
         logger.info(
@@ -220,10 +220,7 @@ def extract_sparams_from_csv(
     # Validate column count
     expected_cols = 1 + 2 * n_ports * n_ports  # freq + 2*(re,im) per S-param
     if data.shape[1] < expected_cols:
-        raise ValueError(
-            f"CSV has {data.shape[1]} columns, expected at least {expected_cols} "
-            f"for {n_ports}-port S-parameters"
-        )
+        raise ValueError(f"CSV has {data.shape[1]} columns, expected at least {expected_cols} for {n_ports}-port S-parameters")
 
     frequencies_hz = data[:, 0]
     s_parameters = np.zeros((n_freq, n_ports, n_ports), dtype=np.complex128)
@@ -252,9 +249,8 @@ def extract_sparams_from_csv(
 
     # Interpolate to requested frequency grid if different
     target_freqs = config.frequencies_hz()
-    needs_interpolation = (
-        len(sparam_data.frequencies_hz) != len(target_freqs)
-        or not np.allclose(sparam_data.frequencies_hz, target_freqs, rtol=1e-6)
+    needs_interpolation = len(sparam_data.frequencies_hz) != len(target_freqs) or not np.allclose(
+        sparam_data.frequencies_hz, target_freqs, rtol=1e-6
     )
     if needs_interpolation:
         sparam_data = sparam_data.interpolate(target_freqs)
@@ -753,6 +749,5 @@ def extract_sparams(
             return extract_sparams_from_port_signals(signals, excite_port, config)
 
         raise FileNotFoundError(
-            f"No S-parameter output found in {sim_output_dir}. "
-            "Expected .s?p, sparams.csv, or port_signals.json"
+            f"No S-parameter output found in {sim_output_dir}. Expected .s?p, sparams.csv, or port_signals.json"
         )

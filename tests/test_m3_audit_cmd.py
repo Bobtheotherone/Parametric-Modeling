@@ -218,9 +218,7 @@ class TestCmdAuditWithArtifacts:
         )
         assert result == 0
 
-    def test_audit_json_output(
-        self, project_with_artifacts: tuple[Path, list[str]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audit_json_output(self, project_with_artifacts: tuple[Path, list[str]], capsys: pytest.CaptureFixture[str]) -> None:
         """Audit should produce valid JSON output."""
         project_root, artifact_ids = project_with_artifacts
         result = cmd_audit(
@@ -246,9 +244,7 @@ class TestCmdAuditWithArtifacts:
         assert len(report["artifacts"]) == 3
         assert "graph_stats" in report
 
-    def test_audit_with_hash_verification(
-        self, project_with_artifacts: tuple[Path, list[str]]
-    ) -> None:
+    def test_audit_with_hash_verification(self, project_with_artifacts: tuple[Path, list[str]]) -> None:
         """Audit should verify content hashes when requested."""
         project_root, artifact_ids = project_with_artifacts
         result = cmd_audit(
@@ -312,9 +308,7 @@ class TestCmdAuditWithArtifacts:
         # With max_depth=1, should only get immediate parent
         assert artifact["ancestor_count"] <= 2  # At most 1 level deep
 
-    def test_audit_with_required_roles_pass(
-        self, project_with_artifacts: tuple[Path, list[str]]
-    ) -> None:
+    def test_audit_with_required_roles_pass(self, project_with_artifacts: tuple[Path, list[str]]) -> None:
         """Audit should pass when required roles exist in roots."""
         project_root, artifact_ids = project_with_artifacts
         result = cmd_audit(
@@ -330,9 +324,7 @@ class TestCmdAuditWithArtifacts:
         # Should pass because art-root-001 has "config" role
         assert result == 0
 
-    def test_audit_with_required_roles_fail(
-        self, project_with_artifacts: tuple[Path, list[str]]
-    ) -> None:
+    def test_audit_with_required_roles_fail(self, project_with_artifacts: tuple[Path, list[str]]) -> None:
         """Audit should fail when required roles are missing from roots."""
         project_root, artifact_ids = project_with_artifacts
         result = cmd_audit(
@@ -401,9 +393,7 @@ class TestMainWithAudit:
         result = main(["audit", "--root", str(tmp_path), "-q"])
         assert result == 0
 
-    def test_main_audit_json_output(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_main_audit_json_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Main with audit --format json should produce JSON."""
         main(["init", "--root", str(tmp_path), "-q"])
         result = main(["audit", "--root", str(tmp_path), "--format", "json", "-q"])
@@ -416,13 +406,18 @@ class TestMainWithAudit:
     def test_main_audit_with_all_flags(self, tmp_path: Path) -> None:
         """Main with audit and all flags should succeed."""
         main(["init", "--root", str(tmp_path), "-q"])
-        result = main([
-            "audit",
-            "--root", str(tmp_path),
-            "--format", "json",
-            "--trace-roots",
-            "--verify-hashes",
-            "--max-depth", "10",
-            "-q",
-        ])
+        result = main(
+            [
+                "audit",
+                "--root",
+                str(tmp_path),
+                "--format",
+                "json",
+                "--trace-roots",
+                "--verify-hashes",
+                "--max-depth",
+                "10",
+                "-q",
+            ]
+        )
         assert result == 0

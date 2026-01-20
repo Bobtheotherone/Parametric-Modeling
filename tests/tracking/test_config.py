@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ import yaml
 from formula_foundry.tracking.config import (
     DEFAULT_ARTIFACT_ROOT,
     DEFAULT_BACKEND_STORE_URI,
-    DEFAULT_CONFIG_PATH,
     DEFAULT_EXPERIMENT,
     MLflowConfig,
     MLflowConfigError,
@@ -167,12 +165,12 @@ class TestMLflowConfig:
                 artifact_root="data/mlflow/artifacts",
                 default_experiment="test",
             ),
-            experiments=config._create_default_experiment_config(),
-            tags=config._create_default_tag_config(),
+            experiments=_create_default_experiment_config(),
+            tags=_create_default_tag_config(),
             parameters={},
             metrics={},
-            artifacts=config._create_default_artifact_config(),
-            retention=config._create_default_retention_config(),
+            artifacts=_create_default_artifact_config(),
+            retention=_create_default_retention_config(),
         )
 
         uri = config.get_tracking_uri(tmp_path)
@@ -226,11 +224,13 @@ class TestMLflowConfig:
 
 def _create_default_experiment_config():
     from formula_foundry.tracking.config import ExperimentConfig
+
     return ExperimentConfig(prefix="ff", names={})
 
 
 def _create_default_tag_config():
     from formula_foundry.tracking.config import TagConfig
+
     return TagConfig(
         required=("git_sha", "design_doc_sha256", "environment_fingerprint", "determinism_mode"),
         optional=("coupon_id", "design_hash", "toolchain_hash", "backend"),
@@ -239,6 +239,7 @@ def _create_default_tag_config():
 
 def _create_default_artifact_config():
     from formula_foundry.tracking.config import ArtifactConfig
+
     return ArtifactConfig(
         link_mode="reference",
         references=("manifest.json", "logs.jsonl"),
@@ -248,6 +249,7 @@ def _create_default_artifact_config():
 
 def _create_default_retention_config():
     from formula_foundry.tracking.config import RetentionConfig
+
     return RetentionConfig(
         min_retention_days=30,
         min_runs_per_experiment=100,

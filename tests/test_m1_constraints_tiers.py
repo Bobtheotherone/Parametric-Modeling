@@ -21,7 +21,6 @@ from formula_foundry.coupongen.constraints.tiers import (
     Tier1Checker,
     Tier2Checker,
     Tier3Checker,
-    TieredConstraintProof,
     TieredConstraintSystem,
     evaluate_tiered_constraints,
 )
@@ -326,9 +325,7 @@ class TestTier3GeometryCollision:
 
         results = checker.check(spec, limits)
 
-        overlap_result = next(
-            r for r in results if r.constraint_id == "T3_RETURN_VIA_RING_NO_OVERLAP"
-        )
+        overlap_result = next(r for r in results if r.constraint_id == "T3_RETURN_VIA_RING_NO_OVERLAP")
         assert not overlap_result.passed
 
     def test_asymmetric_traces_with_symmetry_enforced_fails(self) -> None:

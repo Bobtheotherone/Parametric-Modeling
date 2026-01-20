@@ -19,11 +19,12 @@ Coordinate System:
 - All coordinates in nanometers (nm) internally
 - Ports positioned relative to board edge center origin
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal, Sequence
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,7 +33,7 @@ from formula_foundry.coupongen.units import LengthNM
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from .geometry import GeometrySpec, LayerSpec
+    from .geometry import GeometrySpec
 
 
 class PortType(str, Enum):
@@ -82,12 +83,8 @@ class PortGeometrySpec(_SpecBase):
 
     width_nm: LengthNM = Field(..., description="Port aperture width (nm)")
     height_nm: LengthNM = Field(..., description="Port aperture height (nm)")
-    signal_width_nm: LengthNM | None = Field(
-        None, description="Signal trace width at port (nm), defaults to width_nm"
-    )
-    gap_nm: LengthNM | None = Field(
-        None, description="Gap to ground for CPW/CPWG ports (nm)"
-    )
+    signal_width_nm: LengthNM | None = Field(None, description="Signal trace width at port (nm), defaults to width_nm")
+    gap_nm: LengthNM | None = Field(None, description="Gap to ground for CPW/CPWG ports (nm)")
 
 
 class DeembedSpec(_SpecBase):
@@ -97,12 +94,8 @@ class DeembedSpec(_SpecBase):
     for connectors, launches, and other non-DUT structures.
     """
 
-    method: DeembedType = Field(
-        DeembedType.NONE, description="De-embedding method to apply"
-    )
-    distance_nm: LengthNM | None = Field(
-        None, description="Reference plane shift distance (nm)"
-    )
+    method: DeembedType = Field(DeembedType.NONE, description="De-embedding method to apply")
+    distance_nm: LengthNM | None = Field(None, description="Reference plane shift distance (nm)")
     epsilon_r_eff: float | None = Field(
         None,
         gt=0,
@@ -138,38 +131,24 @@ class WaveguidePortSpec(_SpecBase):
     """
 
     id: str = Field(..., min_length=1, description="Unique port identifier")
-    port_type: PortType = Field(
-        PortType.WAVEGUIDE, description="Port type for excitation"
-    )
+    port_type: PortType = Field(PortType.WAVEGUIDE, description="Port type for excitation")
 
     # Position and orientation
-    position_nm: tuple[LengthNM, LengthNM, LengthNM] = Field(
-        ..., description="Port center position [x, y, z] in nm"
-    )
-    direction: Literal["x", "y", "z", "-x", "-y", "-z"] = Field(
-        ..., description="Port excitation/propagation direction"
-    )
+    position_nm: tuple[LengthNM, LengthNM, LengthNM] = Field(..., description="Port center position [x, y, z] in nm")
+    direction: Literal["x", "y", "z", "-x", "-y", "-z"] = Field(..., description="Port excitation/propagation direction")
 
     # Excitation
     excite: bool = Field(False, description="Whether this port is excited")
-    excite_weight: float = Field(
-        1.0, description="Excitation amplitude weight (for multi-port)"
-    )
+    excite_weight: float = Field(1.0, description="Excitation amplitude weight (for multi-port)")
 
     # Geometry
-    geometry: PortGeometrySpec | None = Field(
-        None, description="Port aperture geometry (required for waveguide/MSL)"
-    )
+    geometry: PortGeometrySpec | None = Field(None, description="Port aperture geometry (required for waveguide/MSL)")
 
     # Impedance
-    impedance: ImpedanceSpec = Field(
-        default_factory=ImpedanceSpec, description="Impedance specification"
-    )
+    impedance: ImpedanceSpec = Field(default_factory=ImpedanceSpec, description="Impedance specification")
 
     # De-embedding
-    deembed: DeembedSpec = Field(
-        default_factory=DeembedSpec, description="De-embedding specification"
-    )
+    deembed: DeembedSpec = Field(default_factory=DeembedSpec, description="De-embedding specification")
 
     # Polarization for mode selection
     polarization: Literal["E_transverse", "H_transverse"] | None = Field(
@@ -495,9 +474,7 @@ def waveguide_port_to_basic_port_spec(
     return basic
 
 
-def _extract_connector_position(
-    params: Mapping[str, int], side: str
-) -> tuple[int, int] | None:
+def _extract_connector_position(params: Mapping[str, int], side: str) -> tuple[int, int] | None:
     """Extract connector position from parameters.
 
     Args:

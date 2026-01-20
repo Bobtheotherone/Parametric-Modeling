@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from formula_foundry.coupongen.stackups import (
     STACKUPS_DIR,
-    StackupProfile,
     clear_stackup_cache,
     compute_total_thickness,
     get_copper_layer_names,

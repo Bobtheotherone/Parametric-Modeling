@@ -7,7 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from formula_foundry.coupongen.resolve import ResolvedDesign, design_hash as compute_design_hash
+from formula_foundry.coupongen.resolve import ResolvedDesign
+from formula_foundry.coupongen.resolve import design_hash as compute_design_hash
 from formula_foundry.coupongen.units import LengthNM
 from formula_foundry.substrate import canonical_json_dumps
 
@@ -123,7 +124,7 @@ def layer_positions_nm(stackup: StackupSpec) -> dict[str, int]:
     entries = _layer_thickness_entries(stackup)
     positions: dict[str, int] = {"L1": 0}
     current = 0
-    for start, end, thickness in entries:
+    for _start, end, thickness in entries:
         current += thickness
         positions[f"L{end}"] = current
     return positions

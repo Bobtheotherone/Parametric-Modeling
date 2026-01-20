@@ -765,7 +765,7 @@ class TestF1CouponBuilderIntegration:
             # Calculate distance from center
             dx = via.position.x - center.x
             dy = via.position.y - center.y
-            distance = (dx ** 2 + dy ** 2) ** 0.5
+            distance = (dx**2 + dy**2) ** 0.5
 
             # Should be approximately at the specified radius
             assert abs(distance - radius) < 100  # Allow small rounding error

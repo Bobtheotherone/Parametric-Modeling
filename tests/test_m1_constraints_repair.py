@@ -17,16 +17,13 @@ from typing import Any
 import pytest
 
 from formula_foundry.coupongen.constraints.repair import (
-    ConstraintProofDocument,
     RepairAction,
     RepairEngine,
-    RepairResult,
     generate_constraint_proof,
     repair_spec_tiered,
     write_constraint_proof,
 )
 from formula_foundry.coupongen.constraints.tiers import (
-    TieredConstraintProof,
     TieredConstraintSystem,
     evaluate_tiered_constraints,
 )

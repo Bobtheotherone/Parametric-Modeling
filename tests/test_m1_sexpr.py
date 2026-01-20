@@ -52,7 +52,7 @@ class TestSExprParsing:
         assert result[1] == ["generator", "coupongen"]
 
     def test_parse_all_multiple(self) -> None:
-        result = sexpr.parse_all('(a 1) (b 2) (c 3)')
+        result = sexpr.parse_all("(a 1) (b 2) (c 3)")
         assert result == [["a", 1], ["b", 2], ["c", 3]]
 
     def test_parse_empty_input_raises(self) -> None:

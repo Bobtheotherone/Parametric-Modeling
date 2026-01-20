@@ -47,9 +47,7 @@ def _collect_pytest_node_ids(project_root: Path) -> set[str]:
     cmd = [sys.executable, "-m", "pytest", "--collect-only"]
     proc = subprocess.run(cmd, cwd=str(project_root), text=True, capture_output=True)
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"pytest collection failed\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-        )
+        raise RuntimeError(f"pytest collection failed\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}")
 
     node_ids: set[str] = set()
     for line in proc.stdout.splitlines():
@@ -121,13 +119,12 @@ def lint_design_document(doc_path: Path) -> SpecLintResult:
             req_ids.append(m.group(1))
 
     if not req_ids:
-        issues.append(
-            "No normative requirements found. Expected bullet lines like: - [REQ-M3-001] ..."
-        )
+        issues.append("No normative requirements found. Expected bullet lines like: - [REQ-M3-001] ...")
 
-    if _find_section(lines, "## Normative Requirements (must)") is None and _find_section(
-        lines, "## Normative Requirements"
-    ) is None:
+    if (
+        _find_section(lines, "## Normative Requirements (must)") is None
+        and _find_section(lines, "## Normative Requirements") is None
+    ):
         issues.append("Missing '## Normative Requirements' section header.")
 
     if _find_section(lines, "## Definition of Done") is None:
@@ -192,9 +189,7 @@ def main() -> int:
         _print_issues(issues)
         return 2
 
-    print(
-        f"DESIGN_DOCUMENT lint PASSED (milestone={res.milestone_id}, requirements={len(res.requirement_ids)})"
-    )
+    print(f"DESIGN_DOCUMENT lint PASSED (milestone={res.milestone_id}, requirements={len(res.requirement_ids)})")
     return 0
 
 

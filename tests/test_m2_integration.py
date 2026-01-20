@@ -9,39 +9,37 @@ This module tests the end-to-end integration of M2 components:
 All tests run WITHOUT real openEMS/docker by default. To run with actual
 openEMS integration, set RUN_OPENEMS_INTEGRATION=1 environment variable.
 """
+
 from __future__ import annotations
 
 import json
 import os
-import tempfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
+from formula_foundry.em.touchstone import (
+    SParameterData,
+    read_touchstone_from_string,
+    write_touchstone_to_string,
+)
 from formula_foundry.openems import (
     BatchConfig,
     BatchSimulationRunner,
     ConvergenceConfig,
-    ConvergenceReport,
     ConvergenceStatus,
     SimulationJob,
-    SimulationResult,
     SimulationRunner,
-    SimulationStatus,
-    build_m2_manifest,
     validate_m2_manifest,
 )
+from formula_foundry.openems.runner import OpenEMSRunner
 from formula_foundry.openems.batch_runner import (
     BatchProgress,
-    BatchResult,
-    SimulationJobResult,
-    create_batch_jobs,
     write_batch_result,
 )
-from formula_foundry.openems.cli_main import build_parser, main
+from formula_foundry.openems.cli_main import main
 from formula_foundry.openems.convergence import (
     EnergyDecayData,
     check_energy_decay,
@@ -56,15 +54,6 @@ from formula_foundry.openems.geometry import (
     StackupSpec,
     TransmissionLineSpec,
 )
-from formula_foundry.openems.manifest import (
-    ConvergenceMetrics,
-    MeshStatistics,
-)
-from formula_foundry.openems.mesh_generator import (
-    MeshLineGenerator,
-    generate_adaptive_mesh_lines,
-)
-from formula_foundry.openems.sim_runner import SimulationSolverMode
 from formula_foundry.openems.spec import (
     ExcitationSpec,
     FrequencySpec,
@@ -74,26 +63,94 @@ from formula_foundry.openems.spec import (
     SimulationSpec,
     ToolchainSpec,
 )
-from formula_foundry.openems.sparam_extract import (
-    ExtractionConfig,
-    extract_sparams_from_port_signals,
-)
-from formula_foundry.em.touchstone import (
-    SParameterData,
-    read_touchstone_from_string,
-    write_touchstone_to_string,
-)
-
 
 # =============================================================================
 # Skip helper for docker/openEMS tests
 # =============================================================================
 
 
+def _check_docker_available() -> tuple[bool, str]:
+    """Check if docker is available and the daemon is running.
+
+    Returns:
+        Tuple of (is_available, reason_if_not).
+    """
+    import shutil
+    import subprocess
+
+    # Check if docker executable exists
+    docker_path = shutil.which("docker")
+    if not docker_path:
+        return False, "docker executable not found in PATH"
+
+    # Check if docker daemon is reachable
+    try:
+        proc = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.strip() if proc.stderr else "unknown error"
+            return False, f"docker daemon not reachable: {stderr[:100]}"
+    except subprocess.TimeoutExpired:
+        return False, "docker info timed out (daemon may be unresponsive)"
+    except OSError as e:
+        return False, f"failed to run docker: {e}"
+
+    return True, ""
+
+
+def _check_openems_image_available(docker_image: str) -> tuple[bool, str]:
+    """Check if the openEMS docker image is available locally or can be pulled.
+
+    Args:
+        docker_image: The docker image name (e.g., 'ghcr.io/openems:0.0.35').
+
+    Returns:
+        Tuple of (is_available, reason_if_not).
+    """
+    import subprocess
+
+    # First check if image exists locally
+    try:
+        proc = subprocess.run(
+            ["docker", "image", "inspect", docker_image],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            return True, ""
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Image not local - we won't attempt to pull in the skip check
+    # (pulling can take a long time and may fail for various reasons)
+    return False, f"docker image '{docker_image}' not found locally (run 'docker pull {docker_image}' to fetch)"
+
+
 def skip_unless_openems_integration() -> None:
-    """Skip test unless RUN_OPENEMS_INTEGRATION=1 is set."""
+    """Skip test unless RUN_OPENEMS_INTEGRATION=1 is set and docker is available."""
     if os.environ.get("RUN_OPENEMS_INTEGRATION") != "1":
         pytest.skip("Skipping: requires RUN_OPENEMS_INTEGRATION=1")
+
+    # Check docker availability
+    docker_ok, docker_reason = _check_docker_available()
+    if not docker_ok:
+        pytest.skip(f"Skipping: {docker_reason}")
+
+
+def skip_unless_openems_image(docker_image: str) -> None:
+    """Skip test if the specified openEMS docker image is not available.
+
+    Args:
+        docker_image: The docker image name to check.
+    """
+    image_ok, image_reason = _check_openems_image_available(docker_image)
+    if not image_ok:
+        pytest.skip(f"Skipping: {image_reason}")
 
 
 # =============================================================================
@@ -541,12 +598,18 @@ class TestCLIIntegration:
 
         output_dir = tmp_path / "cli_output"
 
-        result = main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        result = main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         assert result == 0
         assert output_dir.exists()
@@ -572,13 +635,20 @@ class TestCLIIntegration:
 
         output_dir = tmp_path / "batch_output"
 
-        result = main([
-            "sim", "batch", str(config_dir),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--max-workers", "2",
-            "--no-convergence",
-        ])
+        main(
+            [
+                "sim",
+                "batch",
+                str(config_dir),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--max-workers",
+                "2",
+                "--no-convergence",
+            ]
+        )
 
         # Should complete (may have convergence warnings)
         assert output_dir.exists()
@@ -602,9 +672,7 @@ class TestCLIIntegration:
             "geometry_hash": "c" * 64,
             "design_hash": "d" * 64,
             "coupon_family": "F1_SINGLE_ENDED_VIA",
-            "toolchain": {
-                "openems": {"version": "0.0.35", "docker_image": "test"}
-            },
+            "toolchain": {"openems": {"version": "0.0.35", "docker_image": "test"}},
             "toolchain_hash": "e" * 64,
             "frequency_sweep": {
                 "f_start_hz": 1e9,
@@ -677,20 +745,32 @@ class TestCLIIntegration:
         output_dir = tmp_path / "sim_output"
 
         # Run simulation first
-        main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         # Extract S-parameters
         extract_out = tmp_path / "extracted_sparams"
-        result = main([
-            "sparam", "extract", str(output_dir),
-            "--out", str(extract_out),
-            "--config", str(config_path),
-        ])
+        result = main(
+            [
+                "sparam",
+                "extract",
+                str(output_dir),
+                "--out",
+                str(extract_out),
+                "--config",
+                str(config_path),
+            ]
+        )
 
         assert result == 0
         assert extract_out.exists()
@@ -758,9 +838,7 @@ class TestManifestIntegration:
             "geometry_hash": "c" * 64,
             "design_hash": "d" * 64,
             "coupon_family": "F1_SINGLE_ENDED_VIA",
-            "toolchain": {
-                "openems": {"version": "0.0.35", "docker_image": "test"}
-            },
+            "toolchain": {"openems": {"version": "0.0.35", "docker_image": "test"}},
             "toolchain_hash": "e" * 64,
             "frequency_sweep": {
                 "f_start_hz": 1e9,
@@ -814,9 +892,7 @@ class TestManifestIntegration:
             "geometry_hash": "c" * 64,
             "design_hash": "d" * 64,
             "coupon_family": "F1_SINGLE_ENDED_VIA",
-            "toolchain": {
-                "openems": {"version": "0.0.35", "docker_image": "test"}
-            },
+            "toolchain": {"openems": {"version": "0.0.35", "docker_image": "test"}},
             "toolchain_hash": "e" * 64,
             "frequency_sweep": {
                 "f_start_hz": 1e9,
@@ -933,7 +1009,14 @@ class TestRealOpenEMSIntegration:
         """Run actual openEMS simulation (requires docker)."""
         skip_unless_openems_integration()
 
-        runner = SimulationRunner(mode="docker")
+        # Get docker image from spec and verify it's available
+        docker_image = minimal_simulation_spec.toolchain.openems.docker_image
+        skip_unless_openems_image(docker_image)
+
+        # Create runner with correct architecture:
+        # OpenEMSRunner(mode="docker") wrapped by SimulationRunner(mode="cli")
+        openems_runner = OpenEMSRunner(mode="docker", docker_image=docker_image)
+        runner = SimulationRunner(mode="cli", openems_runner=openems_runner)
         output_dir = tmp_path / "real_sim_output"
 
         result = runner.run(
@@ -953,6 +1036,10 @@ class TestRealOpenEMSIntegration:
         """Run batch simulation with real openEMS (requires docker)."""
         skip_unless_openems_integration()
 
+        # Define docker image and verify it's available
+        docker_image = "ghcr.io/openems:0.0.35"
+        skip_unless_openems_image(docker_image)
+
         specs = [
             SimulationSpec(
                 schema_version=1,
@@ -960,7 +1047,7 @@ class TestRealOpenEMSIntegration:
                 toolchain=ToolchainSpec(
                     openems=OpenEMSToolchainSpec(
                         version="0.0.35",
-                        docker_image="ghcr.io/openems:0.0.35",
+                        docker_image=docker_image,
                     )
                 ),
                 geometry_ref=GeometryRefSpec(design_hash="a" * 64),
@@ -989,7 +1076,10 @@ class TestRealOpenEMSIntegration:
             for i, spec in enumerate(specs)
         ]
 
-        sim_runner = SimulationRunner(mode="docker")
+        # Create runner with correct architecture:
+        # OpenEMSRunner(mode="docker") wrapped by SimulationRunner(mode="cli")
+        openems_runner = OpenEMSRunner(mode="docker", docker_image=docker_image)
+        sim_runner = SimulationRunner(mode="cli", openems_runner=openems_runner)
         config = BatchConfig(max_workers=2)
         batch_runner = BatchSimulationRunner(sim_runner, config)
 

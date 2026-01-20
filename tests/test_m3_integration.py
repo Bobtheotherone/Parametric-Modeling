@@ -19,24 +19,19 @@ from __future__ import annotations
 
 import json
 import subprocess
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from formula_foundry.m3.artifact_store import (
     ArtifactStore,
-    ArtifactManifest,
     LineageReference,
 )
-from formula_foundry.m3.cli_main import build_parser, cmd_audit, cmd_init, cmd_run, main
+from formula_foundry.m3.cli_main import cmd_audit, cmd_init, main
 from formula_foundry.m3.dataset_snapshot import (
-    DatasetSnapshot,
-    DatasetSnapshotWriter,
     DatasetSnapshotReader,
+    DatasetSnapshotWriter,
     compute_manifest_hash,
 )
 from formula_foundry.m3.gc import (
@@ -58,20 +53,11 @@ class TestFullWorkflowIntegration:
         """Create a fully initialized M3 project with git."""
         # Initialize git
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
 
         # Initialize M3
         cmd_init(root=tmp_path, force=False, quiet=True)
@@ -346,9 +332,7 @@ class TestDeterminismAcrossRuns:
 
         registry.close()
 
-    def test_lineage_graph_deterministic_traversal(
-        self, initialized_store: tuple[Path, ArtifactStore, ArtifactRegistry]
-    ) -> None:
+    def test_lineage_graph_deterministic_traversal(self, initialized_store: tuple[Path, ArtifactStore, ArtifactRegistry]) -> None:
         """Lineage graph traversal should be deterministic."""
         root, store, registry = initialized_store
         data_dir = root / "data"
@@ -591,9 +575,7 @@ class TestDatasetLifecycle:
         registry = ArtifactRegistry(data_dir / "registry.db")
         return tmp_path, store, registry
 
-    def test_dataset_create_read_verify(
-        self, project_with_store: tuple[Path, ArtifactStore, ArtifactRegistry]
-    ) -> None:
+    def test_dataset_create_read_verify(self, project_with_store: tuple[Path, ArtifactStore, ArtifactRegistry]) -> None:
         """Test complete dataset lifecycle: create, read, verify."""
         root, store, registry = project_with_store
         data_dir = root / "data"
@@ -653,9 +635,7 @@ class TestDatasetLifecycle:
 
         registry.close()
 
-    def test_dataset_versioning(
-        self, project_with_store: tuple[Path, ArtifactStore, ArtifactRegistry]
-    ) -> None:
+    def test_dataset_versioning(self, project_with_store: tuple[Path, ArtifactStore, ArtifactRegistry]) -> None:
         """Test creating multiple versions of a dataset."""
         root, store, registry = project_with_store
         data_dir = root / "data"
@@ -963,9 +943,7 @@ class TestAuditIntegration:
         # Should have traced back to both root specs
         assert artifact["ancestor_count"] == 3  # design1, spec1, spec2
 
-    def test_audit_all_artifacts(
-        self, auditable_project: tuple[Path, list[str]], capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audit_all_artifacts(self, auditable_project: tuple[Path, list[str]], capsys: pytest.CaptureFixture[str]) -> None:
         """Test auditing all artifacts at once."""
         project_root, artifact_ids = auditable_project
 
@@ -1123,27 +1101,14 @@ class TestCLIIntegration:
         """Create a project for CLI tests."""
         # Initialize git
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
         (tmp_path / "test.txt").write_text("test")
         subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial"],
-            cwd=tmp_path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
 
         # Create DVC config
-        (tmp_path / "dvc.yaml").write_text(
-            "stages:\n"
-            "  test_stage:\n"
-            "    cmd: echo 'test'\n"
-        )
+        (tmp_path / "dvc.yaml").write_text("stages:\n  test_stage:\n    cmd: echo 'test'\n")
 
         return tmp_path
 
@@ -1189,8 +1154,8 @@ class TestConcurrencyAndThreadSafety:
 
     def test_registry_thread_safety(self, tmp_path: Path) -> None:
         """Test that registry handles concurrent access correctly."""
-        import threading
         import queue
+        import threading
 
         cmd_init(root=tmp_path, force=False, quiet=True)
         data_dir = tmp_path / "data"
@@ -1229,8 +1194,8 @@ class TestConcurrencyAndThreadSafety:
 
     def test_lineage_thread_safety(self, tmp_path: Path) -> None:
         """Test that lineage graph handles concurrent access correctly."""
-        import threading
         import queue
+        import threading
 
         cmd_init(root=tmp_path, force=False, quiet=True)
         data_dir = tmp_path / "data"

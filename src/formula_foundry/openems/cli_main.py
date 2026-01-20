@@ -12,6 +12,7 @@ Commands:
 
 REQ-M2-010: CLI interface for M2 openEMS simulation subsystem.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,7 @@ from .batch_runner import (
     load_batch_result_summary,
     write_batch_result,
 )
-from .convergence import ConvergenceConfig, validate_simulation_convergence
+from .convergence import validate_simulation_convergence
 from .geometry import (
     BoardOutlineSpec,
     DiscontinuitySpec,
@@ -40,15 +41,15 @@ from .geometry import (
     StackupSpec,
     TransmissionLineSpec,
 )
-from .manifest import load_m2_manifest, validate_m2_manifest, write_m2_manifest
+from .manifest import load_m2_manifest, validate_m2_manifest
 from .runner import OpenEMSMode, OpenEMSRunner
 from .sim_runner import SimulationRunner, SimulationSolverMode
-from .spec import SimulationSpec, load_simulationspec
 from .sparam_extract import (
     ExtractionConfig,
     extract_sparams,
     write_extraction_result,
 )
+from .spec import SimulationSpec, load_simulationspec
 from .toolchain import OpenEMSToolchain, load_openems_toolchain
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="count",
         default=0,
         help="Increase verbosity (can be repeated)",
@@ -337,6 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Error: %s", e)
         if args.verbose >= 2:
             import traceback
+
             traceback.print_exc()
         return 1
 
@@ -826,6 +829,7 @@ def _load_json_or_yaml(path: Path) -> dict[str, Any]:
     if path.suffix in (".yaml", ".yml"):
         try:
             import yaml
+
             return yaml.safe_load(content)
         except ImportError:
             raise ImportError("PyYAML required for YAML config files")
@@ -977,7 +981,7 @@ def _print_extraction_result(payload: dict[str, Any]) -> None:
     print(f"  Hash: {payload['canonical_hash'][:12]}...")
     print(f"  Ports: {payload['n_ports']}")
     print(f"  Frequencies: {payload['n_frequencies']}")
-    print(f"  Frequency range: {payload['f_min_hz']/1e9:.3f} - {payload['f_max_hz']/1e9:.3f} GHz")
+    print(f"  Frequency range: {payload['f_min_hz'] / 1e9:.3f} - {payload['f_max_hz'] / 1e9:.3f} GHz")
 
     print("  Output files:")
     for fmt, path in payload["output_paths"].items():

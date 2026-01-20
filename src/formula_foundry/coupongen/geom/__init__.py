@@ -11,6 +11,7 @@ Submodules:
 - via_patterns: Signal via and return via pattern generators
 - cutouts: Antipad and plane cutout shape generators
 """
+
 from __future__ import annotations
 
 from .cpwg import (

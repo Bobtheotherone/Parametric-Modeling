@@ -27,7 +27,7 @@ def test_dockerfile_enables_formula_foundry_import() -> None:
 
     # Accept either PYTHONPATH approach or an editable install
     has_pythonpath = re.search(r'PYTHONPATH\s*=\s*["\']?/app/src["\']?', content)
-    has_editable_install = re.search(r'(pip|uv)\s+.*install\s+-e\s+\.', content)
+    has_editable_install = re.search(r"(pip|uv)\s+.*install\s+-e\s+\.", content)
 
     assert has_pythonpath or has_editable_install, (
         "Dockerfile must either set PYTHONPATH=/app/src or do an editable install "

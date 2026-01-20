@@ -9,15 +9,11 @@ Tests:
 6. Plan-only retry with IMPLEMENT NOW prompt
 7. Auto-continue loop behavior
 """
+
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import MagicMock
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -25,10 +21,10 @@ sys.path.insert(0, str(ROOT))
 # Import after path setup
 from bridge.loop import (
     ParallelTask,
-    _generate_run_summary,
-    _generate_continuation_prompt,
-    _compute_transitive_blocked,
     _build_implement_now_prompt,
+    _compute_transitive_blocked,
+    _generate_continuation_prompt,
+    _generate_run_summary,
 )
 
 

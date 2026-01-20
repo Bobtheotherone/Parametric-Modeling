@@ -10,6 +10,7 @@ The canonical coordinate frame uses EDGE_L_CENTER origin:
 - +x direction to the right along coupon length
 - +y upward (right-handed 2D)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -181,9 +182,7 @@ class CoordinateFrame:
         elif self.origin_mode == OriginMode.EDGE_R_CENTER:
             return PositionNM(x_bl - self.board_width_nm, y_bl - self.board_height_nm // 2)
         elif self.origin_mode == OriginMode.CENTER:
-            return PositionNM(
-                x_bl - self.board_width_nm // 2, y_bl - self.board_height_nm // 2
-            )
+            return PositionNM(x_bl - self.board_width_nm // 2, y_bl - self.board_height_nm // 2)
         elif self.origin_mode == OriginMode.BOTTOM_LEFT:
             return PositionNM(x_bl, y_bl)
         else:

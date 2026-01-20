@@ -5,6 +5,7 @@ These tests verify the deterministic geometry generation for:
 - Signal and return via patterns (ring, grid, quadrant)
 - Antipad and plane cutout shapes
 """
+
 from __future__ import annotations
 
 import math
@@ -12,46 +13,46 @@ import math
 import pytest
 
 from formula_foundry.coupongen.geom import (
+    # Cutouts
+    CircleAntipadSpec,
     # CPWG
     CPWGResult,
     CPWGSpec,
+    CutoutShape,
     GroundViaFenceSpec,
-    generate_cpwg_horizontal,
-    generate_cpwg_segment,
-    generate_cpwg_with_fence,
-    generate_ground_via_fence,
-    generate_symmetric_cpwg_pair,
+    # Primitives
+    PolygonType,
+    PositionNM,
+    RectangleAntipadSpec,
     # Via patterns
     ReturnViaGridSpec,
     ReturnViaPattern,
     ReturnViaRingSpec,
     ReturnViaSpec,
+    RoundRectAntipadSpec,
     SignalViaSpec,
+    SlotAntipadSpec,
+    TrackSegment,
+    Via,
     calculate_minimum_return_via_radius,
     calculate_via_ring_circumference_clearance,
-    generate_return_via_grid,
-    generate_return_via_quadrant,
-    generate_return_via_ring,
-    generate_signal_via,
-    generate_via_transition,
-    # Cutouts
-    CircleAntipadSpec,
-    CutoutShape,
-    RectangleAntipadSpec,
-    RoundRectAntipadSpec,
-    SlotAntipadSpec,
     generate_antipad,
     generate_circle_antipad,
+    generate_cpwg_horizontal,
+    generate_cpwg_segment,
+    generate_cpwg_with_fence,
+    generate_ground_via_fence,
     generate_multivia_antipad,
     generate_plane_cutout_for_via,
     generate_rectangle_antipad,
+    generate_return_via_grid,
+    generate_return_via_quadrant,
+    generate_return_via_ring,
     generate_roundrect_antipad,
+    generate_signal_via,
     generate_slot_antipad,
-    # Primitives
-    PolygonType,
-    PositionNM,
-    TrackSegment,
-    Via,
+    generate_symmetric_cpwg_pair,
+    generate_via_transition,
 )
 
 
@@ -144,7 +145,7 @@ class TestGroundViaFence:
         pos_vias, neg_vias = generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
 
         # Each pair should have same x, opposite y
-        for pos_via, neg_via in zip(pos_vias, neg_vias):
+        for pos_via, neg_via in zip(pos_vias, neg_vias, strict=False):
             assert pos_via.position.x == neg_via.position.x
             assert pos_via.position.y == -neg_via.position.y
 
@@ -155,12 +156,8 @@ class TestGroundViaFence:
         cpwg_spec = CPWGSpec(w_nm=300_000, gap_nm=180_000, length_nm=10_000_000)
 
         # Larger pitch = fewer vias
-        large_pitch = GroundViaFenceSpec(
-            pitch_nm=5_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000
-        )
-        small_pitch = GroundViaFenceSpec(
-            pitch_nm=1_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000
-        )
+        large_pitch = GroundViaFenceSpec(pitch_nm=5_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000)
+        small_pitch = GroundViaFenceSpec(pitch_nm=1_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000)
 
         large_pos, _ = generate_ground_via_fence(start, end, cpwg_spec, large_pitch)
         small_pos, _ = generate_ground_via_fence(start, end, cpwg_spec, small_pitch)
@@ -171,9 +168,7 @@ class TestGroundViaFence:
         """Zero-length segment returns no vias."""
         pos = PositionNM(0, 0)
         cpwg_spec = CPWGSpec(w_nm=300_000, gap_nm=180_000, length_nm=0)
-        fence_spec = GroundViaFenceSpec(
-            pitch_nm=1_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000
-        )
+        fence_spec = GroundViaFenceSpec(pitch_nm=1_000_000, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000)
 
         pos_vias, neg_vias = generate_ground_via_fence(pos, pos, cpwg_spec, fence_spec)
 
@@ -185,9 +180,7 @@ class TestGroundViaFence:
         start = PositionNM(0, 0)
         end = PositionNM(10_000_000, 0)
         cpwg_spec = CPWGSpec(w_nm=300_000, gap_nm=180_000, length_nm=10_000_000)
-        fence_spec = GroundViaFenceSpec(
-            pitch_nm=0, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000
-        )
+        fence_spec = GroundViaFenceSpec(pitch_nm=0, offset_from_gap_nm=500_000, drill_nm=300_000, diameter_nm=600_000)
 
         with pytest.raises(ValueError, match="pitch_nm must be positive"):
             generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
@@ -200,9 +193,7 @@ class TestCPWGWithFence:
         """Complete CPWG generation returns CPWGResult."""
         origin = PositionNM(0, 0)
         cpwg_spec = CPWGSpec(w_nm=300_000, gap_nm=180_000, length_nm=10_000_000)
-        fence_spec = GroundViaFenceSpec(
-            pitch_nm=1_500_000, offset_from_gap_nm=800_000, drill_nm=300_000, diameter_nm=600_000
-        )
+        fence_spec = GroundViaFenceSpec(pitch_nm=1_500_000, offset_from_gap_nm=800_000, drill_nm=300_000, diameter_nm=600_000)
 
         result = generate_cpwg_with_fence(origin, cpwg_spec, fence_spec)
 
@@ -261,9 +252,7 @@ class TestSignalVia:
 
     def test_signal_via_with_pad_diameter(self) -> None:
         """Signal via with separate pad diameter."""
-        spec = SignalViaSpec(
-            drill_nm=300_000, diameter_nm=650_000, pad_diameter_nm=900_000, net_id=5
-        )
+        spec = SignalViaSpec(drill_nm=300_000, diameter_nm=650_000, pad_diameter_nm=900_000, net_id=5)
 
         assert spec.effective_pad_diameter_nm == 900_000
 
@@ -281,9 +270,7 @@ class TestReturnViaRing:
         """Ring generates specified number of vias."""
         center = PositionNM(0, 0)
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=4, radius_nm=1_700_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=4, radius_nm=1_700_000, via=via_spec)
 
         vias = generate_return_via_ring(center, ring_spec)
 
@@ -293,9 +280,7 @@ class TestReturnViaRing:
         """All vias in ring are same distance from center."""
         center = PositionNM(10_000_000, 10_000_000)
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=6, radius_nm=1_700_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=6, radius_nm=1_700_000, via=via_spec)
 
         vias = generate_return_via_ring(center, ring_spec)
 
@@ -309,9 +294,7 @@ class TestReturnViaRing:
     def test_ring_with_zero_count_returns_empty(self) -> None:
         """Zero count returns empty tuple."""
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=0, radius_nm=1_700_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=0, radius_nm=1_700_000, via=via_spec)
 
         vias = generate_return_via_ring(PositionNM(0, 0), ring_spec)
 
@@ -351,9 +334,7 @@ class TestReturnViaRing:
     def test_invalid_radius_raises(self) -> None:
         """Zero or negative radius raises ValueError."""
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=4, radius_nm=0, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=4, radius_nm=0, via=via_spec)
 
         with pytest.raises(ValueError, match="radius_nm must be positive"):
             generate_return_via_ring(PositionNM(0, 0), ring_spec)
@@ -479,9 +460,7 @@ class TestViaTransition:
         center = PositionNM(40_000_000, 0)
         signal_spec = SignalViaSpec(drill_nm=300_000, diameter_nm=650_000)
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=4, radius_nm=1_700_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=4, radius_nm=1_700_000, via=via_spec)
 
         result = generate_via_transition(center, signal_spec, ring_spec)
 
@@ -520,9 +499,7 @@ class TestViaRingClearance:
     def test_calculate_ring_clearance(self) -> None:
         """Calculate clearance between adjacent vias on ring."""
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=600_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=4, radius_nm=1_000_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=4, radius_nm=1_000_000, via=via_spec)
 
         clearance = calculate_via_ring_circumference_clearance(ring_spec)
 
@@ -535,9 +512,7 @@ class TestViaRingClearance:
     def test_single_via_returns_diameter(self) -> None:
         """Single via on ring returns diameter as 'clearance'."""
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=600_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=1, radius_nm=1_000_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=1, radius_nm=1_000_000, via=via_spec)
 
         clearance = calculate_via_ring_circumference_clearance(ring_spec)
 
@@ -625,9 +600,7 @@ class TestRoundRectAntipad:
 
     def test_invalid_dimensions_raises(self) -> None:
         """Zero or negative dimensions raises ValueError."""
-        spec = RoundRectAntipadSpec(
-            shape=CutoutShape.ROUNDRECT, rx_nm=0, ry_nm=1_000_000, corner_nm=100_000, layer="In1.Cu"
-        )
+        spec = RoundRectAntipadSpec(shape=CutoutShape.ROUNDRECT, rx_nm=0, ry_nm=1_000_000, corner_nm=100_000, layer="In1.Cu")
 
         with pytest.raises(ValueError, match="rx_nm and ry_nm must be positive"):
             generate_roundrect_antipad(PositionNM(0, 0), spec)
@@ -722,9 +695,7 @@ class TestRectangleAntipad:
     def test_generate_rectangle_basic(self) -> None:
         """Basic rectangle generation."""
         center = PositionNM(0, 0)
-        spec = RectangleAntipadSpec(
-            shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu"
-        )
+        spec = RectangleAntipadSpec(shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu")
 
         polygon = generate_rectangle_antipad(center, spec)
 
@@ -735,9 +706,7 @@ class TestRectangleAntipad:
     def test_rectangle_is_centered(self) -> None:
         """Rectangle is centered on given position."""
         center = PositionNM(10_000_000, 5_000_000)
-        spec = RectangleAntipadSpec(
-            shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu"
-        )
+        spec = RectangleAntipadSpec(shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu")
 
         polygon = generate_rectangle_antipad(center, spec)
 
@@ -772,9 +741,7 @@ class TestGenerateAntipad:
 
     def test_dispatch_slot(self) -> None:
         """Dispatcher handles slot spec."""
-        spec = SlotAntipadSpec(
-            shape=CutoutShape.SLOT, length_nm=2_000_000, width_nm=1_000_000, rotation_mdeg=0, layer="In1.Cu"
-        )
+        spec = SlotAntipadSpec(shape=CutoutShape.SLOT, length_nm=2_000_000, width_nm=1_000_000, rotation_mdeg=0, layer="In1.Cu")
 
         polygon = generate_antipad(PositionNM(0, 0), spec)
 
@@ -782,9 +749,7 @@ class TestGenerateAntipad:
 
     def test_dispatch_rectangle(self) -> None:
         """Dispatcher handles rectangle spec."""
-        spec = RectangleAntipadSpec(
-            shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu"
-        )
+        spec = RectangleAntipadSpec(shape=CutoutShape.RECTANGLE, width_nm=2_000_000, height_nm=1_000_000, layer="In1.Cu")
 
         polygon = generate_antipad(PositionNM(0, 0), spec)
 
@@ -798,9 +763,7 @@ class TestPlaneCutoutForVia:
         """Generate cutout centered on via."""
         via_center = PositionNM(40_000_000, 0)
 
-        polygon = generate_plane_cutout_for_via(
-            via_center, via_diameter_nm=650_000, clearance_nm=200_000, layer="In1.Cu"
-        )
+        polygon = generate_plane_cutout_for_via(via_center, via_diameter_nm=650_000, clearance_nm=200_000, layer="In1.Cu")
 
         assert polygon.polygon_type == PolygonType.CUTOUT
         assert polygon.layer == "In1.Cu"
@@ -811,9 +774,7 @@ class TestPlaneCutoutForVia:
         via_diameter = 600_000
         clearance = 200_000
 
-        polygon = generate_plane_cutout_for_via(
-            via_center, via_diameter_nm=via_diameter, clearance_nm=clearance, layer="In1.Cu"
-        )
+        polygon = generate_plane_cutout_for_via(via_center, via_diameter_nm=via_diameter, clearance_nm=clearance, layer="In1.Cu")
 
         # Check vertex distance from center
         for vertex in polygon.vertices:
@@ -824,9 +785,7 @@ class TestPlaneCutoutForVia:
     def test_negative_clearance_raises(self) -> None:
         """Negative clearance raises ValueError."""
         with pytest.raises(ValueError, match="clearance_nm must be non-negative"):
-            generate_plane_cutout_for_via(
-                PositionNM(0, 0), via_diameter_nm=650_000, clearance_nm=-100, layer="In1.Cu"
-            )
+            generate_plane_cutout_for_via(PositionNM(0, 0), via_diameter_nm=650_000, clearance_nm=-100, layer="In1.Cu")
 
 
 class TestMultiviaAntipad:
@@ -836,9 +795,7 @@ class TestMultiviaAntipad:
         """Single via falls back to circular cutout."""
         centers = (PositionNM(0, 0),)
 
-        polygon = generate_multivia_antipad(
-            centers, via_diameter_nm=600_000, clearance_nm=200_000, layer="In1.Cu"
-        )
+        polygon = generate_multivia_antipad(centers, via_diameter_nm=600_000, clearance_nm=200_000, layer="In1.Cu")
 
         assert polygon.polygon_type == PolygonType.CUTOUT
 
@@ -851,9 +808,7 @@ class TestMultiviaAntipad:
             PositionNM(0, 1_000_000),
         )
 
-        polygon = generate_multivia_antipad(
-            centers, via_diameter_nm=600_000, clearance_nm=200_000, layer="In1.Cu"
-        )
+        polygon = generate_multivia_antipad(centers, via_diameter_nm=600_000, clearance_nm=200_000, layer="In1.Cu")
 
         assert polygon.polygon_type == PolygonType.CUTOUT
         assert len(polygon.vertices) > 4  # Rounded rectangle has more than 4 vertices
@@ -871,9 +826,7 @@ class TestDeterminism:
         """CPWG generation produces identical results on repeated calls."""
         origin = PositionNM(5_000_000, 0)
         cpwg_spec = CPWGSpec(w_nm=300_000, gap_nm=180_000, length_nm=25_000_000)
-        fence_spec = GroundViaFenceSpec(
-            pitch_nm=1_500_000, offset_from_gap_nm=800_000, drill_nm=300_000, diameter_nm=600_000
-        )
+        fence_spec = GroundViaFenceSpec(pitch_nm=1_500_000, offset_from_gap_nm=800_000, drill_nm=300_000, diameter_nm=600_000)
 
         result1 = generate_cpwg_with_fence(origin, cpwg_spec, fence_spec)
         result2 = generate_cpwg_with_fence(origin, cpwg_spec, fence_spec)
@@ -886,9 +839,7 @@ class TestDeterminism:
         """Via ring generation produces identical results on repeated calls."""
         center = PositionNM(40_000_000, 0)
         via_spec = ReturnViaSpec(drill_nm=300_000, diameter_nm=650_000)
-        ring_spec = ReturnViaRingSpec(
-            pattern=ReturnViaPattern.RING, count=6, radius_nm=1_700_000, via=via_spec
-        )
+        ring_spec = ReturnViaRingSpec(pattern=ReturnViaPattern.RING, count=6, radius_nm=1_700_000, via=via_spec)
 
         vias1 = generate_return_via_ring(center, ring_spec)
         vias2 = generate_return_via_ring(center, ring_spec)

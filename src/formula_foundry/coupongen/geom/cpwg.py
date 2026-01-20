@@ -6,6 +6,7 @@ including the signal trace, ground coplanar areas, and optional via fencing.
 All coordinates use integer nanometers (LengthNM) to ensure determinism and
 avoid cross-platform rounding drift.
 """
+
 from __future__ import annotations
 
 import math

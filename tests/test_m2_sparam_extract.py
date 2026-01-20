@@ -7,28 +7,28 @@ This module tests the sparam_extract module which provides:
 - De-embedding for reference plane shifting
 - Structured output for manifest inclusion
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pytest
 
 from formula_foundry.em.touchstone import (
-    SParameterData,
-    write_touchstone,
-    TouchstoneOptions,
     FrequencyUnit,
+    SParameterData,
     SParameterFormat,
+    TouchstoneOptions,
+    write_touchstone,
 )
 from formula_foundry.openems import (
     ExtractionConfig,
     ExtractionResult,
+    FrequencySpec,
     PortSignalData,
     PortSpec,
-    FrequencySpec,
     apply_deembedding,
     build_manifest_entry,
     extract_sparams,
@@ -318,9 +318,7 @@ def test_port_signal_data_validation() -> None:
     current_a = np.array([0.0, 0.02])  # Wrong length
 
     with pytest.raises(ValueError, match="same length"):
-        PortSignalData(
-            port_id="P1", time_s=time_s, voltage_v=voltage_v, current_a=current_a
-        )
+        PortSignalData(port_id="P1", time_s=time_s, voltage_v=voltage_v, current_a=current_a)
 
 
 # =============================================================================

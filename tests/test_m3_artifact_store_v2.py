@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,9 +16,7 @@ from formula_foundry.m3.artifact_store import (
     ArtifactNotFoundError,
     ArtifactStore,
     ContentHash,
-    Lineage,
     LineageReference,
-    Provenance,
     compute_spec_id,
 )
 
@@ -82,7 +79,7 @@ class TestArtifactStore:
         expected_hash = hashlib.sha256(content).hexdigest()
         prefix = expected_hash[:2]
 
-        manifest = store.put(
+        store.put(
             content=content,
             artifact_type="other",
             roles=["intermediate"],
@@ -405,7 +402,7 @@ class TestArtifactStore:
             artifact_id="overwrite-id",
         )
 
-        manifest = store.put(
+        store.put(
             content=b"second",
             artifact_type="other",
             roles=["intermediate"],
@@ -427,7 +424,7 @@ class TestAtomicWrites:
 
         # Verify no .tmp files exist after successful write
         content = b"atomic test"
-        manifest = store.put(
+        store.put(
             content=content,
             artifact_type="other",
             roles=["intermediate"],

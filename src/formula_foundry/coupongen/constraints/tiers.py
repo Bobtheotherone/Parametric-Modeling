@@ -79,10 +79,7 @@ class TieredConstraintProof:
         return {
             "passed": self.passed,
             "first_failure_tier": self.first_failure_tier,
-            "tiers": {
-                tier: [c.constraint_id for c in results]
-                for tier, results in self.tiers.items()
-            },
+            "tiers": {tier: [c.constraint_id for c in results] for tier, results in self.tiers.items()},
             "constraints": [
                 {
                     "id": c.constraint_id,
@@ -107,9 +104,7 @@ class ConstraintViolationError(ValueError):
         tier: First tier with violations
     """
 
-    def __init__(
-        self, violations: Sequence[ConstraintResult], tier: ConstraintTier | None = None
-    ) -> None:
+    def __init__(self, violations: Sequence[ConstraintResult], tier: ConstraintTier | None = None) -> None:
         self.violations = tuple(violations)
         self.tier = tier
 
@@ -123,9 +118,7 @@ class ConstraintViolationError(ValueError):
                 detail += f" (value={v.value}, limit={v.limit}, margin={v.margin})"
             violation_details.append(detail)
 
-        message = f"Constraint violations in tier {tier}:\n" + "\n".join(
-            f"  - {d}" for d in violation_details
-        )
+        message = f"Constraint violations in tier {tier}:\n" + "\n".join(f"  - {d}" for d in violation_details)
         super().__init__(message)
 
     @property
@@ -144,9 +137,7 @@ class TierChecker(ABC):
         ...
 
     @abstractmethod
-    def check(
-        self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None
-    ) -> list[ConstraintResult]:
+    def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         """Check constraints for this tier.
 
         Args:
@@ -244,9 +235,7 @@ class Tier0Checker(TierChecker):
     def tier(self) -> ConstraintTier:
         return "T0"
 
-    def check(
-        self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None
-    ) -> list[ConstraintResult]:
+    def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         results: list[ConstraintResult] = []
 
         # Trace width minimum
@@ -417,9 +406,7 @@ class Tier1Checker(TierChecker):
     def tier(self) -> ConstraintTier:
         return "T1"
 
-    def check(
-        self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None
-    ) -> list[ConstraintResult]:
+    def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         results: list[ConstraintResult] = []
 
         # Signal via annular ring (pad - drill must exceed minimum)
@@ -526,9 +513,7 @@ class Tier1Checker(TierChecker):
         # Board aspect ratio (sanity check - not too extreme)
         board_width = int(spec.board.outline.width_nm)
         board_length = int(spec.board.outline.length_nm)
-        aspect_ratio = max(board_length, board_width) / max(
-            min(board_length, board_width), 1
-        )
+        aspect_ratio = max(board_length, board_width) / max(min(board_length, board_width), 1)
 
         results.append(
             _max_constraint(
@@ -558,9 +543,7 @@ class Tier2Checker(TierChecker):
     def tier(self) -> ConstraintTier:
         return "T2"
 
-    def check(
-        self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None
-    ) -> list[ConstraintResult]:
+    def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         results: list[ConstraintResult] = []
 
         board_width = int(spec.board.outline.width_nm)
@@ -676,8 +659,8 @@ class Tier2Checker(TierChecker):
         # Ground via fence spacing
         fence = spec.transmission_line.ground_via_fence
         if fence is not None and fence.enabled:
-            trace_width = int(spec.transmission_line.w_nm)
-            trace_gap = int(spec.transmission_line.gap_nm)
+            int(spec.transmission_line.w_nm)
+            int(spec.transmission_line.gap_nm)
             fence_offset = int(fence.offset_from_gap_nm)
             fence_via_dia = int(fence.via.diameter_nm)
 
@@ -725,16 +708,11 @@ class Tier3Checker(TierChecker):
     def tier(self) -> ConstraintTier:
         return "T3"
 
-    def check(
-        self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None
-    ) -> list[ConstraintResult]:
+    def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         results: list[ConstraintResult] = []
 
         # Return via ring collision detection
-        if (
-            spec.discontinuity is not None
-            and spec.discontinuity.return_vias is not None
-        ):
+        if spec.discontinuity is not None and spec.discontinuity.return_vias is not None:
             return_vias = spec.discontinuity.return_vias
             count = return_vias.count
             radius = int(return_vias.radius_nm)

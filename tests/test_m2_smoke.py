@@ -11,13 +11,11 @@ This module provides comprehensive smoke tests covering:
 
 Tests use pytest fixtures and mocking to avoid requiring actual openEMS installation.
 """
+
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -73,12 +71,19 @@ class TestCLISmoke:
         from formula_foundry.openems.cli_main import build_parser
 
         parser = build_parser()
-        args = parser.parse_args([
-            "sim", "run", "config.json",
-            "--out", "/output",
-            "--timeout", "1800",
-            "--solver-mode", "stub",
-        ])
+        args = parser.parse_args(
+            [
+                "sim",
+                "run",
+                "config.json",
+                "--out",
+                "/output",
+                "--timeout",
+                "1800",
+                "--solver-mode",
+                "stub",
+            ]
+        )
         assert args.config == Path("config.json")
         assert args.out == Path("/output")
         assert args.timeout == 1800.0
@@ -89,11 +94,17 @@ class TestCLISmoke:
         from formula_foundry.openems.cli_main import build_parser
 
         parser = build_parser()
-        args = parser.parse_args([
-            "sim", "batch", "/configs",
-            "--out", "/output",
-            "--max-workers", "4",
-        ])
+        args = parser.parse_args(
+            [
+                "sim",
+                "batch",
+                "/configs",
+                "--out",
+                "/output",
+                "--max-workers",
+                "4",
+            ]
+        )
         assert args.config_dir == Path("/configs")
         assert args.out == Path("/output")
         assert args.max_workers == 4
@@ -110,13 +121,8 @@ class TestConfigValidationSmoke:
     def test_spec_module_imports(self) -> None:
         """Spec module should import without errors."""
         from formula_foundry.openems.spec import (
-            ExcitationSpec,
-            FrequencySpec,
-            GeometryRefSpec,
-            PortSpec,
             SimulationSpec,
             ToolchainSpec,
-            OpenEMSToolchainSpec,
         )
 
         assert SimulationSpec is not None
@@ -128,10 +134,10 @@ class TestConfigValidationSmoke:
             ExcitationSpec,
             FrequencySpec,
             GeometryRefSpec,
+            OpenEMSToolchainSpec,
             PortSpec,
             SimulationSpec,
             ToolchainSpec,
-            OpenEMSToolchainSpec,
         )
 
         spec = SimulationSpec(
@@ -167,10 +173,10 @@ class TestConfigValidationSmoke:
             ExcitationSpec,
             FrequencySpec,
             GeometryRefSpec,
+            OpenEMSToolchainSpec,
             PortSpec,
             SimulationSpec,
             ToolchainSpec,
-            OpenEMSToolchainSpec,
         )
 
         spec = SimulationSpec(
@@ -218,8 +224,6 @@ class TestSParamParsingSmoke:
         """Touchstone module should import without errors."""
         from formula_foundry.em.touchstone import (
             SParameterData,
-            read_touchstone_from_string,
-            write_touchstone_to_string,
         )
 
         assert SParameterData is not None
@@ -296,12 +300,7 @@ class TestManifestGenerationSmoke:
     def test_manifest_module_imports(self) -> None:
         """Manifest module should import without errors."""
         from formula_foundry.openems.manifest import (
-            ConvergenceMetrics,
             M2ManifestBuilder,
-            MeshStatistics,
-            PortConfiguration,
-            build_m2_manifest,
-            validate_m2_manifest,
         )
 
         assert M2ManifestBuilder is not None
@@ -393,15 +392,17 @@ class TestManifestGenerationSmoke:
                 },
                 "smoothing": {"max_ratio": 1.5, "smooth_mesh_lines": True},
             },
-            "ports": [{
-                "id": "P1",
-                "type": "lumped",
-                "impedance_ohm": 50.0,
-                "excite": True,
-                "position_nm": [0, 0, 0],
-                "direction": "x",
-                "deembed_enabled": False,
-            }],
+            "ports": [
+                {
+                    "id": "P1",
+                    "type": "lumped",
+                    "impedance_ohm": 50.0,
+                    "excite": True,
+                    "position_nm": [0, 0, 0],
+                    "direction": "x",
+                    "deembed_enabled": False,
+                }
+            ],
             "outputs": [],
             "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-20T12:00:00Z"},
         }
@@ -421,12 +422,7 @@ class TestBatchRunnerSmoke:
     def test_batch_module_imports(self) -> None:
         """Batch runner module should import without errors."""
         from formula_foundry.openems.batch_runner import (
-            BatchConfig,
-            BatchProgress,
-            BatchResult,
             BatchSimulationRunner,
-            SimulationJob,
-            SimulationJobResult,
             SimulationStatus,
         )
 
@@ -502,13 +498,8 @@ class TestConvergenceSmoke:
     def test_convergence_module_imports(self) -> None:
         """Convergence module should import without errors."""
         from formula_foundry.openems.convergence import (
-            ConvergenceCheckResult,
             ConvergenceConfig,
-            ConvergenceReport,
             ConvergenceStatus,
-            EnergyDecayData,
-            check_energy_decay,
-            validate_convergence,
         )
 
         assert ConvergenceConfig is not None
@@ -629,16 +620,6 @@ class TestEndToEndSmoke:
 
     def test_simulation_runner_stub_mode(self, tmp_path: Path) -> None:
         """SimulationRunner should work in stub mode."""
-        from formula_foundry.openems.sim_runner import SimulationRunner
-        from formula_foundry.openems.spec import (
-            ExcitationSpec,
-            FrequencySpec,
-            GeometryRefSpec,
-            PortSpec,
-            SimulationSpec,
-            ToolchainSpec,
-            OpenEMSToolchainSpec,
-        )
         from formula_foundry.openems.geometry import (
             BoardOutlineSpec,
             DiscontinuitySpec,
@@ -647,6 +628,16 @@ class TestEndToEndSmoke:
             StackupMaterialsSpec,
             StackupSpec,
             TransmissionLineSpec,
+        )
+        from formula_foundry.openems.sim_runner import SimulationRunner
+        from formula_foundry.openems.spec import (
+            ExcitationSpec,
+            FrequencySpec,
+            GeometryRefSpec,
+            OpenEMSToolchainSpec,
+            PortSpec,
+            SimulationSpec,
+            ToolchainSpec,
         )
 
         # Create minimal spec
@@ -742,14 +733,16 @@ class TestEndToEndSmoke:
             "geometry_ref": {"design_hash": "a" * 64},
             "excitation": {"type": "gaussian", "f0_hz": 5e9, "fc_hz": 10e9},
             "frequency": {"f_start_hz": 1e9, "f_stop_hz": 10e9, "n_points": 101},
-            "ports": [{
-                "id": "P1",
-                "type": "lumped",
-                "impedance_ohm": 50.0,
-                "excite": True,
-                "position_nm": [0, 0, 0],
-                "direction": "x",
-            }],
+            "ports": [
+                {
+                    "id": "P1",
+                    "type": "lumped",
+                    "impedance_ohm": 50.0,
+                    "excite": True,
+                    "position_nm": [0, 0, 0],
+                    "direction": "x",
+                }
+            ],
         }
 
         config_path = tmp_path / "config.json"
@@ -758,12 +751,18 @@ class TestEndToEndSmoke:
         output_dir = tmp_path / "output"
 
         # Run CLI command
-        result = main([
-            "sim", "run", str(config_path),
-            "--out", str(output_dir),
-            "--solver-mode", "stub",
-            "--no-convergence",
-        ])
+        result = main(
+            [
+                "sim",
+                "run",
+                str(config_path),
+                "--out",
+                str(output_dir),
+                "--solver-mode",
+                "stub",
+                "--no-convergence",
+            ]
+        )
 
         assert result == 0
         assert output_dir.exists()
@@ -775,16 +774,6 @@ class TestEndToEndSmoke:
             BatchSimulationRunner,
             SimulationJob,
         )
-        from formula_foundry.openems.sim_runner import SimulationRunner
-        from formula_foundry.openems.spec import (
-            ExcitationSpec,
-            FrequencySpec,
-            GeometryRefSpec,
-            PortSpec,
-            SimulationSpec,
-            ToolchainSpec,
-            OpenEMSToolchainSpec,
-        )
         from formula_foundry.openems.geometry import (
             BoardOutlineSpec,
             DiscontinuitySpec,
@@ -793,6 +782,16 @@ class TestEndToEndSmoke:
             StackupMaterialsSpec,
             StackupSpec,
             TransmissionLineSpec,
+        )
+        from formula_foundry.openems.sim_runner import SimulationRunner
+        from formula_foundry.openems.spec import (
+            ExcitationSpec,
+            FrequencySpec,
+            GeometryRefSpec,
+            OpenEMSToolchainSpec,
+            PortSpec,
+            SimulationSpec,
+            ToolchainSpec,
         )
 
         def make_spec(sim_id: str) -> SimulationSpec:
@@ -901,25 +900,14 @@ class TestImportSmoke:
     def test_key_exports_available(self) -> None:
         """Key exports should be available from openems package."""
         from formula_foundry.openems import (
-            # CLI
-            build_parser,
-            # Simulation runner
-            SimulationRunner,
-            SimulationResult,
             # Batch runner
-            BatchConfig,
             BatchSimulationRunner,
             # Convergence
             ConvergenceConfig,
-            ConvergenceReport,
-            ConvergenceStatus,
-            # Manifest
             M2ManifestBuilder,
-            build_m2_manifest,
-            validate_m2_manifest,
+            SimulationRunner,
             # Specs
-            SimulationSpec,
-            GeometrySpec,
+            build_parser,
         )
 
         assert build_parser is not None
@@ -932,8 +920,6 @@ class TestImportSmoke:
         """EM touchstone module should import without errors."""
         from formula_foundry.em.touchstone import (
             SParameterData,
-            read_touchstone,
-            write_touchstone,
         )
 
         assert SParameterData is not None

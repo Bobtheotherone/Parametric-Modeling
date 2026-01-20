@@ -17,14 +17,13 @@ The GC system is designed to be safe by default:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from formula_foundry.m3.artifact_store import ArtifactStore
@@ -37,6 +36,7 @@ DEFAULT_POLICY = "laptop_default"
 
 class RetentionUnit(str, Enum):
     """Units for retention period specification."""
+
     HOURS = "hours"
     DAYS = "days"
     WEEKS = "weeks"
@@ -150,8 +150,11 @@ BUILTIN_POLICIES: dict[str, RetentionPolicy] = {
         keep_pinned=True,
         keep_with_descendants=True,
         keep_artifact_types=[
-            "dataset_snapshot", "formula_candidate", "model_checkpoint",
-            "validation_report", "touchstone",
+            "dataset_snapshot",
+            "formula_candidate",
+            "model_checkpoint",
+            "validation_report",
+            "touchstone",
         ],
         keep_roles=["final_output", "checkpoint", "validation"],
         space_budget_bytes=500 * 1024 * 1024 * 1024,  # 500 GB
@@ -506,11 +509,12 @@ class GarbageCollector:
         original_count = len(pins)
 
         pins = [
-            p for p in pins
+            p
+            for p in pins
             if not (
-                (artifact_id and p.artifact_id == artifact_id) or
-                (run_id and p.run_id == run_id) or
-                (dataset_id and p.dataset_id == dataset_id)
+                (artifact_id and p.artifact_id == artifact_id)
+                or (run_id and p.run_id == run_id)
+                or (dataset_id and p.dataset_id == dataset_id)
             )
         ]
 
@@ -885,8 +889,7 @@ class GarbageCollector:
             "estimated_after_bytes": stats["total_bytes"] - bytes_to_delete,
             "space_budget_bytes": policy.space_budget_bytes,
             "within_budget": (
-                policy.space_budget_bytes is None or
-                (stats["total_bytes"] - bytes_to_delete) <= policy.space_budget_bytes
+                policy.space_budget_bytes is None or (stats["total_bytes"] - bytes_to_delete) <= policy.space_budget_bytes
             ),
         }
 

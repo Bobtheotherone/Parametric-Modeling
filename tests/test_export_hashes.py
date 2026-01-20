@@ -20,7 +20,6 @@ import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -35,7 +34,6 @@ from formula_foundry.coupongen.hashing import (
     canonicalize_kicad_pcb_text,
 )
 from formula_foundry.coupongen.spec import KicadToolchain
-
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN_SPECS_DIR = ROOT / "tests" / "golden_specs"
@@ -82,13 +80,7 @@ class _FakeExportRunner:
             # Use seed to create deterministic but varied content
             content_hash = hashlib.sha256(f"{self.seed}:{filename}".encode()).hexdigest()[:8]
             content = (
-                f"{content_start}\n"
-                f"G04 Seed={self.seed}*\n"
-                f"G04 Hash={content_hash}*\n"
-                "X0Y0D02*\n"
-                "X1000Y0D01*\n"
-                "X1000Y1000D01*\n"
-                "M02*\n"
+                f"{content_start}\nG04 Seed={self.seed}*\nG04 Hash={content_hash}*\nX0Y0D02*\nX1000Y0D01*\nX1000Y1000D01*\nM02*\n"
             )
             (out_dir / filename).write_text(content, encoding="utf-8")
 
@@ -258,7 +250,7 @@ class TestExportCompleteness:
         hashes = export_fab(board_path, tmp_path / "fab", toolchain, runner=runner)
 
         # Check for expected Gerber files
-        gerber_paths = [p for p in hashes.keys() if "gerbers/" in p]
+        gerber_paths = [p for p in hashes if "gerbers/" in p]
         assert len(gerber_paths) >= 4, f"Expected at least 4 Gerber files, got: {gerber_paths}"
 
     def test_export_fab_includes_drill_files(self, tmp_path: Path) -> None:
@@ -271,7 +263,7 @@ class TestExportCompleteness:
         hashes = export_fab(board_path, tmp_path / "fab", toolchain, runner=runner)
 
         # Check for expected drill files
-        drill_paths = [p for p in hashes.keys() if "drill/" in p]
+        drill_paths = [p for p in hashes if "drill/" in p]
         assert len(drill_paths) >= 1, f"Expected at least 1 drill file, got: {drill_paths}"
 
 

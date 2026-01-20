@@ -20,6 +20,7 @@ Material Mapping:
 - Substrate -> dielectric with epsilon_r and loss_tangent from stackup
 - Air gaps (antipads) -> air dielectric (epsilon_r = 1.0)
 """
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -29,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 from formula_foundry.coupongen.geom.primitives import (
     Polygon,
     PolygonType,
-    PositionNM,
     TrackSegment,
     Via,
 )
@@ -41,7 +41,6 @@ from .csx_primitives import (
     CSXCylinder,
     CSXGeometry,
     CSXMaterial,
-    CSXMaterialType,
     CSXPolygon,
     CSXViaPad,
     Point3D,
@@ -511,7 +510,7 @@ def build_csx_geometry(
 
     # Add substrate regions
     if include_substrate and csx_geom.bbox is not None:
-        for z_bot, z_top, er, tan_d in adapter.stackup_z.dielectric_regions:
+        for z_bot, z_top, _er, _tan_d in adapter.stackup_z.dielectric_regions:
             substrate_box = adapter.create_substrate_region(
                 csx_geom.bbox.min_pt.x,
                 csx_geom.bbox.min_pt.y,

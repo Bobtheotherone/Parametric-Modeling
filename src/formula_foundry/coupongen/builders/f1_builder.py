@@ -30,7 +30,6 @@ from ..geom.cutouts import (
     CutoutShape,
     RoundRectAntipadSpec,
     SlotAntipadSpec,
-    generate_antipad,
     generate_circle_antipad,
     generate_roundrect_antipad,
     generate_slot_antipad,
@@ -39,7 +38,6 @@ from ..geom.primitives import (
     BoardOutline,
     FootprintInstance,
     Polygon,
-    PolygonType,
     PositionNM,
     TrackSegment,
     Via,
@@ -51,7 +49,6 @@ from ..geom.via_patterns import (
     SignalViaSpec,
     ViaTransitionResult,
     generate_return_via_ring,
-    generate_signal_via,
     generate_via_transition,
 )
 from ..spec import CouponSpec
@@ -394,6 +391,7 @@ class PlaneCutoutFeature:
 
         elif self.shape == "RECTANGLE":
             from ..geom.cutouts import RectangleAntipadSpec, generate_rectangle_antipad
+
             spec = RectangleAntipadSpec(
                 shape=CutoutShape.RECTANGLE,
                 width_nm=self.length_nm,
@@ -433,11 +431,7 @@ class DiscontinuityFeature:
         Returns ViaTransitionResult with signal via and return vias.
         """
         signal_spec = self.signal_via.to_signal_via_spec()
-        return_ring_spec = (
-            self.return_vias.to_return_via_ring_spec()
-            if self.return_vias is not None
-            else None
-        )
+        return_ring_spec = self.return_vias.to_return_via_ring_spec() if self.return_vias is not None else None
         return generate_via_transition(self.center, signal_spec, return_ring_spec)
 
     def generate_antipad_polygons(self) -> tuple[Polygon, ...]:
@@ -470,10 +464,7 @@ class F1CouponComposition:
     @property
     def total_trace_length_nm(self) -> int:
         """Total transmission line length in nm."""
-        return (
-            self.transmission_line.length_left_nm
-            + self.transmission_line.length_right_nm
-        )
+        return self.transmission_line.length_left_nm + self.transmission_line.length_right_nm
 
     @property
     def discontinuity_position(self) -> PositionNM:
@@ -529,10 +520,7 @@ class F1CouponBuilder:
         """
         validate_family(spec)
         if spec.coupon_family != FAMILY_F1:
-            raise ValueError(
-                f"F1CouponBuilder requires coupon_family={FAMILY_F1!r}, "
-                f"got {spec.coupon_family!r}"
-            )
+            raise ValueError(f"F1CouponBuilder requires coupon_family={FAMILY_F1!r}, got {spec.coupon_family!r}")
         self.spec = spec
         self.resolved = resolved
 

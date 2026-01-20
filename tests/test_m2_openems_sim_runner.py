@@ -6,6 +6,7 @@ This module tests the SimulationRunner class which provides:
 - Error handling with timeout support
 - Integration with port configuration from M2-PORT-CONFIG
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,6 @@ from formula_foundry.openems import (
     OpenEMSRunner,
     SimulationExecutionError,
     SimulationRunner,
-    SimulationTimeoutError,
     load_sparam_result,
 )
 from formula_foundry.openems.convert import build_simulation_spec
@@ -172,10 +172,7 @@ def test_sim_runner_cli_invokes_openems(tmp_path: Path) -> None:
     stub = tmp_path / "openEMS"
     _write_executable(
         stub,
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        "printf \"%s\\n\" \"$@\" > args.txt\n"
-        "echo 'stub-touchstone' > sparams.s2p\n",
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > args.txt\necho \'stub-touchstone\' > sparams.s2p\n',
     )
     runner = SimulationRunner(
         mode="cli",
@@ -264,9 +261,7 @@ def test_sim_runner_cli_error_handling(tmp_path: Path) -> None:
     stub = tmp_path / "openEMS_fail"
     _write_executable(
         stub,
-        "#!/usr/bin/env bash\n"
-        "echo 'Error: simulation failed' >&2\n"
-        "exit 1\n",
+        "#!/usr/bin/env bash\necho 'Error: simulation failed' >&2\nexit 1\n",
     )
     runner = SimulationRunner(
         mode="cli",

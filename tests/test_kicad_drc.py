@@ -29,7 +29,6 @@ from formula_foundry.coupongen import (
     load_spec,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN_SPECS_DIR = ROOT / "tests" / "golden_specs"
 
@@ -197,8 +196,7 @@ class TestGoldenSpecsDrcCompatibility:
             spec = load_spec(spec_path)
             docker_image = spec.toolchain.kicad.docker_image
             assert "@sha256:" in docker_image, (
-                f"Golden spec {spec_path.name} must use digest-pinned Docker image, "
-                f"got: {docker_image}"
+                f"Golden spec {spec_path.name} must use digest-pinned Docker image, got: {docker_image}"
             )
 
     def test_golden_specs_kicad_version_pinned(self) -> None:
@@ -213,9 +211,7 @@ class TestGoldenSpecsDrcCompatibility:
             assert len(parts) >= 2, f"Invalid version format: {version}"
 
     @pytest.mark.parametrize("spec_path", _golden_specs(), ids=lambda p: p.name)
-    def test_golden_spec_drc_clean_with_fake_runner(
-        self, spec_path: Path, tmp_path: Path
-    ) -> None:
+    def test_golden_spec_drc_clean_with_fake_runner(self, spec_path: Path, tmp_path: Path) -> None:
         """REQ-M1-025: Each golden spec should be DRC-clean.
 
         This test uses a fake runner to verify the DRC pipeline works correctly.

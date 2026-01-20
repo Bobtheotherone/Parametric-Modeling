@@ -237,9 +237,7 @@ class TestCmdVerifyHashCheck:
         registry.close()
 
         # Corrupt the content
-        object_path = (
-            data_dir / "objects" / manifest.content_hash.digest[:2] / manifest.content_hash.digest
-        )
+        object_path = data_dir / "objects" / manifest.content_hash.digest[:2] / manifest.content_hash.digest
         object_path.write_bytes(b"corrupted content")
 
         # Verify should detect the mismatch
@@ -258,9 +256,7 @@ class TestCmdVerifyHashCheck:
         )
         assert result == 2  # Should fail due to hash mismatch
 
-    def test_verify_default_runs_hash_check(
-        self, project_with_artifacts: tuple[Path, list[str]]
-    ) -> None:
+    def test_verify_default_runs_hash_check(self, project_with_artifacts: tuple[Path, list[str]]) -> None:
         """By default, verify should run hash check."""
         project_root, artifact_ids = project_with_artifacts
         result = cmd_verify(
@@ -299,9 +295,7 @@ class TestCmdVerifyHashCheck:
         registry.close()
 
         # Corrupt the content
-        object_path = (
-            data_dir / "objects" / manifest.content_hash.digest[:2] / manifest.content_hash.digest
-        )
+        object_path = data_dir / "objects" / manifest.content_hash.digest[:2] / manifest.content_hash.digest
         object_path.write_bytes(b"corrupted content")
 
         # With skip_hash, should pass despite corruption
@@ -531,9 +525,7 @@ class TestCmdVerifyRegistryCheck:
         )
         assert result == 2  # Should fail due to missing registry entry
 
-    def test_verify_registry_repair(
-        self, initialized_project: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_verify_registry_repair(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Verify should repair missing registry entries when --repair is specified."""
         from formula_foundry.m3.artifact_store import ArtifactStore
         from formula_foundry.m3.registry import ArtifactRegistry
@@ -635,9 +627,7 @@ class TestCmdVerifyJsonOutput:
         cmd_init(root=tmp_path, force=False, quiet=True)
         return tmp_path
 
-    def test_verify_json_output_empty(
-        self, initialized_project: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_verify_json_output_empty(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """JSON output should be valid with no artifacts."""
         result = cmd_verify(
             artifact_id=None,
@@ -665,9 +655,7 @@ class TestCmdVerifyJsonOutput:
         assert "artifacts" in report
         assert "checks_performed" in report
 
-    def test_verify_json_output_with_artifacts(
-        self, initialized_project: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_verify_json_output_with_artifacts(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """JSON output should contain artifact details."""
         from formula_foundry.m3.artifact_store import ArtifactStore
         from formula_foundry.m3.registry import ArtifactRegistry
@@ -758,9 +746,7 @@ class TestCmdVerifyMultipleArtifacts:
             art_id = f"art-multi-{i:03d}"
             inputs = []
             if i > 0:
-                inputs.append(
-                    LineageReference(artifact_id=f"art-multi-{i-1:03d}", relation="derived_from")
-                )
+                inputs.append(LineageReference(artifact_id=f"art-multi-{i - 1:03d}", relation="derived_from"))
 
             manifest = store.put(
                 content=f"content for artifact {i}".encode(),
@@ -776,9 +762,7 @@ class TestCmdVerifyMultipleArtifacts:
         registry.close()
         return tmp_path, artifact_ids
 
-    def test_verify_all_artifacts(
-        self, project_with_multiple_artifacts: tuple[Path, list[str]]
-    ) -> None:
+    def test_verify_all_artifacts(self, project_with_multiple_artifacts: tuple[Path, list[str]]) -> None:
         """Verify should process all artifacts when no specific ID given."""
         project_root, artifact_ids = project_with_multiple_artifacts
         result = cmd_verify(

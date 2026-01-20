@@ -11,68 +11,40 @@ This module provides additional test coverage for:
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import os
-import tempfile
 import threading
-import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 from formula_foundry.m3.artifact_store import (
-    ArtifactExistsError,
-    ArtifactManifest,
     ArtifactNotFoundError,
     ArtifactStore,
-    ArtifactStoreError,
     ContentHash,
-    Lineage,
     LineageReference,
-    Provenance,
     compute_spec_id,
 )
 from formula_foundry.m3.dataset_snapshot import (
     DatasetMember,
-    DatasetNotFoundError,
-    DatasetProvenance,
-    DatasetSnapshot,
-    DatasetSnapshotError,
     DatasetSnapshotReader,
     DatasetSnapshotWriter,
-    DatasetStatistics,
     SplitDefinition,
     compute_manifest_hash,
 )
 from formula_foundry.m3.gc import (
-    BUILTIN_POLICIES,
     GarbageCollector,
-    GCCandidate,
     GCResult,
     PinnedArtifact,
-    PolicyNotFoundError,
     RetentionPolicy,
     format_bytes,
-    load_pins_from_file,
-    save_pins_to_file,
 )
 from formula_foundry.m3.lineage_graph import (
-    LineageEdge,
     LineageGraph,
     LineageNode,
-    LineagePath,
     LineageSubgraph,
-    NodeNotFoundError,
 )
 from formula_foundry.m3.registry import (
-    ArtifactNotIndexedError,
-    ArtifactRecord,
     ArtifactRegistry,
-    DatasetRecord,
-    RunRecord,
 )
 
 # Check for PyArrow availability
@@ -526,10 +498,10 @@ class TestLineageGraphEdgeCases:
         for i in range(depth):
             graph.add_node(f"node-{i:04d}", "other", f"hash{i}")
             if i > 0:
-                graph.add_edge(f"node-{i-1:04d}", f"node-{i:04d}", "derived_from")
+                graph.add_edge(f"node-{i - 1:04d}", f"node-{i:04d}", "derived_from")
 
         # Get all ancestors of the deepest node
-        subgraph = graph.get_ancestors(f"node-{depth-1:04d}")
+        subgraph = graph.get_ancestors(f"node-{depth - 1:04d}")
         assert len(subgraph.nodes) == depth
 
         # Get all descendants of the root

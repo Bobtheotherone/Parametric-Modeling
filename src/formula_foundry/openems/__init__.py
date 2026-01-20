@@ -32,18 +32,8 @@ from .convergence import (
     write_convergence_report,
 )
 from .convert import build_simulation_spec, simulation_canonical_json, write_simulation_spec
-from .manifest import (
-    ConvergenceMetrics,
-    M2ManifestBuilder,
-    MeshStatistics,
-    PortConfiguration,
-    build_m2_manifest,
-    load_m2_manifest,
-    manifest_hash,
-    validate_m2_manifest,
-    write_m2_manifest,
-)
 from .csx_primitives import (
+    NM_TO_M,
     BoundingBox3D,
     CSXBox,
     CSXCylinder,
@@ -54,7 +44,6 @@ from .csx_primitives import (
     CSXPrimitive,
     CSXPrimitiveType,
     CSXViaPad,
-    NM_TO_M,
     Point3D,
     air_material,
     copper_material,
@@ -79,6 +68,27 @@ from .geometry_adapter import (
     StackupZMap,
     build_csx_geometry,
     build_csx_geometry_from_resolved,
+)
+from .manifest import (
+    ConvergenceMetrics,
+    M2ManifestBuilder,
+    MeshStatistics,
+    PortConfiguration,
+    build_m2_manifest,
+    load_m2_manifest,
+    manifest_hash,
+    validate_m2_manifest,
+    write_m2_manifest,
+)
+from .mesh_generator import (
+    MeshLineGenerator,
+    RefinementZone,
+    detect_antipad_refinement_zones,
+    detect_trace_refinement_zones,
+    detect_via_refinement_zones,
+    generate_adaptive_mesh_lines,
+    generate_z_mesh_lines,
+    mesh_line_summary,
 )
 from .ports import (
     DeembedSpec,
@@ -137,16 +147,6 @@ from .spec import (
     TerminationSpec,
     ToolchainSpec,
     load_simulationspec,
-)
-from .mesh_generator import (
-    MeshLineGenerator,
-    RefinementZone,
-    detect_antipad_refinement_zones,
-    detect_trace_refinement_zones,
-    detect_via_refinement_zones,
-    generate_adaptive_mesh_lines,
-    generate_z_mesh_lines,
-    mesh_line_summary,
 )
 from .toolchain import DEFAULT_OPENEMS_TOOLCHAIN_PATH, OpenEMSToolchain, load_openems_toolchain
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps

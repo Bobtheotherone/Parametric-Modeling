@@ -9,13 +9,12 @@ This module tests the M2 manifest generation functionality including:
 - Manifest validation
 - Manifest I/O
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
 from formula_foundry.coupongen.resolve import design_hash, resolve

@@ -13,30 +13,30 @@ Features:
 
 Hardware-aware throttling respects limits (e.g., 16 cores, 15GB RAM).
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any
 
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .convergence import (
     ConvergenceConfig,
     ConvergenceReport,
-    ConvergenceStatus,
     validate_simulation_convergence,
 )
 from .geometry import GeometrySpec
 from .sim_runner import (
-    SimulationError,
     SimulationExecutionError,
     SimulationResult,
     SimulationRunner,
@@ -258,9 +258,7 @@ class BatchResult:
     def __post_init__(self) -> None:
         # Recompute counts and hash
         self.n_completed = sum(1 for j in self.jobs if j.status == SimulationStatus.COMPLETED)
-        self.n_failed = sum(
-            1 for j in self.jobs if j.status in (SimulationStatus.FAILED, SimulationStatus.TIMEOUT)
-        )
+        self.n_failed = sum(1 for j in self.jobs if j.status in (SimulationStatus.FAILED, SimulationStatus.TIMEOUT))
         self.n_skipped = sum(1 for j in self.jobs if j.status == SimulationStatus.SKIPPED)
 
         # Count convergence results
@@ -282,10 +280,7 @@ class BatchResult:
             "n_completed": self.n_completed,
             "n_failed": self.n_failed,
             "n_skipped": self.n_skipped,
-            "job_hashes": sorted(
-                (j.job_id, j.result.simulation_hash if j.result else "")
-                for j in self.jobs
-            ),
+            "job_hashes": sorted((j.job_id, j.result.simulation_hash if j.result else "") for j in self.jobs),
         }
         return sha256_bytes(canonical_json_dumps(payload).encode("utf-8"))
 
@@ -459,10 +454,7 @@ class BatchSimulationRunner:
         # Use ThreadPoolExecutor for I/O-bound simulation dispatching
         # (actual openEMS runs in subprocesses managed by SimulationRunner)
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-            future_to_job = {
-                executor.submit(self._run_single_job, job): job
-                for job in sorted_jobs
-            }
+            future_to_job = {executor.submit(self._run_single_job, job): job for job in sorted_jobs}
 
             for future in as_completed(future_to_job):
                 if self._stop_requested and self.config.fail_fast:
@@ -504,13 +496,8 @@ class BatchSimulationRunner:
                 self._notify_progress()
 
                 # Check fail_fast
-                if (
-                    self.config.fail_fast
-                    and job_result.status != SimulationStatus.COMPLETED
-                ):
-                    logger.warning(
-                        "Fail-fast triggered by job %s", job.job_id
-                    )
+                if self.config.fail_fast and job_result.status != SimulationStatus.COMPLETED:
+                    logger.warning("Fail-fast triggered by job %s", job.job_id)
                     self._stop_requested = True
 
         total_time = time.monotonic() - start_time

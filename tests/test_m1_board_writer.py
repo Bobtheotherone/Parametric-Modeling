@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 
@@ -262,9 +261,7 @@ class TestBuildBoardText:
 class TestWriteBoard:
     """Tests for write_board function."""
 
-    def test_write_board_creates_file(
-        self, f0_spec: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_write_board_creates_file(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
         """write_board should create a .kicad_pcb file."""
         resolved = resolve(f0_spec)
         board_path = write_board(f0_spec, resolved, tmp_path)
@@ -272,9 +269,7 @@ class TestWriteBoard:
         assert board_path.exists()
         assert board_path.name == "coupon.kicad_pcb"
 
-    def test_write_board_content_parseable(
-        self, f0_spec: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_write_board_content_parseable(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
         """Written file should contain parseable S-expression."""
         resolved = resolve(f0_spec)
         board_path = write_board(f0_spec, resolved, tmp_path)
@@ -283,9 +278,7 @@ class TestWriteBoard:
         parsed = parse(content)
         assert parsed[0] == "kicad_pcb"
 
-    def test_write_board_deterministic_tstamps(
-        self, f0_spec: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_write_board_deterministic_tstamps(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
         """Written file should have deterministic tstamp values."""
         resolved = resolve(f0_spec)
         board_path1 = write_board(f0_spec, resolved, tmp_path / "run1")
@@ -297,9 +290,7 @@ class TestWriteBoard:
         # Files should be identical
         assert content1 == content2
 
-    def test_write_board_f1_with_vias(
-        self, f1_spec: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_write_board_f1_with_vias(self, f1_spec: CouponSpec, tmp_path: Path) -> None:
         """F1 board file should contain via elements."""
         resolved = resolve(f1_spec)
         board_path = write_board(f1_spec, resolved, tmp_path)
@@ -381,9 +372,7 @@ class TestF1BoardWriterWithAntipads:
         assert via_x_mm == expected_x_mm
         assert via_y_mm == expected_y_mm
 
-    def test_f1_board_includes_antipads(
-        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_f1_board_includes_antipads(self, f1_spec_with_antipads: CouponSpec, tmp_path: Path) -> None:
         """F1 board with antipads should include zone keepouts."""
         resolved = resolve(f1_spec_with_antipads)
         board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
@@ -395,9 +384,7 @@ class TestF1BoardWriterWithAntipads:
         # Should have zones on internal layers (unquoted in KiCad S-expr format)
         assert "In1.Cu" in content
 
-    def test_f1_board_includes_cutouts(
-        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_f1_board_includes_cutouts(self, f1_spec_with_antipads: CouponSpec, tmp_path: Path) -> None:
         """F1 board with plane cutouts should include zone keepouts."""
         resolved = resolve(f1_spec_with_antipads)
         board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
@@ -409,9 +396,7 @@ class TestF1BoardWriterWithAntipads:
         # Should have antipads (2) + cutouts (1) = 3 zones
         assert zone_count >= 3
 
-    def test_f1_antipad_zones_have_keepout(
-        self, f1_spec_with_antipads: CouponSpec
-    ) -> None:
+    def test_f1_antipad_zones_have_keepout(self, f1_spec_with_antipads: CouponSpec) -> None:
         """Antipad zones should have keepout properties set."""
         resolved = resolve(f1_spec_with_antipads)
         writer = BoardWriter(f1_spec_with_antipads, resolved)
@@ -425,9 +410,7 @@ class TestF1BoardWriterWithAntipads:
             keepout_elems = [e for e in zone if isinstance(e, list) and e[0] == "keepout"]
             assert len(keepout_elems) == 1
 
-    def test_f1_return_vias_positioned_around_discontinuity(
-        self, f1_spec: CouponSpec
-    ) -> None:
+    def test_f1_return_vias_positioned_around_discontinuity(self, f1_spec: CouponSpec) -> None:
         """Return vias should be positioned around the discontinuity center."""
         from formula_foundry.coupongen.builders.f1_builder import build_f1_coupon
 
@@ -456,14 +439,12 @@ class TestF1BoardWriterWithAntipads:
             # Calculate distance from center
             dx = via_x_nm - center_x
             dy = via_y_nm - center_y
-            distance = (dx ** 2 + dy ** 2) ** 0.5
+            distance = (dx**2 + dy**2) ** 0.5
 
             # Should be approximately at radius_nm (allow small rounding error)
             assert abs(distance - radius_nm) < 1000  # 1um tolerance
 
-    def test_f1_board_deterministic_with_antipads(
-        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_f1_board_deterministic_with_antipads(self, f1_spec_with_antipads: CouponSpec, tmp_path: Path) -> None:
         """F1 board with antipads should be deterministic."""
         resolved = resolve(f1_spec_with_antipads)
 
@@ -475,9 +456,7 @@ class TestF1BoardWriterWithAntipads:
 
         assert content1 == content2
 
-    def test_f1_antipad_polygon_vertices(
-        self, f1_spec_with_antipads: CouponSpec
-    ) -> None:
+    def test_f1_antipad_polygon_vertices(self, f1_spec_with_antipads: CouponSpec) -> None:
         """Antipad zones should have polygon vertices."""
         resolved = resolve(f1_spec_with_antipads)
         writer = BoardWriter(f1_spec_with_antipads, resolved)
@@ -504,9 +483,7 @@ class TestF1BoardWriterWithAntipads:
 class TestF1RequirementCoverageInBoardWriter:
     """Tests verifying REQ-M1-007 coverage in board writer."""
 
-    def test_req_m1_007_end_to_end_via_transition(
-        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_req_m1_007_end_to_end_via_transition(self, f1_spec_with_antipads: CouponSpec, tmp_path: Path) -> None:
         """REQ-M1-007: Full F1 coupon with all features generates valid board."""
         resolved = resolve(f1_spec_with_antipads)
         board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
@@ -521,7 +498,8 @@ class TestF1RequirementCoverageInBoardWriter:
         # 2. Footprints (connectors) - count standalone "(footprint" at start of element
         # Note: zones contain "footprints" as keepout attribute, so we count lines
         import re
-        footprint_matches = re.findall(r'\(footprint\s+[\w:]+', content)
+
+        footprint_matches = re.findall(r"\(footprint\s+[\w:]+", content)
         assert len(footprint_matches) == 2  # Left and right connectors
 
         # 3. Transmission line tracks
@@ -535,7 +513,7 @@ class TestF1RequirementCoverageInBoardWriter:
         # 5. Return vias (4 vias in RING pattern)
         # Count via elements (not "vias" attributes in keepout zones)
         # Via elements start with "(via" followed by newline, not "(vias"
-        via_count = len(re.findall(r'\(via\n', content))
+        via_count = len(re.findall(r"\(via\n", content))
         assert via_count == 5  # 1 signal + 4 return
 
         # 6. Antipads (zones on internal layers)

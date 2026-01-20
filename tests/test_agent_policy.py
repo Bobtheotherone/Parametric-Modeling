@@ -6,10 +6,8 @@ to enforce single-agent mode across all agent selection points.
 
 from __future__ import annotations
 
-import dataclasses
 import sys
 from pathlib import Path
-from typing import Dict, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -31,7 +29,6 @@ from bridge.loop import (
     set_agent_policy,
 )
 
-
 # -----------------------------
 # Test fixtures
 # -----------------------------
@@ -48,6 +45,7 @@ def mock_config() -> RunConfig:
         fallback_order=["codex", "claude"],
         enable_agents=["codex", "claude"],
         agent_scripts={"codex": "bridge/agents/codex.sh", "claude": "bridge/agents/claude.sh"},
+        agent_models={"codex": "(default)", "claude": "(default)"},
         quota_error_patterns={"codex": [], "claude": []},
         supports_write_access={"codex": True, "claude": True},
         parallel=MagicMock(),
@@ -163,9 +161,7 @@ class TestAgentPolicyPromptHeader:
 class TestOverrideNextAgent:
     """Test _override_next_agent respects policy."""
 
-    def test_forced_claude_overrides_codex_handoff(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_forced_claude_overrides_codex_handoff(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """When --only-claude, a codex handoff request is overridden to claude."""
         set_agent_policy(AgentPolicy(forced_agent="claude"))
         try:
@@ -177,9 +173,7 @@ class TestOverrideNextAgent:
         finally:
             set_agent_policy(AgentPolicy())
 
-    def test_forced_codex_overrides_claude_handoff(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_forced_codex_overrides_claude_handoff(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """When --only-codex, a claude handoff request is overridden to codex."""
         set_agent_policy(AgentPolicy(forced_agent="codex"))
         try:
@@ -191,9 +185,7 @@ class TestOverrideNextAgent:
         finally:
             set_agent_policy(AgentPolicy())
 
-    def test_no_forced_allows_normal_alternation(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_no_forced_allows_normal_alternation(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """Without forced agent, normal two-agent alternation works."""
         set_agent_policy(AgentPolicy(forced_agent=None))
         try:
@@ -208,9 +200,7 @@ class TestOverrideNextAgent:
 class TestPickFallback:
     """Test _pick_fallback respects policy."""
 
-    def test_forced_claude_returns_claude_on_fallback(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_forced_claude_returns_claude_on_fallback(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """When --only-claude, fallback always returns claude."""
         set_agent_policy(AgentPolicy(forced_agent="claude", runs_dir=mock_state.runs_dir))
         try:
@@ -219,9 +209,7 @@ class TestPickFallback:
         finally:
             set_agent_policy(AgentPolicy())
 
-    def test_forced_codex_returns_codex_on_fallback(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_forced_codex_returns_codex_on_fallback(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """When --only-codex, fallback always returns codex."""
         set_agent_policy(AgentPolicy(forced_agent="codex", runs_dir=mock_state.runs_dir))
         try:
@@ -230,9 +218,7 @@ class TestPickFallback:
         finally:
             set_agent_policy(AgentPolicy())
 
-    def test_no_forced_allows_fallback_to_other(
-        self, mock_config: RunConfig, mock_state: RunState
-    ) -> None:
+    def test_no_forced_allows_fallback_to_other(self, mock_config: RunConfig, mock_state: RunState) -> None:
         """Without forced agent, fallback can switch to other agent."""
         set_agent_policy(AgentPolicy(forced_agent=None))
         try:

@@ -99,9 +99,7 @@ def parse_length_nm(value: str | int | float) -> int:
             return _check_i64(int(text), "LengthNM")
         match = _LENGTH_RE.match(text)
         if not match:
-            raise ValueError(
-                "LengthNM string must be formatted like '0.25mm', '10mil', or '250um'."
-            )
+            raise ValueError("LengthNM string must be formatted like '0.25mm', '10mil', or '250um'.")
         number_text, unit = match.groups()
         unit = unit.lower()
         scale = _UNIT_SCALES_NM.get(unit)
@@ -155,9 +153,7 @@ def parse_angle_mdeg(value: str | int | float) -> int:
             return _check_i64(int(text), "AngleMdeg")
         match = _ANGLE_RE.match(text)
         if not match:
-            raise ValueError(
-                "AngleMdeg string must be formatted like '45deg', '90000mdeg', or '-180deg'."
-            )
+            raise ValueError("AngleMdeg string must be formatted like '45deg', '90000mdeg', or '-180deg'.")
         number_text, unit = match.groups()
         unit = unit.lower()
         scale = _ANGLE_SCALES_MDEG.get(unit)
@@ -192,9 +188,7 @@ def parse_frequency_hz(value: str | int | float) -> int:
             return _check_i64(int(text), "FrequencyHz")
         match = _FREQ_RE.match(text)
         if not match:
-            raise ValueError(
-                "FrequencyHz string must be formatted like '1GHz', '100MHz', or '1000000Hz'."
-            )
+            raise ValueError("FrequencyHz string must be formatted like '1GHz', '100MHz', or '1000000Hz'.")
         number_text, unit = match.groups()
         unit = unit.lower()
         scale = _FREQ_SCALES_HZ.get(unit)

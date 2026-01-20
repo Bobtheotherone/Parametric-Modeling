@@ -7,6 +7,7 @@ These tests validate:
 - Round-trip serialization
 - Edge cases and error handling
 """
+
 from __future__ import annotations
 
 import json

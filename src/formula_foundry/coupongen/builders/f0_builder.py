@@ -202,10 +202,7 @@ class F0CouponComposition:
     @property
     def total_trace_length_nm(self) -> int:
         """Total transmission line length in nm."""
-        return (
-            self.transmission_line.length_left_nm
-            + self.transmission_line.length_right_nm
-        )
+        return self.transmission_line.length_left_nm + self.transmission_line.length_right_nm
 
 
 class F0CouponBuilder:
@@ -234,10 +231,7 @@ class F0CouponBuilder:
         """
         validate_family(spec)
         if spec.coupon_family != FAMILY_F0:
-            raise ValueError(
-                f"F0CouponBuilder requires coupon_family={FAMILY_F0!r}, "
-                f"got {spec.coupon_family!r}"
-            )
+            raise ValueError(f"F0CouponBuilder requires coupon_family={FAMILY_F0!r}, got {spec.coupon_family!r}")
         self.spec = spec
         self.resolved = resolved
 

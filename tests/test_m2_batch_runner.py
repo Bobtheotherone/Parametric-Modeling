@@ -8,16 +8,14 @@ This module tests the batch simulation functionality including:
 - Aggregated result collection
 - Error handling and retries
 """
+
 from __future__ import annotations
 
-import json
-import tempfile
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 
 from formula_foundry.openems.batch_runner import (
@@ -25,7 +23,6 @@ from formula_foundry.openems.batch_runner import (
     BatchProgress,
     BatchResult,
     BatchSimulationRunner,
-    ProgressCallback,
     SimulationJob,
     SimulationJobResult,
     SimulationStatus,
@@ -41,7 +38,6 @@ from formula_foundry.openems.convergence import (
 )
 from formula_foundry.openems.geometry import GeometrySpec, StackupMaterialsSpec
 from formula_foundry.openems.sim_runner import (
-    SimulationError,
     SimulationExecutionError,
     SimulationResult,
     SimulationRunner,
@@ -51,12 +47,11 @@ from formula_foundry.openems.spec import (
     ExcitationSpec,
     FrequencySpec,
     GeometryRefSpec,
+    OpenEMSToolchainSpec,
     PortSpec,
     SimulationSpec,
     ToolchainSpec,
-    OpenEMSToolchainSpec,
 )
-
 
 # =============================================================================
 # Test Fixtures
@@ -96,7 +91,6 @@ def make_minimal_geometry() -> GeometrySpec:
         DiscontinuitySpec,
         GeometrySpec,
         LayerSpec,
-        StackupMaterialsSpec,
         StackupSpec,
         TransmissionLineSpec,
     )
@@ -659,9 +653,7 @@ class TestBatchSimulationRunner:
     def test_run_with_timeout(self, tmp_path):
         """Test handling simulation timeouts."""
         mock_sim_runner = MagicMock(spec=SimulationRunner)
-        mock_sim_runner.run.side_effect = SimulationTimeoutError(
-            "Simulation timed out after 3600 seconds"
-        )
+        mock_sim_runner.run.side_effect = SimulationTimeoutError("Simulation timed out after 3600 seconds")
 
         config = BatchConfig(validate_convergence=False, retry_failed=0)
         runner = BatchSimulationRunner(mock_sim_runner, config)
@@ -757,9 +749,7 @@ class TestBatchSimulationRunner:
         progress_updates = []
 
         def progress_callback(progress: BatchProgress) -> None:
-            progress_updates.append(
-                (progress.total, progress.completed, progress.running)
-            )
+            progress_updates.append((progress.total, progress.completed, progress.running))
 
         mock_result = make_mock_simulation_result(tmp_path / "output")
         mock_sim_runner = MagicMock(spec=SimulationRunner)
@@ -851,10 +841,7 @@ class TestUtilityFunctions:
 
     def test_create_batch_jobs(self, tmp_path):
         """Test creating batch jobs from specs."""
-        specs = [
-            (make_minimal_spec(f"sim_{i}"), make_minimal_geometry())
-            for i in range(3)
-        ]
+        specs = [(make_minimal_spec(f"sim_{i}"), make_minimal_geometry()) for i in range(3)]
 
         jobs = create_batch_jobs(
             specs,

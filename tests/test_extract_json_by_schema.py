@@ -10,7 +10,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -40,22 +40,23 @@ is_task_plan_schema = extract_module.is_task_plan_schema
 # Test fixtures
 # -----------------------------
 
+
 @pytest.fixture
-def task_plan_schema() -> Dict[str, Any]:
+def task_plan_schema() -> dict[str, Any]:
     """Load the actual task_plan.schema.json for testing."""
     schema_path = PROJECT_ROOT / "bridge" / "task_plan.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture
-def turn_schema() -> Dict[str, Any]:
+def turn_schema() -> dict[str, Any]:
     """Load the actual turn.schema.json for testing."""
     schema_path = PROJECT_ROOT / "bridge" / "turn.schema.json"
     return json.loads(schema_path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture
-def valid_task_plan() -> Dict[str, Any]:
+def valid_task_plan() -> dict[str, Any]:
     """A valid task plan object."""
     return {
         "milestone_id": "M2",
@@ -70,14 +71,14 @@ def valid_task_plan() -> Dict[str, Any]:
                 "estimated_intensity": "medium",
                 "locks": [],
                 "depends_on": [],
-                "solo": False
+                "solo": False,
             }
-        ]
+        ],
     }
 
 
 @pytest.fixture
-def valid_turn() -> Dict[str, Any]:
+def valid_turn() -> dict[str, Any]:
     """A valid turn object."""
     return {
         "agent": "claude",
@@ -90,20 +91,21 @@ def valid_turn() -> Dict[str, Any]:
         "requirement_progress": {
             "covered_req_ids": ["REQ-1"],
             "tests_added_or_modified": ["test_feature.py"],
-            "commands_run": ["pytest tests/"]
+            "commands_run": ["pytest tests/"],
         },
         "next_agent": "codex",
         "next_prompt": "Continue with the next task",
         "delegate_rationale": "Handing off to codex for implementation",
         "stats_refs": ["CL-1"],
         "needs_write_access": True,
-        "artifacts": []
+        "artifacts": [],
     }
 
 
 # -----------------------------
 # Test strip_fences
 # -----------------------------
+
 
 class TestStripFences:
     """Test markdown code fence removal."""
@@ -131,6 +133,7 @@ class TestStripFences:
 # -----------------------------
 # Test find_all_json_objects
 # -----------------------------
+
 
 class TestFindAllJsonObjects:
     """Test finding JSON objects in text."""
@@ -168,31 +171,24 @@ class TestFindAllJsonObjects:
 # Test validation
 # -----------------------------
 
+
 class TestValidateAgainstSchema:
     """Test JSON schema validation."""
 
-    def test_valid_task_plan(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_valid_task_plan(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Valid task plan passes validation."""
         assert validate_against_schema(valid_task_plan, task_plan_schema)
 
-    def test_invalid_task_plan_missing_key(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_invalid_task_plan_missing_key(self, task_plan_schema: dict[str, Any]) -> None:
         """Task plan missing required key fails validation."""
         invalid = {"milestone_id": "M2"}  # Missing other required keys
         assert not validate_against_schema(invalid, task_plan_schema)
 
-    def test_valid_turn(
-        self, turn_schema: Dict[str, Any], valid_turn: Dict[str, Any]
-    ) -> None:
+    def test_valid_turn(self, turn_schema: dict[str, Any], valid_turn: dict[str, Any]) -> None:
         """Valid turn passes validation."""
         assert validate_against_schema(valid_turn, turn_schema)
 
-    def test_invalid_turn_extra_property(
-        self, turn_schema: Dict[str, Any], valid_turn: Dict[str, Any]
-    ) -> None:
+    def test_invalid_turn_extra_property(self, turn_schema: dict[str, Any], valid_turn: dict[str, Any]) -> None:
         """Turn with extra property fails validation (additionalProperties: false)."""
         invalid = {**valid_turn, "extra_key": "not allowed"}
         # additionalProperties: false should cause this to fail
@@ -203,67 +199,42 @@ class TestValidateAgainstSchema:
 # Test extraction from Claude stream
 # -----------------------------
 
+
 class TestExtractFromClaudeStream:
     """Test extraction from Claude CLI stream output."""
 
-    def test_extract_direct_object(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_extract_direct_object(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Extracts a direct JSON object matching schema."""
         text = json.dumps(valid_task_plan)
         result = extract_from_claude_stream(text, task_plan_schema)
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_extract_from_result_event(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_extract_from_result_event(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Extracts JSON from a Claude CLI result event."""
-        result_event = {
-            "type": "result",
-            "result": json.dumps(valid_task_plan)
-        }
+        result_event = {"type": "result", "result": json.dumps(valid_task_plan)}
         text = json.dumps(result_event)
         result = extract_from_claude_stream(text, task_plan_schema)
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_extract_from_assistant_message(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_extract_from_assistant_message(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Extracts JSON from a Claude CLI assistant message."""
-        assistant_event = {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(valid_task_plan)
-                    }
-                ]
-            }
-        }
+        assistant_event = {"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(valid_task_plan)}]}}
         text = json.dumps(assistant_event)
         result = extract_from_claude_stream(text, task_plan_schema)
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_extract_from_code_fenced_result(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_extract_from_code_fenced_result(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Extracts JSON from code-fenced content in result."""
-        result_event = {
-            "type": "result",
-            "result": f"```json\n{json.dumps(valid_task_plan)}\n```"
-        }
+        result_event = {"type": "result", "result": f"```json\n{json.dumps(valid_task_plan)}\n```"}
         text = json.dumps(result_event)
         result = extract_from_claude_stream(text, task_plan_schema)
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_prefers_last_valid_candidate(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_prefers_last_valid_candidate(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """When multiple valid objects exist, prefers the last one."""
         plan1 = {**valid_task_plan, "rationale": "First plan"}
         plan2 = {**valid_task_plan, "rationale": "Second plan"}
@@ -273,9 +244,7 @@ class TestExtractFromClaudeStream:
         assert result is not None
         assert result["rationale"] == "Second plan"
 
-    def test_ignores_invalid_objects(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_ignores_invalid_objects(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Ignores objects that don't match schema."""
         invalid = {"not": "a task plan"}
         text = json.dumps(invalid) + "\n" + json.dumps(valid_task_plan)
@@ -283,9 +252,7 @@ class TestExtractFromClaudeStream:
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_returns_none_when_no_match(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_returns_none_when_no_match(self, task_plan_schema: dict[str, Any]) -> None:
         """Returns None when no valid object is found."""
         text = '{"not": "matching"} {"also": "invalid"}'
         result = extract_from_claude_stream(text, task_plan_schema)
@@ -296,11 +263,12 @@ class TestExtractFromClaudeStream:
 # Test realistic Claude CLI output
 # -----------------------------
 
+
 class TestRealisticClaudeOutput:
     """Test with realistic Claude CLI output formats."""
 
     def test_jsonlines_stream_with_init_and_result(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+        self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]
     ) -> None:
         """Handles realistic JSON Lines stream with init and result events."""
         stream = (
@@ -312,14 +280,9 @@ class TestRealisticClaudeOutput:
         assert result is not None
         assert result["milestone_id"] == "M2"
 
-    def test_handles_array_wrapper(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_handles_array_wrapper(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Handles output wrapped in an array."""
-        events = [
-            {"type": "init", "session_id": "abc"},
-            {"type": "result", "result": json.dumps(valid_task_plan)}
-        ]
+        events = [{"type": "init", "session_id": "abc"}, {"type": "result", "result": json.dumps(valid_task_plan)}]
         text = json.dumps(events)
         result = extract_from_claude_stream(text, task_plan_schema)
         assert result is not None
@@ -330,12 +293,11 @@ class TestRealisticClaudeOutput:
 # Integration tests
 # -----------------------------
 
+
 class TestScriptIntegration:
     """Test the script as a whole."""
 
-    def test_main_function_success(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
-    ) -> None:
+    def test_main_function_success(self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]) -> None:
         """Test main() function with valid input."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
@@ -343,23 +305,18 @@ class TestScriptIntegration:
             # Write test files
             raw_path = tmppath / "raw.txt"
             schema_path = tmppath / "schema.json"
-            out_path = tmppath / "out.json"
+            tmppath / "out.json"
 
             raw_path.write_text(json.dumps(valid_task_plan), encoding="utf-8")
             schema_path.write_text(json.dumps(task_plan_schema), encoding="utf-8")
 
             # Run extraction
-            result = extract_from_claude_stream(
-                raw_path.read_text(encoding="utf-8"),
-                task_plan_schema
-            )
+            result = extract_from_claude_stream(raw_path.read_text(encoding="utf-8"), task_plan_schema)
 
             assert result is not None
             assert result["milestone_id"] == "M2"
 
-    def test_turn_schema_extraction(
-        self, turn_schema: Dict[str, Any], valid_turn: Dict[str, Any]
-    ) -> None:
+    def test_turn_schema_extraction(self, turn_schema: dict[str, Any], valid_turn: dict[str, Any]) -> None:
         """Test extraction works for turn schema too."""
         text = json.dumps(valid_turn)
         result = extract_from_claude_stream(text, turn_schema)
@@ -372,6 +329,7 @@ class TestScriptIntegration:
 # ORCH_SCHEMA_KIND environment variable tests
 # -----------------------------
 
+
 class TestOrchSchemaKindBehavior:
     """Test that ORCH_SCHEMA_KIND affects wrapper behavior.
 
@@ -381,7 +339,7 @@ class TestOrchSchemaKindBehavior:
     """
 
     def test_task_plan_schema_has_different_keys_than_turn(
-        self, task_plan_schema: Dict[str, Any], turn_schema: Dict[str, Any]
+        self, task_plan_schema: dict[str, Any], turn_schema: dict[str, Any]
     ) -> None:
         """Verify task_plan and turn schemas have different required keys."""
         task_plan_required = set(task_plan_schema.get("required", []))
@@ -392,9 +350,7 @@ class TestOrchSchemaKindBehavior:
         # milestone_id is the only expected overlap
         assert overlap == {"milestone_id"}, f"Unexpected overlap: {overlap}"
 
-    def test_turn_normalized_output_fails_task_plan_schema(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_turn_normalized_output_fails_task_plan_schema(self, task_plan_schema: dict[str, Any]) -> None:
         """A turn-normalized output should fail task_plan schema validation.
 
         This is the root cause of the bug: turn normalization adds keys like
@@ -409,17 +365,13 @@ class TestOrchSchemaKindBehavior:
             "project_complete": False,
             "summary": "Some summary",
             "gates_passed": [],
-            "requirement_progress": {
-                "covered_req_ids": [],
-                "tests_added_or_modified": [],
-                "commands_run": []
-            },
+            "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
             "next_agent": "codex",
             "next_prompt": "Continue",
             "delegate_rationale": "",
             "stats_refs": ["CL-1"],
             "needs_write_access": True,
-            "artifacts": []
+            "artifacts": [],
         }
 
         # This should FAIL task_plan validation (additional properties not allowed)
@@ -429,6 +381,7 @@ class TestOrchSchemaKindBehavior:
 # -----------------------------
 # Task Plan Normalization tests
 # -----------------------------
+
 
 class TestTaskPlanNormalization:
     """Test task plan normalization for common model drift issues."""
@@ -457,10 +410,10 @@ class TestTaskPlanNormalization:
                     "preferred_agent": "codex",
                     "intensity": "low",  # Wrong key
                     "locks": [],
-                    "solo": False
+                    "solo": False,
                     # Note: depends_on is missing
                 }
-            ]
+            ],
         }
         normalized = normalize_task_plan(plan)
         task = normalized["tasks"][0]
@@ -483,9 +436,9 @@ class TestTaskPlanNormalization:
                     "estimated_intensity": "medium",
                     "locks": [],
                     "dependencies": ["T0"],  # Wrong key
-                    "solo": False
+                    "solo": False,
                 }
-            ]
+            ],
         }
         normalized = normalize_task_plan(plan)
         task = normalized["tasks"][0]
@@ -508,9 +461,9 @@ class TestTaskPlanNormalization:
                     "estimated_intensity": "high",
                     "locks": [],
                     "depends_on": [],
-                    "solo": True
+                    "solo": True,
                 }
-            ]
+            ],
         }
         normalized = normalize_task_plan(plan)
         task = normalized["tasks"][0]
@@ -530,10 +483,10 @@ class TestTaskPlanNormalization:
                     "title": "Task 1",
                     "description": "Desc",
                     "preferred_agent": "codex",
-                    "estimated_intensity": "low"
+                    "estimated_intensity": "low",
                     # Missing: locks, depends_on, solo
                 }
-            ]
+            ],
         }
         normalized = normalize_task_plan(plan)
         task = normalized["tasks"][0]
@@ -558,9 +511,9 @@ class TestTaskPlanNormalization:
                     "locks": [],
                     "depends_on": [],
                     "solo": False,
-                    "extra_task_key": "should be removed"
+                    "extra_task_key": "should be removed",
                 }
-            ]
+            ],
         }
         normalized = normalize_task_plan(plan)
         assert "extra_top_key" not in normalized
@@ -581,18 +534,16 @@ class TestTaskPlanNormalization:
                     "estimated_intensity": "low",
                     "locks": [],
                     "depends_on": [],
-                    "solo": False
+                    "solo": False,
                 }
-            ]
+            ],
         }
         wrapped = {"task_plan": inner_plan}
         normalized = normalize_task_plan(wrapped)
         assert "task_plan" not in normalized
         assert normalized["milestone_id"] == "M1"
 
-    def test_extraction_normalizes_drifted_plan(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_extraction_normalizes_drifted_plan(self, task_plan_schema: dict[str, Any]) -> None:
         """Full extraction test: plan with wrong keys gets normalized and validates."""
         # This simulates what Claude might output with model drift
         drifted_plan = {
@@ -609,7 +560,7 @@ class TestTaskPlanNormalization:
                     "locks": ["M2-core"],
                     # Missing: depends_on, solo
                 }
-            ]
+            ],
         }
 
         # The raw plan should NOT validate
@@ -634,9 +585,7 @@ class TestTaskPlanNormalization:
         # Final result should validate
         assert validate_against_schema(result, task_plan_schema)
 
-    def test_extraction_normalizes_wrapped_plan(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_extraction_normalizes_wrapped_plan(self, task_plan_schema: dict[str, Any]) -> None:
         """Extraction handles {"task_plan": {...}} wrapper."""
         inner_plan = {
             "milestone_id": "M3",
@@ -649,10 +598,10 @@ class TestTaskPlanNormalization:
                     "description": "Description",
                     "preferred_agent": "claude",
                     "intensity": "high",  # Wrong key
-                    "locks": []
+                    "locks": [],
                     # Missing depends_on, solo
                 }
-            ]
+            ],
         }
         wrapped = {"task_plan": inner_plan}
 
@@ -663,9 +612,7 @@ class TestTaskPlanNormalization:
         assert result["milestone_id"] == "M3"
         assert validate_against_schema(result, task_plan_schema)
 
-    def test_extraction_from_claude_assistant_message_normalizes(
-        self, task_plan_schema: Dict[str, Any]
-    ) -> None:
+    def test_extraction_from_claude_assistant_message_normalizes(self, task_plan_schema: dict[str, Any]) -> None:
         """Test normalization works for plan embedded in Claude assistant message."""
         drifted_plan = {
             "milestone_id": "M1",
@@ -680,23 +627,13 @@ class TestTaskPlanNormalization:
                     "intensity": "low",  # Wrong key
                     "dependencies": [],  # Wrong key
                     "locks": [],
-                    "solo": False
+                    "solo": False,
                 }
-            ]
+            ],
         }
 
         # Wrap in Claude CLI assistant message format
-        assistant_event = {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(drifted_plan)
-                    }
-                ]
-            }
-        }
+        assistant_event = {"type": "assistant", "message": {"content": [{"type": "text", "text": json.dumps(drifted_plan)}]}}
 
         stream = json.dumps(assistant_event)
         result = extract_from_claude_stream(stream, task_plan_schema)
@@ -712,6 +649,7 @@ class TestTaskPlanNormalization:
 # -----------------------------
 # Regression tests for specific failure patterns
 # -----------------------------
+
 
 class TestRegressionProseWithFencedJson:
     """Regression test for run 20260120T100520Z failure.
@@ -732,24 +670,18 @@ class TestRegressionProseWithFencedJson:
 
     def test_strip_fences_with_prose_before_and_after(self) -> None:
         """strip_fences should extract fenced content even with surrounding prose."""
-        text = (
-            "Here is my analysis of the situation.\n\n"
-            "```json\n"
-            '{"key": "value"}\n'
-            "```\n\n"
-            "That concludes my response."
-        )
+        text = 'Here is my analysis of the situation.\n\n```json\n{"key": "value"}\n```\n\nThat concludes my response.'
         result = strip_fences(text)
         assert result == '{"key": "value"}'
 
     def test_strip_fences_with_prose_before_fence(self) -> None:
         """strip_fences handles prose before code fence."""
-        text = "Some explanation text\n```json\n{\"a\": 1}\n```"
+        text = 'Some explanation text\n```json\n{"a": 1}\n```'
         result = strip_fences(text)
         assert result == '{"a": 1}'
 
     def test_extract_from_result_with_prose_and_fenced_json(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+        self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]
     ) -> None:
         """Extracts JSON from result event where plan is fenced but surrounded by prose.
 
@@ -766,12 +698,7 @@ class TestRegressionProseWithFencedJson:
             f"```json\n{json.dumps(valid_task_plan)}\n```"
         )
 
-        result_event = {
-            "type": "result",
-            "subtype": "success",
-            "result": result_text,
-            "session_id": "test-session"
-        }
+        result_event = {"type": "result", "subtype": "success", "result": result_text, "session_id": "test-session"}
 
         # Wrap in an array like Claude CLI does
         stream = json.dumps([result_event])
@@ -782,7 +709,7 @@ class TestRegressionProseWithFencedJson:
         assert validate_against_schema(result, task_plan_schema)
 
     def test_extract_from_multiline_stream_with_tool_events(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+        self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]
     ) -> None:
         """Handles multi-line stream with tool_use/tool_result events.
 
@@ -796,60 +723,29 @@ class TestRegressionProseWithFencedJson:
             {
                 "type": "assistant",
                 "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_123",
-                            "name": "Read",
-                            "input": {"file_path": "/some/file.md"}
-                        }
-                    ]
-                }
+                    "content": [{"type": "tool_use", "id": "toolu_123", "name": "Read", "input": {"file_path": "/some/file.md"}}]
+                },
             },
             {
                 "type": "user",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_123",
-                            "content": "File content here"
-                        }
-                    ]
-                }
+                "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_123", "content": "File content here"}]},
             },
-            {
-                "type": "result",
-                "subtype": "success",
-                "result": "Analysis from first session without a valid plan"
-            }
+            {"type": "result", "subtype": "success", "result": "Analysis from first session without a valid plan"},
         ]
 
         # Line 2: Second session with the actual task plan in fenced JSON
         result_with_fenced_plan = (
-            "After thorough analysis, here is the task plan:\n\n"
-            f"```json\n{json.dumps(valid_task_plan)}\n```"
+            f"After thorough analysis, here is the task plan:\n\n```json\n{json.dumps(valid_task_plan)}\n```"
         )
         line2_events = [
             {"type": "system", "subtype": "init", "session_id": "session2"},
             {
                 "type": "assistant",
                 "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_456",
-                            "name": "Grep",
-                            "input": {"pattern": "milestone"}
-                        }
-                    ]
-                }
+                    "content": [{"type": "tool_use", "id": "toolu_456", "name": "Grep", "input": {"pattern": "milestone"}}]
+                },
             },
-            {
-                "type": "result",
-                "subtype": "success",
-                "result": result_with_fenced_plan
-            }
+            {"type": "result", "subtype": "success", "result": result_with_fenced_plan},
         ]
 
         # Combine as two lines (NDJSON-like format)
@@ -861,22 +757,17 @@ class TestRegressionProseWithFencedJson:
         assert validate_against_schema(result, task_plan_schema)
 
     def test_extract_json_embedded_in_prose_without_fences(
-        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+        self, task_plan_schema: dict[str, Any], valid_task_plan: dict[str, Any]
     ) -> None:
         """Extracts JSON embedded in prose even without code fences.
 
         Sometimes Claude outputs JSON inline without fences.
         """
         result_text = (
-            "Based on my analysis, here is the task plan: "
-            f"{json.dumps(valid_task_plan)} "
-            "This should handle all the requirements."
+            f"Based on my analysis, here is the task plan: {json.dumps(valid_task_plan)} This should handle all the requirements."
         )
 
-        result_event = {
-            "type": "result",
-            "result": result_text
-        }
+        result_event = {"type": "result", "result": result_text}
 
         stream = json.dumps([result_event])
         result = extract_from_claude_stream(stream, task_plan_schema)

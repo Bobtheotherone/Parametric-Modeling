@@ -17,23 +17,23 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import collections
+import concurrent.futures
+import contextlib
 import dataclasses
 import datetime as dt
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import textwrap
 import threading
-import traceback
-import collections
-import queue
-import signal
 import time
-import concurrent.futures
+import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # When run as `python bridge/loop.py`, Python sets sys.path[0] to `bridge/`.
 # We want to import sibling packages (e.g. `tools`) from the repo root.
@@ -41,7 +41,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-AGENTS: Tuple[str, ...] = ("codex", "claude")
+AGENTS: tuple[str, ...] = ("codex", "claude")
 
 
 # -----------------------------
@@ -68,14 +68,14 @@ class RunConfig:
     quota_retry_attempts: int
     max_total_calls: int
     max_json_correction_attempts: int
-    fallback_order: List[str]
-    enable_agents: List[str]
+    fallback_order: list[str]
+    enable_agents: list[str]
 
-    agent_scripts: Dict[str, str]
-    quota_error_patterns: Dict[str, List[str]]
-    supports_write_access: Dict[str, bool]
+    agent_scripts: dict[str, str]
+    agent_models: dict[str, str]
+    quota_error_patterns: dict[str, list[str]]
+    supports_write_access: dict[str, bool]
     parallel: ParallelSettings
-
 
 
 @dataclasses.dataclass
@@ -88,10 +88,10 @@ class RunState:
     design_doc_path: Path
 
     total_calls: int = 0
-    call_counts: Dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
-    quota_failures: Dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
-    disabled_by_quota: Dict[str, bool] = dataclasses.field(default_factory=lambda: {a: False for a in AGENTS})
-    history: List[Dict[str, Any]] = dataclasses.field(default_factory=list)
+    call_counts: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
+    quota_failures: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
+    disabled_by_quota: dict[str, bool] = dataclasses.field(default_factory=lambda: {a: False for a in AGENTS})
+    history: list[dict[str, Any]] = dataclasses.field(default_factory=list)
 
     # Dynamic write access policy (set by previous turn)
     grant_write_access: bool = False
@@ -104,6 +104,7 @@ class RunState:
 
 class AgentPolicyViolation(Exception):
     """Raised when code attempts to use an agent that violates the policy."""
+
     pass
 
 
@@ -115,9 +116,10 @@ class AgentPolicy:
     selections must go through this policy and will be overridden to use
     only the forced agent.
     """
-    forced_agent: Optional[str] = None  # Set by --only-* flags
-    allowed_agents: Tuple[str, ...] = AGENTS
-    runs_dir: Optional[Path] = None  # For writing violation artifacts
+
+    forced_agent: str | None = None  # Set by --only-* flags
+    allowed_agents: tuple[str, ...] = AGENTS
+    runs_dir: Path | None = None  # For writing violation artifacts
 
     def enforce(self, requested_agent: str, context: str = "") -> str:
         """Enforce the agent policy, returning the agent to use.
@@ -213,7 +215,7 @@ the orchestrator's agent selection logic.
 
 
 # Global policy instance (set during main() based on CLI flags)
-_agent_policy: Optional[AgentPolicy] = None
+_agent_policy: AgentPolicy | None = None
 
 
 def get_agent_policy() -> AgentPolicy:
@@ -259,14 +261,10 @@ def _truncate(text: str, limit: int) -> str:
     # Keep both ends: helpful for logs that end with stack traces.
     head = max(0, int(limit * 0.7))
     tail = max(0, limit - head - 64)
-    return (
-        text[:head]
-        + "\n\n[...TRUNCATED... try opening the raw log file for full output ...]\n\n"
-        + text[-tail:]
-    )
+    return text[:head] + "\n\n[...TRUNCATED... try opening the raw log file for full output ...]\n\n" + text[-tail:]
 
 
-def _extract_stats_ids(stats_md_text: str) -> List[str]:
+def _extract_stats_ids(stats_md_text: str) -> list[str]:
     """Extract stable stats identifiers from STATS.md.
 
     IDs are intentionally simple: CX-* and CL-* only (two-agent mode).
@@ -281,7 +279,7 @@ def _parse_milestone_id(design_doc_text: str) -> str:
     return m.group(1) if m else "M0"
 
 
-def _parse_all_milestones(design_doc_text: str) -> List[str]:
+def _parse_all_milestones(design_doc_text: str) -> list[str]:
     """Parse all milestone IDs from a design document that may contain multiple milestone docs.
 
     Looks for patterns like:
@@ -313,12 +311,12 @@ def _extract_milestone_from_task_id(task_id: str, fallback: str = "M0") -> str:
 
 
 def _run_cmd(
-    cmd: List[str],
+    cmd: list[str],
     cwd: Path,
-    env: Dict[str, str],
+    env: dict[str, str],
     *,
     stream: bool = False,
-) -> Tuple[int, str, str]:
+) -> tuple[int, str, str]:
     """Run a subprocess.
 
     When stream=True, stdout/stderr are forwarded live while also being captured.
@@ -338,10 +336,10 @@ def _run_cmd(
         bufsize=1,
     )
 
-    out_chunks: List[str] = []
-    err_chunks: List[str] = []
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
 
-    def _pump(src, sink, chunks: List[str]) -> None:
+    def _pump(src, sink, chunks: list[str]) -> None:
         try:
             assert src is not None
             for line in iter(src.readline, ""):
@@ -349,10 +347,8 @@ def _run_cmd(
                 sink.flush()
                 chunks.append(line)
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 src.close()
-            except Exception:
-                pass
 
     t_out = threading.Thread(target=_pump, args=(proc.stdout, sys.stdout, out_chunks), daemon=True)
     t_err = threading.Thread(target=_pump, args=(proc.stderr, sys.stderr, err_chunks), daemon=True)
@@ -369,7 +365,8 @@ def _run_cmd(
 # Resource monitoring (parallel runner)
 # -----------------------------
 
-def _total_ram_bytes() -> Optional[int]:
+
+def _total_ram_bytes() -> int | None:
     """Best-effort total physical RAM bytes (no external deps)."""
     # POSIX sysconf (Linux + many Unixes)
     try:
@@ -435,7 +432,7 @@ def _parse_ps_time_to_seconds(s: str) -> float:
     return float(days * 86400 + h * 3600 + m * 60 + sec)
 
 
-def _ps_list_pids_in_pgid(pgid: int) -> List[int]:
+def _ps_list_pids_in_pgid(pgid: int) -> list[int]:
     """Return pids in a process group via ps (portable-ish)."""
     candidates = [
         ["ps", "-o", "pid=", "-g", str(pgid)],
@@ -444,7 +441,7 @@ def _ps_list_pids_in_pgid(pgid: int) -> List[int]:
     for cmd in candidates:
         try:
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-            pids: List[int] = []
+            pids: list[int] = []
             for tok in out.split():
                 tok = tok.strip()
                 if tok.isdigit():
@@ -456,7 +453,7 @@ def _ps_list_pids_in_pgid(pgid: int) -> List[int]:
     return []
 
 
-def _ps_sample_pids(pids: List[int]) -> Tuple[float, int]:
+def _ps_sample_pids(pids: list[int]) -> tuple[float, int]:
     """Return (total_cpu_time_seconds, total_rss_bytes) for pids via ps."""
     if not pids:
         return 0.0, 0
@@ -493,7 +490,7 @@ def _ps_sample_pids(pids: List[int]) -> Tuple[float, int]:
 class MonitoredResult:
     returncode: int
     killed_for_resources: bool
-    kill_reason: Optional[str]
+    kill_reason: str | None
     max_cpu_pct_total: float
     max_mem_pct_total: float
     tail_stdout: str
@@ -509,10 +506,8 @@ def _terminate_process_group(proc: subprocess.Popen, *, grace_s: float) -> None:
     try:
         os.killpg(proc.pid, signal.SIGINT)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             proc.send_signal(signal.SIGINT)
-        except Exception:
-            pass
 
     t0 = time.monotonic()
     while time.monotonic() - t0 < max(0.5, grace_s * 0.5):
@@ -524,10 +519,8 @@ def _terminate_process_group(proc: subprocess.Popen, *, grace_s: float) -> None:
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             proc.terminate()
-        except Exception:
-            pass
 
     t1 = time.monotonic()
     while time.monotonic() - t1 < max(0.5, grace_s * 0.4):
@@ -539,16 +532,14 @@ def _terminate_process_group(proc: subprocess.Popen, *, grace_s: float) -> None:
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:
-            pass
 
 
 def _run_cmd_monitored(
-    cmd: List[str],
+    cmd: list[str],
     cwd: Path,
-    env: Dict[str, str],
+    env: dict[str, str],
     *,
     prefix: str,
     raw_log_path: Path,
@@ -597,7 +588,7 @@ def _run_cmd_monitored(
     num_cores = os.cpu_count() or 1
 
     killed_for_resources = False
-    kill_reason: Optional[str] = None
+    kill_reason: str | None = None
     max_cpu_pct = 0.0
     max_mem_pct = 0.0
 
@@ -614,7 +605,7 @@ def _run_cmd_monitored(
         )
 
         # Resource monitor state
-        prev_cpu_time: Optional[float] = None
+        prev_cpu_time: float | None = None
         prev_t = time.monotonic()
         consecutive_hits = 0
 
@@ -644,7 +635,7 @@ def _run_cmd_monitored(
             # Line truncation
             out_line = line
             if terminal_max_line_length > 0 and len(out_line) > terminal_max_line_length:
-                out_line = out_line[:terminal_max_line_length] + '...\n'
+                out_line = out_line[:terminal_max_line_length] + "...\n"
 
             # Prefix each physical line
             # Preserve newlines by splitting; cheaper than regex.
@@ -659,10 +650,8 @@ def _run_cmd_monitored(
                 for line in iter(src.readline, ""):
                     _emit(line, is_err=is_err)
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     src.close()
-                except Exception:
-                    pass
 
         t_out = threading.Thread(target=_pump, args=(proc.stdout,), kwargs={"is_err": False}, daemon=True)
         t_err = threading.Thread(target=_pump, args=(proc.stderr,), kwargs={"is_err": True}, daemon=True)
@@ -738,12 +727,13 @@ def _run_cmd_monitored(
         tail_stderr="".join(tail_err),
     )
 
+
 def _git_snapshot(project_root: Path) -> str:
     """A compact repo snapshot embedded into the prompt."""
 
     env = os.environ.copy()
 
-    def safe(cmd: List[str]) -> str:
+    def safe(cmd: list[str]) -> str:
         rc, out, err = _run_cmd(cmd, cwd=project_root, env=env, stream=False)
         if rc != 0:
             return f"$ {' '.join(cmd)}\n(rc={rc})\n{(out + err).strip()}"
@@ -786,14 +776,16 @@ def load_config(config_path: Path) -> RunConfig:
 
     agents_cfg = data.get("agents", {})
 
-    agent_scripts: Dict[str, str] = {}
-    quota_pats: Dict[str, List[str]] = {}
-    supports_write: Dict[str, bool] = {}
+    agent_scripts: dict[str, str] = {}
+    agent_models: dict[str, str] = {}
+    quota_pats: dict[str, list[str]] = {}
+    supports_write: dict[str, bool] = {}
 
     for a in AGENTS:
         if a not in agents_cfg:
             raise ValueError(f"Missing agent in config: {a}")
         agent_scripts[a] = str(agents_cfg[a].get("script", ""))
+        agent_models[a] = str(agents_cfg[a].get("model", "(default)"))
         quota_pats[a] = list(agents_cfg[a].get("quota_error_patterns", []))
         supports_write[a] = bool(agents_cfg[a].get("supports_write_access", False))
 
@@ -818,6 +810,7 @@ def load_config(config_path: Path) -> RunConfig:
         fallback_order=fallback_order,
         enable_agents=enable_agents,
         agent_scripts=agent_scripts,
+        agent_models=agent_models,
         quota_error_patterns=quota_pats,
         supports_write_access=supports_write,
         parallel=parallel,
@@ -837,11 +830,11 @@ def build_prompt(
     milestone_id: str,
     repo_info: str,
     verify_report_text: str,
-    history: List[Dict[str, Any]],
+    history: list[dict[str, Any]],
     next_prompt: str,
-    call_counts: Dict[str, int],
-    disabled_by_quota: Dict[str, bool],
-    stats_ids: List[str],
+    call_counts: dict[str, int],
+    disabled_by_quota: dict[str, bool],
+    stats_ids: list[str],
 ) -> str:
     last_summaries = "\n".join([f"- ({h['agent']}) {h['summary']}" for h in history[-4:]])
 
@@ -860,7 +853,7 @@ def build_prompt(
     # Get agent policy header if in forced mode
     policy_header = get_agent_policy().get_prompt_header()
 
-    parts: List[str] = [
+    parts: list[str] = [
         system_prompt.strip(),
     ]
 
@@ -869,17 +862,19 @@ def build_prompt(
         parts.append("\n\n")
         parts.append(policy_header.strip())
 
-    parts.extend([
-        "\n\n---\n\n# Orchestrator State (read-only)\n",
-        state_blob,
-        "\n\n---\n\n# Milestone Spec (DESIGN_DOCUMENT.md)\n",
-        _truncate(design_doc_text.strip(), 20000),
-        "\n\n---\n\n# Verification Report (tools.verify)\n",
-        _truncate(verify_report_text.strip(), 20000),
-        "\n\n---\n\n# Repo Snapshot\n",
-        _truncate(repo_info.strip(), 20000),
-        "\n\n---\n\n",
-    ])
+    parts.extend(
+        [
+            "\n\n---\n\n# Orchestrator State (read-only)\n",
+            state_blob,
+            "\n\n---\n\n# Milestone Spec (DESIGN_DOCUMENT.md)\n",
+            _truncate(design_doc_text.strip(), 20000),
+            "\n\n---\n\n# Verification Report (tools.verify)\n",
+            _truncate(verify_report_text.strip(), 20000),
+            "\n\n---\n\n# Repo Snapshot\n",
+            _truncate(repo_info.strip(), 20000),
+            "\n\n---\n\n",
+        ]
+    )
 
     if last_summaries.strip():
         parts += ["# Recent Turn Summaries\n", _truncate(last_summaries.strip(), 5000), "\n\n---\n\n"]
@@ -937,7 +932,9 @@ def _try_parse_json(text: str) -> Any:
     raise ValueError("unbalanced braces in output")
 
 
-def _validate_turn(obj: Any, *, expected_agent: str, expected_milestone_id: Optional[str] = None, stats_id_set: set[str]) -> Tuple[bool, str]:
+def _validate_turn(
+    obj: Any, *, expected_agent: str, expected_milestone_id: str | None = None, stats_id_set: set[str]
+) -> tuple[bool, str]:
     if not isinstance(obj, dict):
         return False, "turn is not an object"
 
@@ -1032,7 +1029,7 @@ def _is_quota_error(agent: str, text: str, config: RunConfig) -> bool:
     return any(re.search(p, text, flags=re.IGNORECASE) for p in pats)
 
 
-def _pick_fallback(config: RunConfig, state: RunState, current_agent: Optional[str]) -> str:
+def _pick_fallback(config: RunConfig, state: RunState, current_agent: str | None) -> str:
     policy = get_agent_policy()
 
     # In forced mode, always return the forced agent (no fallback to other agent)
@@ -1059,13 +1056,13 @@ def _pick_fallback(config: RunConfig, state: RunState, current_agent: Optional[s
     return enabled_others[0]
 
 
-def _other_agent(agent: str) -> Optional[str]:
+def _other_agent(agent: str) -> str | None:
     if agent not in AGENTS:
         return None
     return "claude" if agent == "codex" else "codex"
 
 
-def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> Tuple[str, Optional[str]]:
+def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> tuple[str, str | None]:
     policy = get_agent_policy()
 
     # In forced mode, always return the forced agent
@@ -1121,18 +1118,18 @@ def _checkout_agent_branch(project_root: Path, run_id: str) -> None:
         _run_cmd(["git", "checkout", branch], cwd=project_root, env=os.environ.copy())
 
 
-def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> Tuple[int, str, str]:
+def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[int, str, str]:
     cmd = [sys.executable, "-m", "tools.verify", "--json", str(out_json)]
     if strict_git:
         cmd.append("--strict-git")
     return _run_cmd(cmd, cwd=project_root, env=os.environ.copy())
 
 
-def _completion_gates_ok(project_root: Path) -> Tuple[bool, str]:
+def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
     """The repo is 'complete' when strict verify passes and git status is clean."""
 
     env = os.environ.copy()
-    rc, out, err = _run_cmd([sys.executable, "-m", "tools.verify", "--strict-git"], cwd=project_root, env=env)
+    rc, out, err = _run_cmd([sys.executable, "-m", "tools.verify", "--strict-git", "--include-m0"], cwd=project_root, env=env)
     if rc != 0:
         return False, (out + "\n" + err).strip()
 
@@ -1158,7 +1155,9 @@ def _run_agent_live(
     out_path: Path,
     config: RunConfig,
     state: RunState,
-) -> Tuple[int, str, str]:
+    stream_agent_output: str = "none",
+    call_dir: Path | None = None,
+) -> tuple[int, str, str]:
     script_rel = config.agent_scripts.get(agent, "")
     if not script_rel:
         return 1, "", f"No script configured for agent {agent}"
@@ -1183,10 +1182,89 @@ def _run_agent_live(
     # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
     env["ORCH_SCHEMA_KIND"] = "turn"
 
+    # Check if streaming is enabled
+    if stream_agent_output != "none" and call_dir:
+        return _run_cmd_with_streaming(
+            cmd=cmd,
+            cwd=state.project_root,
+            env=env,
+            agent=agent,
+            stream_agent_output=stream_agent_output,
+            call_dir=call_dir,
+        )
+
     return _run_cmd(cmd, cwd=state.project_root, env=env, stream=True)
 
 
-def _run_agent_mock(*, agent: str, scenario: Dict[str, Any], mock_indices: Dict[str, int]) -> Tuple[int, str, str]:
+def _run_cmd_with_streaming(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    agent: str,
+    stream_agent_output: str,
+    call_dir: Path,
+) -> tuple[int, str, str]:
+    """Run subprocess with prefixed streaming and log file output."""
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+    )
+
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
+
+    stdout_log = call_dir / "agent_stdout.log"
+    stderr_log = call_dir / "agent_stderr.log"
+    _ensure_dir(call_dir)
+
+    stream_stdout = stream_agent_output in ("stdout", "both")
+    stream_stderr = stream_agent_output in ("stderr", "both")
+
+    def _pump_stdout(src: Any, chunks: list[str], log_path: Path) -> None:
+        try:
+            with log_path.open("w", encoding="utf-8") as log_file:
+                for line in iter(src.readline, ""):
+                    chunks.append(line)
+                    log_file.write(line)
+                    log_file.flush()
+                    if stream_stdout:
+                        sys.stdout.write(f"[{agent}][stdout] {line}")
+                        sys.stdout.flush()
+        finally:
+            with contextlib.suppress(Exception):
+                src.close()
+
+    def _pump_stderr(src: Any, chunks: list[str], log_path: Path) -> None:
+        try:
+            with log_path.open("w", encoding="utf-8") as log_file:
+                for line in iter(src.readline, ""):
+                    chunks.append(line)
+                    log_file.write(line)
+                    log_file.flush()
+                    if stream_stderr:
+                        sys.stderr.write(f"[{agent}][stderr] {line}")
+                        sys.stderr.flush()
+        finally:
+            with contextlib.suppress(Exception):
+                src.close()
+
+    t_out = threading.Thread(target=_pump_stdout, args=(proc.stdout, out_chunks, stdout_log), daemon=True)
+    t_err = threading.Thread(target=_pump_stderr, args=(proc.stderr, err_chunks, stderr_log), daemon=True)
+    t_out.start()
+    t_err.start()
+
+    rc = proc.wait()
+    t_out.join(timeout=2)
+    t_err.join(timeout=2)
+    return rc, "".join(out_chunks), "".join(err_chunks)
+
+
+def _run_agent_mock(*, agent: str, scenario: dict[str, Any], mock_indices: dict[str, int]) -> tuple[int, str, str]:
     block = scenario.get("agents", {}).get(agent, [])
     idx = mock_indices.get(agent, 0)
     if idx >= len(block):
@@ -1206,11 +1284,10 @@ def _run_agent_mock(*, agent: str, scenario: Dict[str, Any], mock_indices: Dict[
     return 0, json.dumps(resp, indent=2, sort_keys=True), ""
 
 
-
-
 # -----------------------------
 # Parallel runner
 # -----------------------------
+
 
 @dataclasses.dataclass
 class ParallelTask:
@@ -1219,8 +1296,8 @@ class ParallelTask:
     description: str
     agent: str
     intensity: str = "low"  # low|medium|high
-    locks: List[str] = dataclasses.field(default_factory=list)
-    depends_on: List[str] = dataclasses.field(default_factory=list)
+    locks: list[str] = dataclasses.field(default_factory=list)
+    depends_on: list[str] = dataclasses.field(default_factory=list)
     solo: bool = False
 
     # runtime
@@ -1234,22 +1311,22 @@ class ParallelTask:
     #   pending_rerun - agent returned work_completed=false (root failure, needs retry)
     #   resource_killed - killed due to resource limits (root failure)
     status: str = "pending"
-    worker_id: Optional[int] = None
-    branch: Optional[str] = None
-    base_sha: Optional[str] = None
-    worktree_path: Optional[Path] = None
-    task_dir: Optional[Path] = None
-    prompt_path: Optional[Path] = None
-    out_path: Optional[Path] = None
-    raw_log_path: Optional[Path] = None
-    manual_path: Optional[Path] = None
-    error: Optional[str] = None
+    worker_id: int | None = None
+    branch: str | None = None
+    base_sha: str | None = None
+    worktree_path: Path | None = None
+    task_dir: Path | None = None
+    prompt_path: Path | None = None
+    out_path: Path | None = None
+    raw_log_path: Path | None = None
+    manual_path: Path | None = None
+    error: str | None = None
     max_cpu_pct_total: float = 0.0
     max_mem_pct_total: float = 0.0
     # Turn output tracking
-    work_completed: Optional[bool] = None
-    commit_sha: Optional[str] = None
-    turn_summary: Optional[str] = None
+    work_completed: bool | None = None
+    commit_sha: str | None = None
+    turn_summary: str | None = None
     # Retry tracking for plan-only responses
     retry_count: int = 0
     max_retries: int = 2
@@ -1261,7 +1338,7 @@ def _sanitize_branch_fragment(text: str) -> str:
     return frag or "task"
 
 
-def _collect_machine_info() -> Dict[str, Any]:
+def _collect_machine_info() -> dict[str, Any]:
     cores = os.cpu_count() or 1
     total_ram = _total_ram_bytes()
     return {
@@ -1277,7 +1354,7 @@ def _build_task_plan_prompt(
     max_workers_limit: int,
     cpu_threshold_pct_total: float,
     mem_threshold_pct_total: float,
-    machine_info: Dict[str, Any],
+    machine_info: dict[str, Any],
 ) -> str:
     design_excerpt = _truncate(design_doc_text, 40000)  # Increased for multi-doc support
     cores = machine_info.get("cpu_cores")
@@ -1292,7 +1369,7 @@ def _build_task_plan_prompt(
 
     if is_multi_milestone:
         milestone_instruction = f"""
-MULTI-MILESTONE MODE: The design document contains {len(all_milestones)} milestone documents: {', '.join(all_milestones)}.
+MULTI-MILESTONE MODE: The design document contains {len(all_milestones)} milestone documents: {", ".join(all_milestones)}.
 
 You MUST:
 1. Create tasks for ALL milestones, not just one.
@@ -1338,7 +1415,7 @@ For each milestone in the document, identify and create the necessary tasks."""
 
         Hardware context:
         - CPU cores: {cores}
-        - RAM (GB): {ram_gb if ram_gb is not None else 'unknown'}
+        - RAM (GB): {ram_gb if ram_gb is not None else "unknown"}
 
         Parallel safety policy:
         - Tasks that touch the same subsystem or files should share a lock key in `locks`.
@@ -1369,7 +1446,7 @@ def _build_parallel_task_prompt(
     milestone_id: str,
     repo_snapshot: str,
     design_doc_text: str,
-    resource_policy: Dict[str, Any],
+    resource_policy: dict[str, Any],
 ) -> str:
     design_excerpt = _truncate(design_doc_text, 18000)
 
@@ -1420,18 +1497,20 @@ def _build_parallel_task_prompt(
     if policy_header:
         parts.append(policy_header.strip())
 
-    parts.extend([
-        "---\n\n# Orchestrator State\n" + json.dumps(state_blob, indent=2),
-        "---\n\n# Task\n" + task.description.strip(),
-        "---\n\n# Repo Snapshot\n" + repo_snapshot.strip(),
-        "---\n\n# Design Doc (truncated)\n" + design_excerpt.strip(),
-        "---\n\n" + instructions,
-    ])
+    parts.extend(
+        [
+            "---\n\n# Orchestrator State\n" + json.dumps(state_blob, indent=2),
+            "---\n\n# Task\n" + task.description.strip(),
+            "---\n\n# Repo Snapshot\n" + repo_snapshot.strip(),
+            "---\n\n# Design Doc (truncated)\n" + design_excerpt.strip(),
+            "---\n\n" + instructions,
+        ]
+    )
 
     return "\n\n".join(parts)
 
 
-def _select_only_tasks(all_tasks: List[ParallelTask], only_ids: List[str]) -> List[ParallelTask]:
+def _select_only_tasks(all_tasks: list[ParallelTask], only_ids: list[str]) -> list[ParallelTask]:
     if not only_ids:
         return all_tasks
 
@@ -1462,7 +1541,7 @@ def _write_manual_task_file(
     manual_dir: Path,
     task: ParallelTask,
     reason: str,
-    agent_cmd: List[str],
+    agent_cmd: list[str],
     schema_path: Path,
     prompt_path: Path,
     out_path: Path,
@@ -1510,10 +1589,10 @@ If you prefer rerunning through the orchestrator (single-worker):
 
 def _generate_run_summary(
     *,
-    tasks: List[ParallelTask],
+    tasks: list[ParallelTask],
     runs_dir: Path,
     verify_exit_code: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a structured summary of the parallel run."""
     root_failures = []
     blocked_tasks = []
@@ -1567,8 +1646,8 @@ def _generate_run_summary(
 
 def _generate_continuation_prompt(
     *,
-    summary: Dict[str, Any],
-    tasks: List[ParallelTask],
+    summary: dict[str, Any],
+    tasks: list[ParallelTask],
     design_doc_text: str,
     runs_dir: Path,
 ) -> str:
@@ -1594,16 +1673,16 @@ def _generate_continuation_prompt(
             lines.append(f"### {t['id']}: {t['title']}")
             lines.append(f"- Status: {t['status']}")
             lines.append(f"- Agent: {t['agent']}")
-            if t['error']:
+            if t["error"]:
                 lines.append(f"- Error: {t['error']}")
-            if t['turn_summary']:
+            if t["turn_summary"]:
                 lines.append(f"- Last summary: {t['turn_summary'][:300]}")
-            if t['manual_path']:
+            if t["manual_path"]:
                 lines.append(f"- Manual file: {t['manual_path']}")
-            if t['raw_log_path']:
+            if t["raw_log_path"]:
                 # Include tail of log
                 try:
-                    log_path = Path(t['raw_log_path'])
+                    log_path = Path(t["raw_log_path"])
                     if log_path.exists():
                         log_text = log_path.read_text(encoding="utf-8", errors="replace")
                         tail = log_text[-2000:] if len(log_text) > 2000 else log_text
@@ -1626,26 +1705,28 @@ def _generate_continuation_prompt(
             lines.append(f"- {t['id']}: {t['title']}")
         lines.append("")
 
-    lines.extend([
-        "## Instructions for This Run",
-        "",
-        "1. **Focus ONLY on root failures** - do not re-implement completed tasks",
-        "2. For tasks marked 'pending_rerun', the agent only produced a plan - now IMPLEMENT the actual code",
-        "3. For failed tasks, analyze the error and fix the issue",
-        "4. After fixing root failures, blocked tasks will automatically become runnable",
-        "5. Produce a new task plan that includes ONLY:",
-        "   - Tasks from root_failures that need to be fixed/implemented",
-        "   - Any blocked tasks that will become runnable",
-        "",
-        "IMPORTANT: Do NOT include completed tasks in the new plan.",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Instructions for This Run",
+            "",
+            "1. **Focus ONLY on root failures** - do not re-implement completed tasks",
+            "2. For tasks marked 'pending_rerun', the agent only produced a plan - now IMPLEMENT the actual code",
+            "3. For failed tasks, analyze the error and fix the issue",
+            "4. After fixing root failures, blocked tasks will automatically become runnable",
+            "5. Produce a new task plan that includes ONLY:",
+            "   - Tasks from root_failures that need to be fixed/implemented",
+            "   - Any blocked tasks that will become runnable",
+            "",
+            "IMPORTANT: Do NOT include completed tasks in the new plan.",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
 
 def _compute_transitive_blocked(
-    tasks: List[ParallelTask],
+    tasks: list[ParallelTask],
     root_failure_ids: set,
 ) -> set:
     """Compute the transitive closure of all tasks blocked by root failures.
@@ -1656,11 +1737,11 @@ def _compute_transitive_blocked(
 
     Returns the set of task IDs that are transitively blocked.
     """
-    by_id = {t.id: t for t in tasks}
+    {t.id: t for t in tasks}
     blocked_ids: set = set()
 
     # Build reverse dependency graph
-    dependents: Dict[str, List[str]] = {t.id: [] for t in tasks}
+    dependents: dict[str, list[str]] = {t.id: [] for t in tasks}
     for t in tasks:
         for dep in t.depends_on:
             if dep in dependents:
@@ -2045,7 +2126,11 @@ def _run_selftest_task(
     prefix = f"[w{worker_id:02d} SELFTEST-{task.id}]"
 
     # Execute a trivial command
-    cmd = [sys.executable, "-c", f"import time; print('selftest {task.id} started'); time.sleep(0.5); print('selftest {task.id} done')"]
+    cmd = [
+        sys.executable,
+        "-c",
+        f"import time; print('selftest {task.id} started'); time.sleep(0.5); print('selftest {task.id} done')",
+    ]
 
     try:
         with raw_log_path.open("w", encoding="utf-8") as log_f:
@@ -2080,7 +2165,7 @@ def run_parallel(
     args: argparse.Namespace,
     config: RunConfig,
     state: RunState,
-    stats_ids: List[str],
+    stats_ids: list[str],
     stats_id_set: set,
     system_prompt: str,
 ) -> int:
@@ -2090,7 +2175,7 @@ def run_parallel(
     # In selftest mode, we use synthetic tasks
     if selftest_mode:
         print("[orchestrator] SELFTEST MODE: using synthetic tasks (no real agents)")
-        tasks: List[ParallelTask] = [
+        tasks: list[ParallelTask] = [
             ParallelTask(
                 id="SELFTEST-A",
                 title="Selftest task A (no deps)",
@@ -2317,7 +2402,7 @@ def run_parallel(
 
     # Scheduler state
     held_locks: set = set()
-    running: Dict[str, concurrent.futures.Future] = {}  # task_id -> future
+    running: dict[str, concurrent.futures.Future] = {}  # task_id -> future
     git_lock = threading.Lock()
 
     def locks_available(t: ParallelTask) -> bool:
@@ -2330,11 +2415,9 @@ def run_parallel(
             return False
         if t.solo and running:
             return False
-        if not locks_available(t):
-            return False
-        return True
+        return locks_available(t)
 
-    def get_ready_tasks() -> List[ParallelTask]:
+    def get_ready_tasks() -> list[ParallelTask]:
         return [t for t in tasks if can_start(t)]
 
     # Merge helper
@@ -2427,7 +2510,9 @@ def run_parallel(
             # Heartbeat logging
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_interval:
-                print(f"[orchestrator] parallel: progress done={done_count} running={running_count} queued={pending_count} ready={len(ready_tasks)}")
+                print(
+                    f"[orchestrator] parallel: progress done={done_count} running={running_count} queued={pending_count} ready={len(ready_tasks)}"
+                )
                 last_heartbeat = now
 
             # Check completion - terminal states end the run
@@ -2537,9 +2622,7 @@ def run_parallel(
             if running:
                 try:
                     done_futures, _ = concurrent.futures.wait(
-                        running.values(),
-                        timeout=min(5.0, heartbeat_interval),
-                        return_when=concurrent.futures.FIRST_COMPLETED
+                        running.values(), timeout=min(5.0, heartbeat_interval), return_when=concurrent.futures.FIRST_COMPLETED
                     )
                 except Exception as e:
                     print(f"[orchestrator] WARNING: wait() raised: {e}")
@@ -2645,18 +2728,19 @@ def run_parallel(
         continuation_path.write_text(continuation_prompt, encoding="utf-8")
         print(f"[orchestrator] Continuation prompt written to: {continuation_path}")
 
-        print(f"\n[orchestrator] RUN INCOMPLETE:")
+        print("\n[orchestrator] RUN INCOMPLETE:")
         print(f"  - Completed: {done_count}")
         print(f"  - Failed: {failed_count}")
         print(f"  - Pending Rerun: {pending_rerun_count}")
         print(f"  - Blocked: {blocked_count}")
         print(f"  - Verify: {'PASS' if rc_v == 0 else 'FAIL'}")
-        print(f"\n[orchestrator] To continue, run:")
+        print("\n[orchestrator] To continue, run:")
         print(f"  ./run_parallel.sh --continuation {continuation_path}")
     else:
         print(f"\n[orchestrator] RUN COMPLETE: all {done_count} tasks succeeded, verify passed")
 
     return 0 if rc_v == 0 and not needs_continuation else 1
+
 
 # -----------------------------
 # Auto-continue loop
@@ -2670,14 +2754,14 @@ def _run_parallel_with_auto_continue(
     project_root: Path,
     schema_path: Path,
     system_prompt_path: Path,
-    stats_ids: List[str],
+    stats_ids: list[str],
     stats_id_set: set,
     system_prompt: str,
 ) -> int:
     """Run the parallel runner with auto-continue until success or max runs."""
     max_runs = max(1, args.max_continuation_runs)
     run_count = 0
-    last_summary: Optional[Dict[str, Any]] = None
+    last_summary: dict[str, Any] | None = None
     prev_root_failure_ids: set = set()
     stalled_count = 0
     max_stalled = 3  # Stop if same failures for N consecutive runs
@@ -2686,9 +2770,9 @@ def _run_parallel_with_auto_continue(
 
     while run_count < max_runs:
         run_count += 1
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"[orchestrator] AUTO-CONTINUE: Starting run {run_count}/{max_runs}")
-        print(f"{'='*80}\n")
+        print(f"{'=' * 80}\n")
 
         # Create new run state for this iteration
         run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
@@ -2739,7 +2823,7 @@ def _run_parallel_with_auto_continue(
         )
 
         # Restore design doc path if we modified it
-        if run_count > 1 and 'original_design_doc' in dir():
+        if run_count > 1 and "original_design_doc" in dir():
             args.design_doc = original_design_doc
 
         # Check result
@@ -2755,8 +2839,8 @@ def _run_parallel_with_auto_continue(
 
         # Check for planning failure (rc == 2) - stop immediately to avoid burning credits
         if rc == 2:
-            print(f"\n[orchestrator] AUTO-CONTINUE: STOPPING - Planning step failed (rc=2)")
-            print(f"[orchestrator] This is a structural failure that auto-continue cannot fix.")
+            print("\n[orchestrator] AUTO-CONTINUE: STOPPING - Planning step failed (rc=2)")
+            print("[orchestrator] This is a structural failure that auto-continue cannot fix.")
             # Print debug file locations for the user
             plan_debug = runs_dir / "task_plan.extract_debug.txt"
             raw_stream = runs_dir / "task_plan.json.wrapper_schema_claude_raw_stream.txt"
@@ -2764,7 +2848,7 @@ def _run_parallel_with_auto_continue(
                 print(f"[orchestrator] Debug file: {plan_debug}")
             if raw_stream.exists():
                 print(f"[orchestrator] Raw stream: {raw_stream}")
-            print(f"[orchestrator] Check the files above to diagnose the planning failure.")
+            print("[orchestrator] Check the files above to diagnose the planning failure.")
             return 2
 
         # Check for progress - compare root failures
@@ -2776,14 +2860,14 @@ def _run_parallel_with_auto_continue(
                 print(f"[orchestrator] AUTO-CONTINUE: No progress (same failures). Stalled count: {stalled_count}/{max_stalled}")
                 if stalled_count >= max_stalled:
                     print(f"\n[orchestrator] AUTO-CONTINUE: GIVING UP - no progress for {stalled_count} consecutive runs")
-                    print(f"[orchestrator] Root failures that cannot be resolved automatically:")
+                    print("[orchestrator] Root failures that cannot be resolved automatically:")
                     for t in last_summary.get("root_failures", []):
                         print(f"  - {t['id']}: {t.get('error', 'unknown')}")
                     _write_escalation_file(runs_dir, last_summary)
                     return 1
             else:
                 stalled_count = 0
-                print(f"[orchestrator] AUTO-CONTINUE: Progress detected (different failures)")
+                print("[orchestrator] AUTO-CONTINUE: Progress detected (different failures)")
 
             prev_root_failure_ids = current_root_failure_ids
         else:
@@ -2797,7 +2881,7 @@ def _run_parallel_with_auto_continue(
     return 1
 
 
-def _write_escalation_file(runs_dir: Path, summary: Dict[str, Any]) -> None:
+def _write_escalation_file(runs_dir: Path, summary: dict[str, Any]) -> None:
     """Write an escalation file explaining what's stuck and how to proceed."""
     _ensure_dir(runs_dir)
     escalation_path = runs_dir / "ESCALATION_REQUIRED.md"
@@ -2813,9 +2897,9 @@ def _write_escalation_file(runs_dir: Path, summary: Dict[str, Any]) -> None:
         lines.append(f"## {t['id']}: {t.get('title', 'Unknown')}")
         lines.append(f"- Status: {t['status']}")
         lines.append(f"- Agent: {t['agent']}")
-        if t.get('error'):
+        if t.get("error"):
             lines.append(f"- Error: {t['error']}")
-        if t.get('manual_path'):
+        if t.get("manual_path"):
             lines.append(f"- Manual file: {t['manual_path']}")
         lines.append("")
         lines.append("### To run this task manually:")
@@ -2824,14 +2908,16 @@ def _write_escalation_file(runs_dir: Path, summary: Dict[str, Any]) -> None:
         lines.append("```")
         lines.append("")
 
-    lines.extend([
-        "## Next Steps",
-        "",
-        "1. Review the manual files in runs/*/manual/",
-        "2. Run failing tasks individually with --only-task",
-        "3. Once fixed, re-run the full parallel run",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Next Steps",
+            "",
+            "1. Review the manual files in runs/*/manual/",
+            "2. Run failing tasks individually with --only-task",
+            "3. Once fixed, re-run the full parallel run",
+            "",
+        ]
+    )
 
     escalation_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[orchestrator] Escalation file written to: {escalation_path}")
@@ -2856,34 +2942,57 @@ def main() -> int:
     ap.add_argument("--task-plan-schema", default="bridge/task_plan.schema.json")
     ap.add_argument("--max-workers", type=int, default=0, help="0=auto")
     ap.add_argument("--only-task", action="append", default=[], help="Run only specific task id(s) from the generated plan")
-    ap.add_argument("--allow-resource-intensive", action="store_true", help="Do not auto-kill tasks that exceed resource thresholds")
+    ap.add_argument(
+        "--allow-resource-intensive", action="store_true", help="Do not auto-kill tasks that exceed resource thresholds"
+    )
     ap.add_argument("--cpu-threshold", type=float, default=0.0, help="Override CPU%% threshold for auto-stop (0=use config)")
     ap.add_argument("--mem-threshold", type=float, default=0.0, help="Override RAM%% threshold for auto-stop (0=use config)")
     ap.add_argument("--terminal-max-bytes", type=int, default=0, help="Override per-worker terminal output cap (0=use config)")
-    ap.add_argument("--terminal-max-line-len", type=int, default=0, help="Override per-worker terminal line length cap (0=use config)")
+    ap.add_argument(
+        "--terminal-max-line-len", type=int, default=0, help="Override per-worker terminal line length cap (0=use config)"
+    )
     ap.add_argument("--mock-scenario", default="bridge/mock_scenarios/milestone_demo.json")
     ap.add_argument("--verbose", action="store_true")
+    ap.add_argument(
+        "--stream-agent-output",
+        choices=["stdout", "stderr", "both", "none"],
+        default="none",
+        help="Stream agent output to console (stdout, stderr, both, none)",
+    )
     ap.add_argument("--no-agent-branch", action="store_true")
-    ap.add_argument("--selftest-parallel", action="store_true",
-                    help="Run selftest mode: synthetic tasks with trivial commands to verify scheduler")
+    ap.add_argument(
+        "--selftest-parallel",
+        action="store_true",
+        help="Run selftest mode: synthetic tasks with trivial commands to verify scheduler",
+    )
     # Auto-continue support
     # Default: enabled if ORCH_AUTO_CONTINUE=1 is set, otherwise disabled
     auto_continue_default = os.environ.get("ORCH_AUTO_CONTINUE", "").strip() in ("1", "true", "yes")
-    ap.add_argument("--auto-continue", action="store_true", default=auto_continue_default,
-                    help="Automatically continue with new runs until all tasks complete or max runs reached. "
-                         "Also enabled by ORCH_AUTO_CONTINUE=1 environment variable.")
-    ap.add_argument("--no-auto-continue", action="store_true",
-                    help="Disable auto-continue even if ORCH_AUTO_CONTINUE is set")
-    ap.add_argument("--max-continuation-runs", type=int, default=5,
-                    help="Maximum number of continuation runs before giving up (default: 5)")
-    ap.add_argument("--continuation", type=str, default="",
-                    help="Path to continuation_prompt.txt from a previous run (use instead of design doc)")
+    ap.add_argument(
+        "--auto-continue",
+        action="store_true",
+        default=auto_continue_default,
+        help="Automatically continue with new runs until all tasks complete or max runs reached. "
+        "Also enabled by ORCH_AUTO_CONTINUE=1 environment variable.",
+    )
+    ap.add_argument("--no-auto-continue", action="store_true", help="Disable auto-continue even if ORCH_AUTO_CONTINUE is set")
+    ap.add_argument(
+        "--max-continuation-runs", type=int, default=5, help="Maximum number of continuation runs before giving up (default: 5)"
+    )
+    ap.add_argument(
+        "--continuation",
+        type=str,
+        default="",
+        help="Path to continuation_prompt.txt from a previous run (use instead of design doc)",
+    )
 
     # Agent-only flags for hard enforcement
-    ap.add_argument("--only-codex", action="store_true",
-                    help="ONLY use Codex agent for ALL operations (planner, workers, fallbacks)")
-    ap.add_argument("--only-claude", action="store_true",
-                    help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)")
+    ap.add_argument(
+        "--only-codex", action="store_true", help="ONLY use Codex agent for ALL operations (planner, workers, fallbacks)"
+    )
+    ap.add_argument(
+        "--only-claude", action="store_true", help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)"
+    )
 
     args = ap.parse_args()
 
@@ -2900,7 +3009,7 @@ def main() -> int:
     config = load_config(project_root / args.config)
 
     # Initialize agent policy based on --only-* flags
-    forced_agent: Optional[str] = None
+    forced_agent: str | None = None
     if args.only_codex:
         forced_agent = "codex"
     elif args.only_claude:
@@ -2967,11 +3076,13 @@ def main() -> int:
                 system_prompt=system_prompt,
             )
         else:
-            return run_parallel(args=args, config=config, state=state, stats_ids=stats_ids, stats_id_set=stats_id_set, system_prompt=system_prompt)
+            return run_parallel(
+                args=args, config=config, state=state, stats_ids=stats_ids, stats_id_set=stats_id_set, system_prompt=system_prompt
+            )
 
     # Mock scenario support.
-    scenario: Dict[str, Any] = {}
-    mock_indices: Dict[str, int] = {a: 0 for a in AGENTS}
+    scenario: dict[str, Any] = {}
+    mock_indices: dict[str, int] = {a: 0 for a in AGENTS}
     if args.mode == "mock":
         scenario = _load_json(project_root / args.mock_scenario)
 
@@ -2999,7 +3110,7 @@ def main() -> int:
     call_no = 0
 
     # Tracks consecutive JSON parse/validation failures for the current agent.
-    correction_agent: Optional[str] = None
+    correction_agent: str | None = None
     correction_attempts = 0
 
     while state.total_calls < config.max_total_calls:
@@ -3015,18 +3126,21 @@ def main() -> int:
         state.total_calls += 1
         state.call_counts[agent] += 1
 
-        call_dir = runs_dir / f"call_{call_no:04d}"
+        call_dir = runs_dir / "calls" / f"call_{call_no:04d}"
         _ensure_dir(call_dir)
 
         design_doc_text = _read_text(design_doc_path) if design_doc_path.exists() else ""
         milestone_id = _parse_milestone_id(design_doc_text)
 
         verify_json = call_dir / "verify.json"
-        verify_rc, verify_out, verify_err = _run_verify(project_root, verify_json, strict_git=False)
-        if verify_rc != 0 and not verify_json.exists():
-            # Ensure something is present for embedding.
-            _write_text(verify_json, json.dumps({"error": (verify_out + "\n" + verify_err).strip()}))
-        verify_report_text = _read_text(verify_json) if verify_json.exists() else "{}"
+        if os.environ.get("FF_SKIP_VERIFY") == "1":
+            verify_report_text = "{}"
+        else:
+            verify_rc, verify_out, verify_err = _run_verify(project_root, verify_json, strict_git=False)
+            if verify_rc != 0 and not verify_json.exists():
+                # Ensure something is present for embedding.
+                _write_text(verify_json, json.dumps({"error": (verify_out + "\n" + verify_err).strip()}))
+            verify_report_text = _read_text(verify_json) if verify_json.exists() else "{}"
 
         repo_info = _git_snapshot(project_root)
 
@@ -3050,11 +3164,13 @@ def main() -> int:
         _write_text(prompt_path, prompt_text)
 
         print("=" * 88)
+        model = config.agent_models.get(agent, "(default)")
         print(
             f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
             f"write_access={'1' if state.grant_write_access else '0'}"
         )
+        print(f"[orchestrator] TURN (agent={agent} model={model})")
 
         if args.mode == "mock":
             rc, out, err = _run_agent_mock(agent=agent, scenario=scenario, mock_indices=mock_indices)
@@ -3066,6 +3182,8 @@ def main() -> int:
                 out_path=out_path,
                 config=config,
                 state=state,
+                stream_agent_output=args.stream_agent_output,
+                call_dir=call_dir,
             )
 
         _write_text(raw_path, (out or "") + ("\n" if out and err else "") + (err or ""))

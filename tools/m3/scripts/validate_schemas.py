@@ -29,7 +29,7 @@ def get_schema_dir() -> Path:
 
 def load_json(path: Path) -> dict[str, Any]:
     """Load and parse a JSON file."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -200,7 +200,8 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Verbose output",
     )

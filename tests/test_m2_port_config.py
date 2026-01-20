@@ -8,9 +8,8 @@ These tests validate:
 - Port builder functionality
 - Integration with SimulationSpec
 """
-from __future__ import annotations
 
-import math
+from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
@@ -37,7 +36,6 @@ from formula_foundry.openems import (
     waveguide_port_to_basic_port_spec,
 )
 from formula_foundry.openems.geometry import StackupMaterialsSpec
-
 
 # =============================================================================
 # Fixtures

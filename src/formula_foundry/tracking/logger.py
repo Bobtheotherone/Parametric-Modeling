@@ -343,8 +343,9 @@ def log_artifact_reference(
     to retrieve the artifact from the content-addressed store.
     """
     try:
-        import mlflow
         import tempfile
+
+        import mlflow
 
         ref_data = {
             "logical_path": logical_path,
@@ -354,7 +355,7 @@ def log_artifact_reference(
         }
 
         # Create a temporary file with the reference
-        ref_filename = f"{logical_path.replace('/', '_')}.ref.json"
+        f"{logical_path.replace('/', '_')}.ref.json"
         with tempfile.NamedTemporaryFile(
             mode="w",
             suffix=".json",

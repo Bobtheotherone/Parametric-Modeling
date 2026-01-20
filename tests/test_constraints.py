@@ -26,25 +26,16 @@ import pytest
 
 from formula_foundry.coupongen.constraints import (
     BatchFilterResult,
-    ConstraintEvaluation,
-    ConstraintProof,
-    ConstraintProofDocument,
-    ConstraintResult,
     ConstraintViolation,
     ConstraintViolationError,
     FamilyF1ParameterSpace,
     GPUConstraintFilter,
     ParameterMapping,
-    RepairAction,
     RepairEngine,
-    RepairInfo,
-    RepairResult,
     Tier0Checker,
     Tier1Checker,
     Tier2Checker,
     Tier3Checker,
-    TieredConstraintProof,
-    TieredConstraintResult,
     TieredConstraintSystem,
     batch_filter,
     constraint_proof_payload,
@@ -53,12 +44,10 @@ from formula_foundry.coupongen.constraints import (
     evaluate_tiered_constraints,
     generate_constraint_proof,
     is_gpu_available,
-    repair_spec,
     repair_spec_tiered,
     write_constraint_proof,
 )
 from formula_foundry.coupongen.spec import CouponSpec
-
 
 # ==============================================================================
 # Test Fixtures
@@ -294,9 +283,7 @@ class TestConstraintTiers:
 
         results = checker.check(spec, limits)
 
-        overlap_result = next(
-            r for r in results if r.constraint_id == "T3_RETURN_VIA_RING_NO_OVERLAP"
-        )
+        overlap_result = next(r for r in results if r.constraint_id == "T3_RETURN_VIA_RING_NO_OVERLAP")
         assert not overlap_result.passed
 
     def test_tier3_symmetry_enforcement(self) -> None:
@@ -728,9 +715,7 @@ class TestGPUFilterParameterMapping:
 
     def test_linear_mapping_to_physical(self) -> None:
         """Linear mapping should correctly transform [0,1] to [min, max]."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=100.0, max_val=500.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=100.0, max_val=500.0)
 
         assert mapping.to_physical(0.0, np) == 100.0
         assert mapping.to_physical(1.0, np) == 500.0
@@ -738,9 +723,7 @@ class TestGPUFilterParameterMapping:
 
     def test_linear_mapping_to_normalized(self) -> None:
         """Linear mapping should correctly transform [min, max] to [0,1]."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=100.0, max_val=500.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=100.0, max_val=500.0)
 
         assert mapping.to_normalized(100.0, np) == pytest.approx(0.0)
         assert mapping.to_normalized(500.0, np) == pytest.approx(1.0)
@@ -748,9 +731,7 @@ class TestGPUFilterParameterMapping:
 
     def test_log_mapping_to_physical(self) -> None:
         """Log mapping should correctly transform using logarithmic scale."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="log", min_val=10.0, max_val=1000.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="log", min_val=10.0, max_val=1000.0)
 
         assert mapping.to_physical(0.0, np) == pytest.approx(10.0)
         assert mapping.to_physical(1.0, np) == pytest.approx(1000.0)
@@ -759,9 +740,7 @@ class TestGPUFilterParameterMapping:
 
     def test_vectorized_mapping(self) -> None:
         """Mapping should work on arrays."""
-        mapping = ParameterMapping(
-            name="test", index=0, scale="linear", min_val=0.0, max_val=100.0
-        )
+        mapping = ParameterMapping(name="test", index=0, scale="linear", min_val=0.0, max_val=100.0)
 
         u = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
         expected = np.array([0.0, 25.0, 50.0, 75.0, 100.0])

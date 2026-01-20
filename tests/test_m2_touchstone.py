@@ -9,10 +9,9 @@ Tests cover:
 - Interpolation and merge operations
 - scikit-rf integration (optional, skipped if not installed)
 """
+
 from __future__ import annotations
 
-import io
-import math
 import tempfile
 from pathlib import Path
 
@@ -25,8 +24,8 @@ from formula_foundry.em.touchstone import (
     SParameterData,
     SParameterFormat,
     TouchstoneOptions,
-    _convert_to_complex,
     _complex_to_format,
+    _convert_to_complex,
     _parse_option_line,
     create_empty_sparam_data,
     create_thru_sparam_data,
@@ -233,9 +232,7 @@ class TestSParameterData:
         """phase_deg returns correct phase values."""
         freqs = np.array([1e9])
         # S11 = 1∠45°, S21 = 1∠-90°
-        s_params = np.array(
-            [[[np.exp(1j * np.pi / 4), 0], [np.exp(-1j * np.pi / 2), 0]]]
-        )
+        s_params = np.array([[[np.exp(1j * np.pi / 4), 0], [np.exp(-1j * np.pi / 2), 0]]])
         data = SParameterData(frequencies_hz=freqs, s_parameters=s_params, n_ports=2)
 
         s11_phase = data.phase_deg(1, 1)
@@ -476,20 +473,14 @@ class TestWriteTouchstone:
         s_params = np.random.randn(3, 2, 2) + 1j * np.random.randn(3, 2, 2)
         s_params *= 0.1  # Keep magnitudes small
 
-        original = SParameterData(
-            frequencies_hz=freqs, s_parameters=s_params, n_ports=2
-        )
+        original = SParameterData(frequencies_hz=freqs, s_parameters=s_params, n_ports=2)
 
         # Write and read back
         content = write_touchstone_to_string(original)
         recovered = read_touchstone_from_string(content, n_ports=2)
 
-        np.testing.assert_allclose(
-            recovered.frequencies_hz, original.frequencies_hz, rtol=1e-6
-        )
-        np.testing.assert_allclose(
-            recovered.s_parameters, original.s_parameters, rtol=1e-6
-        )
+        np.testing.assert_allclose(recovered.frequencies_hz, original.frequencies_hz, rtol=1e-6)
+        np.testing.assert_allclose(recovered.s_parameters, original.s_parameters, rtol=1e-6)
 
     def test_round_trip_ma(self) -> None:
         """Round-trip test in MA format."""
@@ -501,17 +492,13 @@ class TestWriteTouchstone:
             ]
         )
 
-        original = SParameterData(
-            frequencies_hz=freqs, s_parameters=s_params, n_ports=2
-        )
+        original = SParameterData(frequencies_hz=freqs, s_parameters=s_params, n_ports=2)
 
         opts = TouchstoneOptions(parameter_format=SParameterFormat.MA)
         content = write_touchstone_to_string(original, options=opts)
         recovered = read_touchstone_from_string(content, n_ports=2)
 
-        np.testing.assert_allclose(
-            recovered.s_parameters, original.s_parameters, rtol=1e-5
-        )
+        np.testing.assert_allclose(recovered.s_parameters, original.s_parameters, rtol=1e-5)
 
     def test_round_trip_file(self) -> None:
         """Round-trip test writing to actual file."""
@@ -522,18 +509,14 @@ class TestWriteTouchstone:
         s_params[:, 0, 1] = [0.9 - 0.1j, 0.85 - 0.15j]
         s_params[:, 1, 1] = [0.1 + 0.05j, 0.15 + 0.1j]
 
-        original = SParameterData(
-            frequencies_hz=freqs, s_parameters=s_params, n_ports=2
-        )
+        original = SParameterData(frequencies_hz=freqs, s_parameters=s_params, n_ports=2)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.s2p"
             write_touchstone(original, path)
             recovered = read_touchstone(path)
 
-        np.testing.assert_allclose(
-            recovered.s_parameters, original.s_parameters, rtol=1e-6
-        )
+        np.testing.assert_allclose(recovered.s_parameters, original.s_parameters, rtol=1e-6)
 
 
 class TestUtilityFunctions:
@@ -666,19 +649,13 @@ class TestScikitRFIntegration:
         s_params = np.random.randn(3, 2, 2) + 1j * np.random.randn(3, 2, 2)
         s_params *= 0.1
 
-        original = SParameterData(
-            frequencies_hz=freqs, s_parameters=s_params, n_ports=2
-        )
+        original = SParameterData(frequencies_hz=freqs, s_parameters=s_params, n_ports=2)
 
         network = to_skrf_network(original)
         recovered = from_skrf_network(network)
 
-        np.testing.assert_allclose(
-            recovered.frequencies_hz, original.frequencies_hz, rtol=1e-6
-        )
-        np.testing.assert_allclose(
-            recovered.s_parameters, original.s_parameters, rtol=1e-6
-        )
+        np.testing.assert_allclose(recovered.frequencies_hz, original.frequencies_hz, rtol=1e-6)
+        np.testing.assert_allclose(recovered.s_parameters, original.s_parameters, rtol=1e-6)
 
     @pytest.mark.skipif(
         not pytest.importorskip("skrf", reason="scikit-rf not installed"),

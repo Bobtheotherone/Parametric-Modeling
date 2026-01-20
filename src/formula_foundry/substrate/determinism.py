@@ -185,9 +185,7 @@ def _resolve_cublas_workspace_config(value: str | None) -> str:
 
 def _validate_cublas_workspace_config(value: str) -> None:
     if value not in VALID_CUBLAS_WORKSPACE_CONFIGS:
-        raise ValueError(
-            f"Invalid CUBLAS_WORKSPACE_CONFIG {value!r}; expected one of {sorted(VALID_CUBLAS_WORKSPACE_CONFIGS)}"
-        )
+        raise ValueError(f"Invalid CUBLAS_WORKSPACE_CONFIG {value!r}; expected one of {sorted(VALID_CUBLAS_WORKSPACE_CONFIGS)}")
 
 
 def _capture_snapshot() -> _Snapshot:

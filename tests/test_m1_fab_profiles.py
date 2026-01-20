@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import tempfile
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
 from formula_foundry.coupongen.fab_profiles import (
     FAB_PROFILES_DIR,
-    FabCapabilityProfile,
     clear_profile_cache,
     get_fab_limits,
     list_available_profiles,
