@@ -66,6 +66,88 @@ def build_parser() -> argparse.ArgumentParser:
         help="Suppress non-error output",
     )
 
+    # dataset subcommand
+    dataset_parser = subparsers.add_parser(
+        "dataset",
+        help="Inspect and compare dataset snapshots",
+    )
+    dataset_subparsers = dataset_parser.add_subparsers(
+        dest="dataset_command",
+        required=True,
+    )
+
+    # dataset show subcommand
+    dataset_show_parser = dataset_subparsers.add_parser(
+        "show",
+        help="Display detailed information about a dataset snapshot",
+    )
+    dataset_show_parser.add_argument(
+        "dataset_id",
+        help="Dataset ID or path to dataset JSON manifest",
+    )
+    dataset_show_parser.add_argument(
+        "--version",
+        "-v",
+        type=str,
+        default=None,
+        help="Dataset version (default: latest if multiple exist)",
+    )
+    dataset_show_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    dataset_show_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output raw JSON instead of formatted text",
+    )
+    dataset_show_parser.add_argument(
+        "--members",
+        action="store_true",
+        help="Show detailed member list (can be verbose for large datasets)",
+    )
+    dataset_show_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
+    )
+
+    # dataset diff subcommand
+    dataset_diff_parser = dataset_subparsers.add_parser(
+        "diff",
+        help="Compare two dataset versions and show differences",
+    )
+    dataset_diff_parser.add_argument(
+        "dataset_a",
+        help="First dataset ID or path (the 'from' version)",
+    )
+    dataset_diff_parser.add_argument(
+        "dataset_b",
+        help="Second dataset ID or path (the 'to' version)",
+    )
+    dataset_diff_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    dataset_diff_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output diff as JSON instead of formatted text",
+    )
+    dataset_diff_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
+    )
+
     # run subcommand
     run_parser = subparsers.add_parser(
         "run",
@@ -988,6 +1070,411 @@ def cmd_run(
     return return_code
 
 
+# =============================================================================
+# Dataset commands
+# =============================================================================
+
+
+def _format_bytes(byte_size: int) -> str:
+    """Format byte size in human-readable form."""
+    if byte_size < 1024:
+        return f"{byte_size} B"
+    if byte_size < 1024 * 1024:
+        return f"{byte_size / 1024:.1f} KB"
+    if byte_size < 1024 * 1024 * 1024:
+        return f"{byte_size / (1024 * 1024):.1f} MB"
+    return f"{byte_size / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _resolve_dataset_path(
+    dataset_id: str,
+    version: str | None,
+    project_root: Path,
+) -> Path | None:
+    """Resolve a dataset ID or path to a manifest file path.
+
+    Args:
+        dataset_id: Dataset ID or direct path to manifest.
+        version: Optional version string.
+        project_root: Project root directory.
+
+    Returns:
+        Path to the dataset manifest, or None if not found.
+    """
+    # Check if dataset_id is a direct path
+    path = Path(dataset_id)
+    if path.exists() and path.suffix == ".json":
+        return path
+
+    # Look in data/datasets/
+    datasets_dir = project_root / "data" / "datasets"
+    if not datasets_dir.exists():
+        return None
+
+    if version:
+        # Look for exact version match
+        manifest_path = datasets_dir / f"{dataset_id}_{version}.json"
+        if manifest_path.exists():
+            return manifest_path
+    else:
+        # Find all versions and return the most recent
+        pattern = f"{dataset_id}_*.json"
+        matches = sorted(datasets_dir.glob(pattern))
+        # Filter out parquet index files
+        matches = [m for m in matches if not m.stem.endswith("_index")]
+        if matches:
+            return matches[-1]  # Most recent by sort order
+
+    return None
+
+
+def cmd_dataset_show(
+    dataset_id: str,
+    version: str | None,
+    root: Path | None,
+    output_json: bool,
+    show_members: bool,
+    quiet: bool,
+) -> int:
+    """Display detailed information about a dataset snapshot.
+
+    Args:
+        dataset_id: Dataset ID or path to manifest.
+        version: Optional version string.
+        root: Project root directory.
+        output_json: If True, output raw JSON.
+        show_members: If True, show detailed member list.
+        quiet: If True, suppress non-error output.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.dataset_snapshot import (
+        DatasetNotFoundError,
+        DatasetSnapshot,
+        DatasetSnapshotReader,
+    )
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Resolve dataset path
+    manifest_path = _resolve_dataset_path(dataset_id, version, project_root)
+    if manifest_path is None:
+        sys.stderr.write(f"Error: Dataset not found: {dataset_id}")
+        if version:
+            sys.stderr.write(f" (version {version})")
+        sys.stderr.write("\n")
+        sys.stderr.write(
+            f"Hint: Check data/datasets/ or provide a path to a JSON manifest.\n"
+        )
+        return 2
+
+    # Load the snapshot
+    try:
+        reader = DatasetSnapshotReader(snapshot_path=manifest_path)
+        snapshot = reader.load()
+    except DatasetNotFoundError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 2
+    except Exception as e:
+        sys.stderr.write(f"Error loading dataset: {e}\n")
+        return 2
+
+    # Output JSON if requested
+    if output_json:
+        sys.stdout.write(snapshot.to_json(indent=2) + "\n")
+        return 0
+
+    # Formatted output
+    lines: list[str] = []
+    lines.append(f"Dataset: {snapshot.dataset_id}")
+    lines.append(f"Version: {snapshot.version}")
+    if snapshot.name:
+        lines.append(f"Name: {snapshot.name}")
+    if snapshot.description:
+        lines.append(f"Description: {snapshot.description}")
+    lines.append(f"Created: {snapshot.created_utc}")
+    lines.append("")
+
+    # Summary
+    lines.append("Summary:")
+    lines.append(f"  Members: {snapshot.member_count}")
+    lines.append(f"  Total size: {_format_bytes(snapshot.total_bytes)}")
+    lines.append(f"  Content hash: {snapshot.content_hash.digest[:16]}...")
+    if snapshot.parent_version:
+        lines.append(f"  Parent version: {snapshot.parent_version}")
+    if snapshot.index_path:
+        lines.append(f"  Parquet index: {snapshot.index_path}")
+    lines.append("")
+
+    # Provenance
+    lines.append("Provenance:")
+    lines.append(f"  Generator: {snapshot.provenance.generator}")
+    lines.append(f"  Version: {snapshot.provenance.generator_version}")
+    if snapshot.provenance.git_commit:
+        lines.append(f"  Git commit: {snapshot.provenance.git_commit[:12]}")
+    if snapshot.provenance.pipeline_stage:
+        lines.append(f"  Pipeline stage: {snapshot.provenance.pipeline_stage}")
+    if snapshot.provenance.source_runs:
+        lines.append(f"  Source runs: {len(snapshot.provenance.source_runs)}")
+    lines.append("")
+
+    # Statistics
+    if snapshot.statistics:
+        stats = snapshot.statistics
+        lines.append("Statistics:")
+        if stats.by_artifact_type:
+            lines.append("  By artifact type:")
+            for atype, info in stats.by_artifact_type.items():
+                lines.append(
+                    f"    {atype}: {info.get('count', 0)} "
+                    f"({_format_bytes(info.get('total_bytes', 0))})"
+                )
+        if stats.unique_coupons:
+            lines.append(f"  Unique coupons: {stats.unique_coupons}")
+        if stats.frequency_range_hz:
+            fmin = stats.frequency_range_hz.get("min", 0)
+            fmax = stats.frequency_range_hz.get("max", 0)
+            lines.append(f"  Frequency range: {fmin/1e6:.1f} MHz - {fmax/1e9:.1f} GHz")
+        if stats.parameter_ranges:
+            lines.append("  Parameter ranges:")
+            for param, ranges in stats.parameter_ranges.items():
+                pmin = ranges.get("min", 0)
+                pmax = ranges.get("max", 0)
+                lines.append(f"    {param}: {pmin} - {pmax}")
+        lines.append("")
+
+    # Splits
+    if snapshot.splits:
+        lines.append("Splits:")
+        for split_name, split_def in snapshot.splits.items():
+            lines.append(
+                f"  {split_name}: {split_def.count} members "
+                f"({split_def.fraction * 100:.1f}%)"
+            )
+        lines.append("")
+
+    # Tags
+    if snapshot.tags:
+        lines.append("Tags:")
+        for key, value in snapshot.tags.items():
+            lines.append(f"  {key}: {value}")
+        lines.append("")
+
+    # Members (if requested)
+    if show_members and snapshot.members:
+        lines.append("Members:")
+        for i, member in enumerate(snapshot.members, 1):
+            lines.append(f"  [{i}] {member.artifact_id}")
+            lines.append(f"      Type: {member.artifact_type}, Role: {member.role}")
+            lines.append(
+                f"      Size: {_format_bytes(member.byte_size)}, "
+                f"Hash: {member.content_hash.digest[:12]}..."
+            )
+            if member.storage_path:
+                lines.append(f"      Path: {member.storage_path}")
+        lines.append("")
+
+    # Output
+    for line in lines:
+        _log(line, quiet)
+
+    return 0
+
+
+def cmd_dataset_diff(
+    dataset_a: str,
+    dataset_b: str,
+    root: Path | None,
+    output_json: bool,
+    quiet: bool,
+) -> int:
+    """Compare two dataset versions and show differences.
+
+    Args:
+        dataset_a: First dataset ID or path (the 'from' version).
+        dataset_b: Second dataset ID or path (the 'to' version).
+        root: Project root directory.
+        output_json: If True, output diff as JSON.
+        quiet: If True, suppress non-error output.
+
+    Returns:
+        0 on success (including no differences), non-zero on error.
+    """
+    from formula_foundry.m3.dataset_snapshot import (
+        DatasetNotFoundError,
+        DatasetSnapshot,
+        DatasetSnapshotReader,
+    )
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Resolve dataset paths
+    path_a = _resolve_dataset_path(dataset_a, None, project_root)
+    if path_a is None:
+        sys.stderr.write(f"Error: Dataset not found: {dataset_a}\n")
+        return 2
+
+    path_b = _resolve_dataset_path(dataset_b, None, project_root)
+    if path_b is None:
+        sys.stderr.write(f"Error: Dataset not found: {dataset_b}\n")
+        return 2
+
+    # Load snapshots
+    try:
+        reader_a = DatasetSnapshotReader(snapshot_path=path_a)
+        snapshot_a = reader_a.load()
+        reader_b = DatasetSnapshotReader(snapshot_path=path_b)
+        snapshot_b = reader_b.load()
+    except DatasetNotFoundError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 2
+    except Exception as e:
+        sys.stderr.write(f"Error loading datasets: {e}\n")
+        return 2
+
+    # Build member sets by artifact_id
+    members_a = {m.artifact_id: m for m in snapshot_a.members}
+    members_b = {m.artifact_id: m for m in snapshot_b.members}
+
+    ids_a = set(members_a.keys())
+    ids_b = set(members_b.keys())
+
+    # Compute differences
+    added_ids = ids_b - ids_a
+    removed_ids = ids_a - ids_b
+    common_ids = ids_a & ids_b
+
+    # Check for modified members (same ID but different hash)
+    modified_ids: list[str] = []
+    for artifact_id in common_ids:
+        if members_a[artifact_id].content_hash.digest != members_b[artifact_id].content_hash.digest:
+            modified_ids.append(artifact_id)
+
+    unchanged_count = len(common_ids) - len(modified_ids)
+
+    # Build diff result
+    diff_result: dict[str, Any] = {
+        "from": {
+            "dataset_id": snapshot_a.dataset_id,
+            "version": snapshot_a.version,
+            "member_count": snapshot_a.member_count,
+            "total_bytes": snapshot_a.total_bytes,
+        },
+        "to": {
+            "dataset_id": snapshot_b.dataset_id,
+            "version": snapshot_b.version,
+            "member_count": snapshot_b.member_count,
+            "total_bytes": snapshot_b.total_bytes,
+        },
+        "summary": {
+            "added": len(added_ids),
+            "removed": len(removed_ids),
+            "modified": len(modified_ids),
+            "unchanged": unchanged_count,
+        },
+        "added": sorted(added_ids),
+        "removed": sorted(removed_ids),
+        "modified": sorted(modified_ids),
+    }
+
+    # Output JSON if requested
+    if output_json:
+        sys.stdout.write(json.dumps(diff_result, indent=2) + "\n")
+        return 0
+
+    # Formatted output
+    lines: list[str] = []
+    lines.append("Dataset Comparison")
+    lines.append("=" * 50)
+    lines.append("")
+    lines.append(
+        f"From: {snapshot_a.dataset_id} {snapshot_a.version} "
+        f"({snapshot_a.member_count} members, {_format_bytes(snapshot_a.total_bytes)})"
+    )
+    lines.append(
+        f"To:   {snapshot_b.dataset_id} {snapshot_b.version} "
+        f"({snapshot_b.member_count} members, {_format_bytes(snapshot_b.total_bytes)})"
+    )
+    lines.append("")
+
+    # Summary
+    lines.append("Summary:")
+    lines.append(f"  Added:     {len(added_ids)}")
+    lines.append(f"  Removed:   {len(removed_ids)}")
+    lines.append(f"  Modified:  {len(modified_ids)}")
+    lines.append(f"  Unchanged: {unchanged_count}")
+    lines.append("")
+
+    # Check for hash match
+    if snapshot_a.content_hash.digest == snapshot_b.content_hash.digest:
+        lines.append("Datasets are identical (same content hash).")
+        lines.append("")
+    elif not added_ids and not removed_ids and not modified_ids:
+        lines.append("No member differences detected.")
+        lines.append("")
+    else:
+        # Show details
+        if added_ids:
+            lines.append(f"Added ({len(added_ids)}):")
+            for artifact_id in sorted(added_ids):
+                member = members_b[artifact_id]
+                lines.append(f"  + {artifact_id}")
+                lines.append(
+                    f"    Type: {member.artifact_type}, "
+                    f"Size: {_format_bytes(member.byte_size)}"
+                )
+            lines.append("")
+
+        if removed_ids:
+            lines.append(f"Removed ({len(removed_ids)}):")
+            for artifact_id in sorted(removed_ids):
+                member = members_a[artifact_id]
+                lines.append(f"  - {artifact_id}")
+                lines.append(
+                    f"    Type: {member.artifact_type}, "
+                    f"Size: {_format_bytes(member.byte_size)}"
+                )
+            lines.append("")
+
+        if modified_ids:
+            lines.append(f"Modified ({len(modified_ids)}):")
+            for artifact_id in sorted(modified_ids):
+                old_member = members_a[artifact_id]
+                new_member = members_b[artifact_id]
+                lines.append(f"  ~ {artifact_id}")
+                lines.append(
+                    f"    Old hash: {old_member.content_hash.digest[:12]}... "
+                    f"({_format_bytes(old_member.byte_size)})"
+                )
+                lines.append(
+                    f"    New hash: {new_member.content_hash.digest[:12]}... "
+                    f"({_format_bytes(new_member.byte_size)})"
+                )
+            lines.append("")
+
+    # Size delta
+    size_delta = snapshot_b.total_bytes - snapshot_a.total_bytes
+    if size_delta > 0:
+        lines.append(f"Size change: +{_format_bytes(size_delta)}")
+    elif size_delta < 0:
+        lines.append(f"Size change: -{_format_bytes(abs(size_delta))}")
+    else:
+        lines.append("Size change: none")
+
+    # Output
+    for line in lines:
+        _log(line, quiet)
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the m3 CLI."""
     parser = build_parser()
@@ -1010,6 +1497,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             quiet=args.quiet,
             tags=args.tags,
         )
+
+    if args.command == "dataset":
+        if args.dataset_command == "show":
+            return cmd_dataset_show(
+                dataset_id=args.dataset_id,
+                version=args.version,
+                root=args.root,
+                output_json=args.output_json,
+                show_members=args.members,
+                quiet=args.quiet,
+            )
+        if args.dataset_command == "diff":
+            return cmd_dataset_diff(
+                dataset_a=args.dataset_a,
+                dataset_b=args.dataset_b,
+                root=args.root,
+                output_json=args.output_json,
+                quiet=args.quiet,
+            )
+        parser.error(f"Unknown dataset command: {args.dataset_command}")
 
     # Should not reach here due to required=True on subparsers
     parser.error(f"Unknown command: {args.command}")
