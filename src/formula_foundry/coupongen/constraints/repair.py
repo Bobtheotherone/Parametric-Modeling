@@ -4,18 +4,33 @@ This module implements REPAIR mode that projects infeasible specs into
 feasible space with full auditability through repair_map, repair_reason,
 and repair_distance.
 
-It also provides constraint_proof.json generation with per-constraint
-evaluations and signed margins.
+It also provides constraint_proof.json and repair_map.json generation with
+per-constraint evaluations and signed margins.
 
 REQ-M1-010: REPAIR mode must project infeasible specs into feasible space
             with auditable repair_map, repair_reason list, and repair_distance.
 REQ-M1-011: Every generated design must emit a constraint_proof.json with
             per-constraint evaluations and signed margins.
+
+CP-3.4: Enhanced REPAIR mode with audit trail including:
+        - repair_map.json with original/repaired design vectors
+        - L2 and Linf distance metrics in normalized space
+        - F1 continuity clamping (length_right >= 0)
+        - Documented projection policy order
+
+Projection Policy Order (documented per CP-3.4):
+    1. T0: Parameter bounds (clamping to fab minimums/maximums)
+    2. T1: Derived scalar constraints (annular ring, diameter relationships)
+    3. T2: Spatial constraints (connector positions, via clearances)
+
+    F1 Continuity: After applying all repairs, ensure length_right >= 0.
+    This guarantees valid topology for F1_SINGLE_ENDED_VIA family.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +41,30 @@ from .tiers import (
     TieredConstraintProof,
     TieredConstraintSystem,
 )
+
+# Parameter normalization bounds for F1 family (used for distance metrics)
+# These match the bounds in gpu_filter.py FamilyF1ParameterSpace
+_PARAM_BOUNDS: dict[str, tuple[int, int]] = {
+    "transmission_line.w_nm": (100_000, 500_000),
+    "transmission_line.gap_nm": (100_000, 300_000),
+    "transmission_line.length_left_nm": (5_000_000, 50_000_000),
+    "transmission_line.length_right_nm": (0, 50_000_000),  # 0 for F1 continuity
+    "board.outline.width_nm": (10_000_000, 50_000_000),
+    "board.outline.length_nm": (30_000_000, 150_000_000),
+    "board.outline.corner_radius_nm": (0, 5_000_000),
+    "discontinuity.signal_via.drill_nm": (200_000, 500_000),
+    "discontinuity.signal_via.diameter_nm": (300_000, 800_000),
+    "discontinuity.signal_via.pad_diameter_nm": (400_000, 1_200_000),
+    "discontinuity.return_vias.via.drill_nm": (200_000, 500_000),
+    "discontinuity.return_vias.via.diameter_nm": (300_000, 800_000),
+    "discontinuity.return_vias.radius_nm": (800_000, 3_000_000),
+    "transmission_line.ground_via_fence.via.drill_nm": (200_000, 400_000),
+    "transmission_line.ground_via_fence.via.diameter_nm": (300_000, 700_000),
+    "transmission_line.ground_via_fence.pitch_nm": (500_000, 3_000_000),
+    "transmission_line.ground_via_fence.offset_from_gap_nm": (200_000, 1_500_000),
+    "connectors.left.position_nm[0]": (2_000_000, 10_000_000),
+    "connectors.right.position_nm[0]": (70_000_000, 145_000_000),
+}
 
 if TYPE_CHECKING:
     from ..spec import CouponSpec
@@ -51,16 +90,66 @@ class RepairAction:
 
 
 @dataclass(frozen=True)
+class RepairDistanceMetrics:
+    """Distance metrics for repair in normalized space (CP-3.4).
+
+    Attributes:
+        l2_distance: L2 (Euclidean) norm of repair vector in normalized space
+        linf_distance: L-infinity (max) norm of repair vector in normalized space
+        normalized_sum_distance: Sum of normalized relative changes (original metric)
+    """
+
+    l2_distance: float
+    linf_distance: float
+    normalized_sum_distance: float
+
+    def to_dict(self) -> dict[str, float]:
+        """Convert to dictionary for serialization."""
+        return {
+            "l2_distance": self.l2_distance,
+            "linf_distance": self.linf_distance,
+            "normalized_sum_distance": self.normalized_sum_distance,
+        }
+
+
+@dataclass(frozen=True)
+class DesignVector:
+    """Design vector representation for repair audit trail (CP-3.4).
+
+    Stores both raw parameter values and normalized [0,1] values
+    for comparison and distance calculations.
+
+    Attributes:
+        parameters: Dict mapping parameter paths to values (in nm)
+        normalized: Dict mapping parameter paths to normalized [0,1] values
+    """
+
+    parameters: dict[str, int]
+    normalized: dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "parameters": self.parameters,
+            "normalized": self.normalized,
+        }
+
+
+@dataclass(frozen=True)
 class RepairResult:
     """Result of a REPAIR mode projection.
 
     Attributes:
         repair_map: Mapping from parameter paths to {before, after} dicts
         repair_reason: List of human-readable repair explanations
-        repair_distance: Normalized total distance of all repairs
+        repair_distance: Normalized total distance of all repairs (legacy)
         repair_actions: Detailed list of all repair actions taken
         original_proof: Constraint proof before repair
         repaired_proof: Constraint proof after repair (should pass)
+        original_vector: Original design vector (CP-3.4)
+        repaired_vector: Repaired design vector (CP-3.4)
+        distance_metrics: L2/Linf distance metrics in normalized space (CP-3.4)
+        projection_policy_order: List of tiers in repair order (CP-3.4)
     """
 
     repair_map: dict[str, dict[str, int]]
@@ -69,10 +158,15 @@ class RepairResult:
     repair_actions: tuple[RepairAction, ...]
     original_proof: TieredConstraintProof
     repaired_proof: TieredConstraintProof
+    # CP-3.4 additions
+    original_vector: DesignVector | None = None
+    repaired_vector: DesignVector | None = None
+    distance_metrics: RepairDistanceMetrics | None = None
+    projection_policy_order: tuple[str, ...] = ("T0", "T1", "T2", "F1_CONTINUITY")
 
     def to_dict(self) -> dict[str, Any]:
         """Convert repair result to a dictionary for serialization."""
-        return {
+        result: dict[str, Any] = {
             "repair_map": self.repair_map,
             "repair_reason": self.repair_reason,
             "repair_distance": self.repair_distance,
@@ -88,7 +182,18 @@ class RepairResult:
             ],
             "original_passed": self.original_proof.passed,
             "repaired_passed": self.repaired_proof.passed,
+            "projection_policy_order": list(self.projection_policy_order),
         }
+
+        # CP-3.4: Include design vectors and distance metrics if available
+        if self.original_vector is not None:
+            result["original_vector"] = self.original_vector.to_dict()
+        if self.repaired_vector is not None:
+            result["repaired_vector"] = self.repaired_vector.to_dict()
+        if self.distance_metrics is not None:
+            result["distance_metrics"] = self.distance_metrics.to_dict()
+
+        return result
 
 
 @dataclass
@@ -169,6 +274,157 @@ def _compute_repair_distance(repair_actions: list[RepairAction]) -> float:
         denom = max(abs(before), 1.0)
         total += abs(after - before) / denom
     return total
+
+
+def _normalize_value(path: str, value: int) -> float:
+    """Normalize a parameter value to [0, 1] range (CP-3.4).
+
+    Args:
+        path: Parameter path (e.g., "transmission_line.w_nm")
+        value: Raw value in nm
+
+    Returns:
+        Normalized value in [0, 1]
+    """
+    bounds = _PARAM_BOUNDS.get(path)
+    if bounds is None:
+        # Unknown parameter, return as-is scaled by 1e-6
+        return float(value) / 1_000_000.0
+
+    min_val, max_val = bounds
+    range_val = max_val - min_val
+    if range_val <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (value - min_val) / range_val))
+
+
+def _compute_distance_metrics(repair_actions: list[RepairAction]) -> RepairDistanceMetrics:
+    """Compute L2 and Linf distance metrics in normalized space (CP-3.4).
+
+    Args:
+        repair_actions: List of repair actions taken
+
+    Returns:
+        RepairDistanceMetrics with L2, Linf, and normalized sum distances
+    """
+    if not repair_actions:
+        return RepairDistanceMetrics(
+            l2_distance=0.0,
+            linf_distance=0.0,
+            normalized_sum_distance=0.0,
+        )
+
+    # Compute normalized differences for each action
+    normalized_diffs: list[float] = []
+    for action in repair_actions:
+        # Normalize before and after values
+        norm_before = _normalize_value(action.path, action.before)
+        norm_after = _normalize_value(action.path, action.after)
+        normalized_diffs.append(abs(norm_after - norm_before))
+
+    # L2 (Euclidean) distance
+    l2_distance = math.sqrt(sum(d * d for d in normalized_diffs))
+
+    # Linf (max) distance
+    linf_distance = max(normalized_diffs) if normalized_diffs else 0.0
+
+    # Normalized sum (original metric)
+    normalized_sum = _compute_repair_distance(repair_actions)
+
+    return RepairDistanceMetrics(
+        l2_distance=l2_distance,
+        linf_distance=linf_distance,
+        normalized_sum_distance=normalized_sum,
+    )
+
+
+def _extract_design_vector(payload: dict[str, Any]) -> DesignVector:
+    """Extract design vector from spec payload (CP-3.4).
+
+    Args:
+        payload: Spec payload dictionary
+
+    Returns:
+        DesignVector with parameters and normalized values
+    """
+    parameters: dict[str, int] = {}
+    normalized: dict[str, float] = {}
+
+    # Extract transmission line parameters
+    tl = payload.get("transmission_line", {})
+    if tl:
+        for key in ["w_nm", "gap_nm", "length_left_nm", "length_right_nm"]:
+            if key in tl:
+                path = f"transmission_line.{key}"
+                val = int(tl[key])
+                parameters[path] = val
+                normalized[path] = _normalize_value(path, val)
+
+        # Ground via fence parameters
+        fence = tl.get("ground_via_fence")
+        if fence and fence.get("enabled", False):
+            for key in ["pitch_nm", "offset_from_gap_nm"]:
+                if key in fence:
+                    path = f"transmission_line.ground_via_fence.{key}"
+                    val = int(fence[key])
+                    parameters[path] = val
+                    normalized[path] = _normalize_value(path, val)
+            via = fence.get("via", {})
+            for key in ["drill_nm", "diameter_nm"]:
+                if key in via:
+                    path = f"transmission_line.ground_via_fence.via.{key}"
+                    val = int(via[key])
+                    parameters[path] = val
+                    normalized[path] = _normalize_value(path, val)
+
+    # Extract board outline parameters
+    board = payload.get("board", {}).get("outline", {})
+    if board:
+        for key in ["width_nm", "length_nm", "corner_radius_nm"]:
+            if key in board:
+                path = f"board.outline.{key}"
+                val = int(board[key])
+                parameters[path] = val
+                normalized[path] = _normalize_value(path, val)
+
+    # Extract discontinuity parameters
+    disc = payload.get("discontinuity")
+    if disc:
+        signal_via = disc.get("signal_via", {})
+        for key in ["drill_nm", "diameter_nm", "pad_diameter_nm"]:
+            if key in signal_via:
+                path = f"discontinuity.signal_via.{key}"
+                val = int(signal_via[key])
+                parameters[path] = val
+                normalized[path] = _normalize_value(path, val)
+
+        return_vias = disc.get("return_vias")
+        if return_vias:
+            if "radius_nm" in return_vias:
+                path = "discontinuity.return_vias.radius_nm"
+                val = int(return_vias["radius_nm"])
+                parameters[path] = val
+                normalized[path] = _normalize_value(path, val)
+            via = return_vias.get("via", {})
+            for key in ["drill_nm", "diameter_nm"]:
+                if key in via:
+                    path = f"discontinuity.return_vias.via.{key}"
+                    val = int(via[key])
+                    parameters[path] = val
+                    normalized[path] = _normalize_value(path, val)
+
+    # Extract connector positions
+    connectors = payload.get("connectors", {})
+    for side in ["left", "right"]:
+        conn = connectors.get(side, {})
+        pos = conn.get("position_nm")
+        if pos and len(pos) >= 1:
+            path = f"connectors.{side}.position_nm[0]"
+            val = int(pos[0])
+            parameters[path] = val
+            normalized[path] = _normalize_value(path, val)
+
+    return DesignVector(parameters=parameters, normalized=normalized)
 
 
 def _get_nested_value(data: dict[str, Any], path: str) -> Any:
@@ -620,12 +876,61 @@ class RepairEngine:
                     "T2_FENCE_PITCH_MIN",
                 )
 
+    def repair_f1_continuity(self, payload: dict[str, Any]) -> None:
+        """Apply F1 continuity repair: ensure length_right >= 0 (CP-3.4).
+
+        For the F1_SINGLE_ENDED_VIA family, the right trace length must be
+        non-negative to ensure valid topology. This is a post-repair step
+        that clamps length_right to 0 if it would otherwise be negative.
+
+        The F1 topology constraint is:
+            x_discontinuity_center = x_left_connector + length_left
+            x_discontinuity_center = x_right_connector - length_right
+
+        If length_right would be negative (due to connector positions or
+        length_left being too large), we clamp it to 0 to maintain valid
+        topology.
+
+        Args:
+            payload: Spec payload to repair
+        """
+        tl = payload.get("transmission_line")
+        if tl is None:
+            return
+
+        # Check if this is F1 family (has discontinuity with VIA_TRANSITION)
+        disc = payload.get("discontinuity")
+        if disc is None or disc.get("type") != "VIA_TRANSITION":
+            return
+
+        length_right = int(tl.get("length_right_nm", 0))
+        if length_right < 0:
+            tl["length_right_nm"] = self._record(
+                "transmission_line.length_right_nm",
+                length_right,
+                0,
+                f"Right trace length {length_right}nm clamped to 0 for F1 continuity",
+                "F1_CONTINUITY_LENGTH_RIGHT",
+            )
+
     def get_repair_result(
         self,
         original_proof: TieredConstraintProof,
         repaired_proof: TieredConstraintProof,
+        original_vector: DesignVector | None = None,
+        repaired_vector: DesignVector | None = None,
     ) -> RepairResult:
-        """Build the final repair result from accumulated actions."""
+        """Build the final repair result from accumulated actions (CP-3.4 enhanced).
+
+        Args:
+            original_proof: Constraint proof before repair
+            repaired_proof: Constraint proof after repair
+            original_vector: Original design vector (CP-3.4)
+            repaired_vector: Repaired design vector (CP-3.4)
+
+        Returns:
+            RepairResult with full audit trail
+        """
         repair_map: dict[str, dict[str, int]] = {}
         repair_reason: list[str] = []
 
@@ -635,6 +940,9 @@ class RepairEngine:
 
         repair_distance = _compute_repair_distance(self.actions)
 
+        # CP-3.4: Compute L2/Linf distance metrics
+        distance_metrics = _compute_distance_metrics(self.actions)
+
         return RepairResult(
             repair_map=repair_map,
             repair_reason=repair_reason,
@@ -642,6 +950,10 @@ class RepairEngine:
             repair_actions=tuple(self.actions),
             original_proof=original_proof,
             repaired_proof=repaired_proof,
+            original_vector=original_vector,
+            repaired_vector=repaired_vector,
+            distance_metrics=distance_metrics,
+            projection_policy_order=("T0", "T1", "T2", "F1_CONTINUITY"),
         )
 
 
@@ -651,17 +963,27 @@ def repair_spec_tiered(
 ) -> tuple[CouponSpec, RepairResult]:
     """Project an infeasible spec into feasible space using tiered repair.
 
-    This function applies repairs in tier order (T0 -> T1 -> T2), ensuring
-    that lower-tier repairs are applied before higher-tier ones. This is
+    This function applies repairs in tier order (T0 -> T1 -> T2 -> F1_CONTINUITY),
+    ensuring that lower-tier repairs are applied before higher-tier ones. This is
     important because higher-tier constraints often depend on lower-tier
     parameter values.
+
+    Projection Policy Order (CP-3.4):
+        1. T0: Parameter bounds (clamping to fab minimums/maximums)
+        2. T1: Derived scalar constraints (annular ring, diameter relationships)
+        3. T2: Spatial constraints (connector positions, via clearances)
+        4. F1_CONTINUITY: Ensure length_right >= 0 for valid F1 topology
 
     Args:
         spec: The CouponSpec to repair
         fab_limits: Dictionary of fab capability limits in nm
 
     Returns:
-        Tuple of (repaired_spec, repair_result)
+        Tuple of (repaired_spec, repair_result) with CP-3.4 audit trail:
+        - original_vector: Design vector before repair
+        - repaired_vector: Design vector after repair
+        - distance_metrics: L2/Linf distances in normalized space
+        - projection_policy_order: Order of repair tiers applied
     """
     from ..spec import CouponSpec
 
@@ -669,7 +991,11 @@ def repair_spec_tiered(
     system = TieredConstraintSystem()
     original_proof = system.evaluate(spec, fab_limits)
 
-    # If already valid, return as-is
+    # Get mutable payload and extract original design vector (CP-3.4)
+    payload = spec.model_dump(mode="json")
+    original_vector = _extract_design_vector(payload)
+
+    # If already valid, return as-is with empty metrics
     if original_proof.passed:
         return spec, RepairResult(
             repair_map={},
@@ -678,22 +1004,44 @@ def repair_spec_tiered(
             repair_actions=(),
             original_proof=original_proof,
             repaired_proof=original_proof,
+            original_vector=original_vector,
+            repaired_vector=original_vector,  # No change
+            distance_metrics=RepairDistanceMetrics(
+                l2_distance=0.0,
+                linf_distance=0.0,
+                normalized_sum_distance=0.0,
+            ),
+            projection_policy_order=("T0", "T1", "T2", "F1_CONTINUITY"),
         )
 
-    # Get mutable payload
-    payload = spec.model_dump(mode="json")
-
-    # Create repair engine and apply repairs
+    # Create repair engine and apply repairs in policy order
     engine = RepairEngine(fab_limits)
+
+    # T0: Parameter bounds
     engine.repair_tier0(payload)
+
+    # T1: Derived scalar constraints
     engine.repair_tier1(payload)
+
+    # T2: Spatial constraints
     engine.repair_tier2(payload)
+
+    # F1_CONTINUITY: Ensure length_right >= 0 for F1 topology (CP-3.4)
+    engine.repair_f1_continuity(payload)
+
+    # Extract repaired design vector (CP-3.4)
+    repaired_vector = _extract_design_vector(payload)
 
     # Validate repaired spec
     repaired_spec = CouponSpec.model_validate(payload)
     repaired_proof = system.evaluate(repaired_spec, fab_limits)
 
-    return repaired_spec, engine.get_repair_result(original_proof, repaired_proof)
+    return repaired_spec, engine.get_repair_result(
+        original_proof,
+        repaired_proof,
+        original_vector=original_vector,
+        repaired_vector=repaired_vector,
+    )
 
 
 def generate_constraint_proof(
@@ -765,3 +1113,27 @@ def write_constraint_proof(
     """
     doc = generate_constraint_proof(proof, repair_result)
     doc.write_to_file(path)
+
+
+def write_repair_map(
+    path: Path | str,
+    repair_result: RepairResult,
+) -> None:
+    """Write a repair_map.json file with full audit trail (CP-3.4).
+
+    The repair_map.json contains:
+    - original_vector: Design vector before repair
+    - repaired_vector: Design vector after repair
+    - repair_actions: Per-constraint repair actions
+    - distance_metrics: L2, Linf distances in normalized space
+    - projection_policy_order: Order of repair tiers applied
+
+    Args:
+        path: Path to write the repair_map.json file
+        repair_result: The repair result with audit trail
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    content = repair_result.to_dict()
+    path.write_text(json.dumps(content, indent=2), encoding="utf-8")

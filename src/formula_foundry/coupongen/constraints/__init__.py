@@ -53,14 +53,18 @@ from .gpu_filter import (
 )
 
 # Export REPAIR mode and constraint proof generation (new in M1-CONSTRAINTS-REPAIR)
+# CP-3.4: Enhanced with audit trail, L2/Linf metrics, design vectors
 from .repair import (
     ConstraintProofDocument,
+    DesignVector,
     RepairAction,
+    RepairDistanceMetrics,
     RepairEngine,
     RepairResult,
     generate_constraint_proof,
     repair_spec_tiered,
     write_constraint_proof,
+    write_repair_map,
 )
 
 # Import ConstraintResult from tiers as TieredConstraintResult to avoid name collision
@@ -140,14 +144,17 @@ __all__ = [
     "TieredConstraintResult",
     "TieredConstraintSystem",
     "evaluate_tiered_constraints",
-    # REPAIR mode and constraint proof generation (new)
+    # REPAIR mode and constraint proof generation (new, enhanced CP-3.4)
     "ConstraintProofDocument",
+    "DesignVector",
     "RepairAction",
+    "RepairDistanceMetrics",
     "RepairEngine",
     "RepairResult",
     "generate_constraint_proof",
     "repair_spec_tiered",
     "write_constraint_proof",
+    "write_repair_map",
     # GPU-accelerated batch filtering (new, updated for CP-4.1)
     "BatchFilterResult",
     "FabProfiles",

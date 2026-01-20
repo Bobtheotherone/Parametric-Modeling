@@ -600,3 +600,281 @@ class TestRepairAction:
 
         with pytest.raises(AttributeError):
             action.before = 999  # type: ignore[misc]
+
+
+class TestCP34RepairModeAuditTrail:
+    """Tests for CP-3.4 REPAIR mode with audit trail.
+
+    Tests the enhanced REPAIR mode features:
+    - repair_map.json with original/repaired design vectors
+    - L2 and Linf distance metrics in normalized space
+    - F1 continuity clamping (length_right >= 0)
+    - Projection policy order documentation
+    """
+
+    def test_repair_result_includes_design_vectors(self) -> None:
+        """RepairResult should include original and repaired design vectors."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # CP-3.4: Design vectors should be present
+        assert repair_result.original_vector is not None
+        assert repair_result.repaired_vector is not None
+
+        # Verify original vector has the original value
+        orig_w = repair_result.original_vector.parameters.get("transmission_line.w_nm")
+        assert orig_w == 50_000
+
+        # Verify repaired vector has the repaired value
+        repaired_w = repair_result.repaired_vector.parameters.get("transmission_line.w_nm")
+        assert repaired_w == 100_000
+
+    def test_repair_result_includes_normalized_values(self) -> None:
+        """Design vectors should include normalized [0,1] values."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # CP-3.4: Normalized values should be in [0, 1]
+        assert repair_result.original_vector is not None
+        for path, norm_val in repair_result.original_vector.normalized.items():
+            assert 0.0 <= norm_val <= 1.0, f"{path} normalized value {norm_val} out of range"
+
+    def test_repair_result_includes_distance_metrics(self) -> None:
+        """RepairResult should include L2 and Linf distance metrics."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # CP-3.4: Distance metrics should be present
+        assert repair_result.distance_metrics is not None
+        assert repair_result.distance_metrics.l2_distance >= 0.0
+        assert repair_result.distance_metrics.linf_distance >= 0.0
+        assert repair_result.distance_metrics.normalized_sum_distance >= 0.0
+
+    def test_l2_linf_metrics_are_consistent(self) -> None:
+        """L2 distance should be >= Linf distance."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        data["transmission_line"]["gap_nm"] = 50_000  # Another violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # L2 >= Linf in all cases
+        assert repair_result.distance_metrics is not None
+        # For single dimension L2 == Linf, for multiple L2 >= Linf
+        assert repair_result.distance_metrics.l2_distance >= repair_result.distance_metrics.linf_distance
+
+    def test_projection_policy_order_is_documented(self) -> None:
+        """RepairResult should include projection policy order."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # CP-3.4: Policy order should be documented
+        assert repair_result.projection_policy_order is not None
+        assert len(repair_result.projection_policy_order) == 4
+        assert repair_result.projection_policy_order[0] == "T0"
+        assert repair_result.projection_policy_order[1] == "T1"
+        assert repair_result.projection_policy_order[2] == "T2"
+        assert repair_result.projection_policy_order[3] == "F1_CONTINUITY"
+
+    def test_f1_continuity_clamps_negative_length_right(self) -> None:
+        """F1 continuity should clamp negative length_right to 0."""
+        from formula_foundry.coupongen.constraints.repair import RepairEngine
+
+        limits = _default_fab_limits()
+        engine = RepairEngine(limits)
+
+        payload = {
+            "transmission_line": {
+                "w_nm": 100_000,
+                "gap_nm": 100_000,
+                "length_left_nm": 25_000_000,
+                "length_right_nm": -5_000_000,  # Negative - should be clamped
+                "ground_via_fence": None,
+            },
+            "board": {
+                "outline": {
+                    "width_nm": 20_000_000,
+                    "length_nm": 80_000_000,
+                    "corner_radius_nm": 2_000_000,
+                }
+            },
+            "discontinuity": {
+                "type": "VIA_TRANSITION",
+                "signal_via": {
+                    "drill_nm": 300_000,
+                    "diameter_nm": 600_000,
+                    "pad_diameter_nm": 900_000,
+                },
+            },
+            "connectors": {
+                "left": {"position_nm": [5_000_000, 0]},
+                "right": {"position_nm": [75_000_000, 0]},
+            },
+        }
+
+        engine.repair_f1_continuity(payload)
+
+        # CP-3.4: Negative length_right should be clamped to 0
+        assert payload["transmission_line"]["length_right_nm"] == 0
+        assert len(engine.actions) == 1
+        assert engine.actions[0].constraint_id == "F1_CONTINUITY_LENGTH_RIGHT"
+
+    def test_f1_continuity_skips_non_f1_family(self) -> None:
+        """F1 continuity repair should skip non-F1 families."""
+        from formula_foundry.coupongen.constraints.repair import RepairEngine
+
+        limits = _default_fab_limits()
+        engine = RepairEngine(limits)
+
+        # No discontinuity = F0 family
+        payload = {
+            "transmission_line": {
+                "w_nm": 100_000,
+                "gap_nm": 100_000,
+                "length_left_nm": 25_000_000,
+                "length_right_nm": -5_000_000,  # Would be clamped for F1
+                "ground_via_fence": None,
+            },
+            "discontinuity": None,  # F0 family
+        }
+
+        engine.repair_f1_continuity(payload)
+
+        # Should not clamp for F0 family
+        assert payload["transmission_line"]["length_right_nm"] == -5_000_000
+        assert len(engine.actions) == 0
+
+    def test_repair_result_to_dict_includes_cp34_fields(self) -> None:
+        """to_dict() should include CP-3.4 fields."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+        result_dict = repair_result.to_dict()
+
+        # CP-3.4: New fields should be present
+        assert "projection_policy_order" in result_dict
+        assert "original_vector" in result_dict
+        assert "repaired_vector" in result_dict
+        assert "distance_metrics" in result_dict
+
+        # Verify structure of distance_metrics
+        metrics = result_dict["distance_metrics"]
+        assert "l2_distance" in metrics
+        assert "linf_distance" in metrics
+        assert "normalized_sum_distance" in metrics
+
+    def test_valid_spec_has_zero_distance_metrics(self) -> None:
+        """Valid spec should have zero distance metrics."""
+        spec = CouponSpec.model_validate(_example_spec_data())
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # No repairs needed, so distances should be 0
+        assert repair_result.distance_metrics is not None
+        assert repair_result.distance_metrics.l2_distance == 0.0
+        assert repair_result.distance_metrics.linf_distance == 0.0
+        assert repair_result.distance_metrics.normalized_sum_distance == 0.0
+
+
+class TestWriteRepairMap:
+    """Tests for write_repair_map function (CP-3.4)."""
+
+    def test_write_repair_map_creates_file(self) -> None:
+        """write_repair_map should create a JSON file with audit trail."""
+        from formula_foundry.coupongen.constraints.repair import write_repair_map
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "repair_map.json"
+            write_repair_map(output_path, repair_result)
+
+            assert output_path.exists()
+            content = json.loads(output_path.read_text())
+
+            # Verify CP-3.4 structure
+            assert "repair_map" in content
+            assert "repair_reason" in content
+            assert "repair_distance" in content
+            assert "projection_policy_order" in content
+            assert "original_vector" in content
+            assert "repaired_vector" in content
+            assert "distance_metrics" in content
+
+    def test_write_repair_map_creates_directories(self) -> None:
+        """write_repair_map should create parent directories if needed."""
+        from formula_foundry.coupongen.constraints.repair import write_repair_map
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "nested" / "dir" / "repair_map.json"
+            write_repair_map(output_path, repair_result)
+
+            assert output_path.exists()
+
+    def test_repair_map_json_has_correct_schema(self) -> None:
+        """repair_map.json should have the CP-3.4 schema."""
+        from formula_foundry.coupongen.constraints.repair import write_repair_map
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        data["transmission_line"]["gap_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "repair_map.json"
+            write_repair_map(output_path, repair_result)
+
+            content = json.loads(output_path.read_text())
+
+            # Verify original_vector structure
+            assert "parameters" in content["original_vector"]
+            assert "normalized" in content["original_vector"]
+
+            # Verify repaired_vector structure
+            assert "parameters" in content["repaired_vector"]
+            assert "normalized" in content["repaired_vector"]
+
+            # Verify distance_metrics structure
+            assert content["distance_metrics"]["l2_distance"] >= 0
+            assert content["distance_metrics"]["linf_distance"] >= 0
+            assert content["distance_metrics"]["normalized_sum_distance"] >= 0
+
+            # Verify projection_policy_order
+            assert content["projection_policy_order"] == ["T0", "T1", "T2", "F1_CONTINUITY"]
