@@ -6,6 +6,7 @@ managing the Formula Foundry data provenance system.
 Commands:
     init: Initialize data directory structure, DVC, MLflow config, and registry.
     run: Execute a DVC stage with metadata stamping and artifact tracking.
+    gc: Garbage collect old artifacts with configurable retention policies.
 """
 
 from __future__ import annotations
@@ -333,6 +334,140 @@ def build_parser() -> argparse.ArgumentParser:
         dest="tags",
         metavar="KEY=VALUE",
         help="Add a tag (can be specified multiple times)",
+    )
+
+    # gc subcommand
+    gc_parser = subparsers.add_parser(
+        "gc",
+        help="Garbage collect old artifacts with configurable retention policies",
+    )
+    gc_parser.add_argument(
+        "--policy",
+        "-p",
+        type=str,
+        default="laptop_default",
+        help="Retention policy to use (default: laptop_default)",
+    )
+    gc_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    gc_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Show what would be deleted without deleting (default)",
+    )
+    gc_parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually delete artifacts (disables dry-run)",
+    )
+    gc_parser.add_argument(
+        "--no-dvc",
+        action="store_true",
+        help="Skip running dvc gc",
+    )
+    gc_parser.add_argument(
+        "--list-policies",
+        action="store_true",
+        help="List available retention policies and exit",
+    )
+    gc_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
+    )
+    gc_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON",
+    )
+
+    # gc pin subcommand
+    gc_pin_parser = subparsers.add_parser(
+        "gc-pin",
+        help="Pin an artifact to protect it from garbage collection",
+    )
+    gc_pin_parser.add_argument(
+        "--artifact-id",
+        type=str,
+        help="Artifact ID to pin",
+    )
+    gc_pin_parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID to pin (protects all artifacts from this run)",
+    )
+    gc_pin_parser.add_argument(
+        "--dataset-id",
+        type=str,
+        help="Dataset ID to pin (protects all artifacts in this dataset)",
+    )
+    gc_pin_parser.add_argument(
+        "--reason",
+        type=str,
+        help="Reason for pinning (for documentation)",
+    )
+    gc_pin_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory",
+    )
+
+    # gc unpin subcommand
+    gc_unpin_parser = subparsers.add_parser(
+        "gc-unpin",
+        help="Unpin an artifact to allow garbage collection",
+    )
+    gc_unpin_parser.add_argument(
+        "--artifact-id",
+        type=str,
+        help="Artifact ID to unpin",
+    )
+    gc_unpin_parser.add_argument(
+        "--run-id",
+        type=str,
+        help="Run ID to unpin",
+    )
+    gc_unpin_parser.add_argument(
+        "--dataset-id",
+        type=str,
+        help="Dataset ID to unpin",
+    )
+    gc_unpin_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory",
+    )
+
+    # gc estimate subcommand
+    gc_estimate_parser = subparsers.add_parser(
+        "gc-estimate",
+        help="Estimate space savings from garbage collection",
+    )
+    gc_estimate_parser.add_argument(
+        "--policy",
+        "-p",
+        type=str,
+        default="laptop_default",
+        help="Retention policy to use (default: laptop_default)",
+    )
+    gc_estimate_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory",
+    )
+    gc_estimate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results as JSON",
     )
 
     return parser
@@ -1974,6 +2109,366 @@ def cmd_artifact_list(
     return 0
 
 
+# =============================================================================
+# GC commands
+# =============================================================================
+
+
+def cmd_gc(
+    policy: str,
+    root: Path | None,
+    dry_run: bool,
+    execute: bool,
+    no_dvc: bool,
+    list_policies: bool,
+    quiet: bool,
+    output_json: bool,
+) -> int:
+    """Run garbage collection with a retention policy.
+
+    Args:
+        policy: Name of the retention policy to use.
+        root: Project root directory (auto-detected if None).
+        dry_run: If True, only show what would be deleted.
+        execute: If True, actually delete (overrides dry_run).
+        no_dvc: If True, skip running dvc gc.
+        list_policies: If True, list available policies and exit.
+        quiet: If True, suppress non-error output.
+        output_json: If True, output results as JSON.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.artifact_store import ArtifactStore
+    from formula_foundry.m3.gc import (
+        BUILTIN_POLICIES,
+        GarbageCollector,
+        PolicyNotFoundError,
+        format_bytes,
+        load_policies_from_file,
+    )
+    from formula_foundry.m3.lineage_graph import LineageGraph
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # List policies mode
+    if list_policies:
+        all_policies = dict(BUILTIN_POLICIES)
+        config_file = project_root / "config" / "gc_policies.yaml"
+        if config_file.exists():
+            all_policies.update(load_policies_from_file(config_file))
+
+        if output_json:
+            data = {name: pol.to_dict() for name, pol in all_policies.items()}
+            sys.stdout.write(json.dumps(data, indent=2) + "\n")
+        else:
+            _log("Available retention policies:", quiet)
+            _log("", quiet)
+            for name, pol in sorted(all_policies.items()):
+                desc = pol.description or "No description"
+                budget = format_bytes(pol.space_budget_bytes) if pol.space_budget_bytes else "unlimited"
+                _log(f"  {name}:", quiet)
+                _log(f"    Description: {desc}", quiet)
+                _log(f"    Keep min age: {pol.keep_min_age_days} days", quiet)
+                _log(f"    Keep min count: {pol.keep_min_count}", quiet)
+                _log(f"    Space budget: {budget}", quiet)
+                _log("", quiet)
+        return 0
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    # Determine actual dry_run mode (execute overrides dry_run)
+    actual_dry_run = not execute
+
+    _log(f"M3 Garbage Collection", quiet)
+    _log(f"  Policy: {policy}", quiet)
+    _log(f"  Mode: {'dry-run' if actual_dry_run else 'EXECUTE'}", quiet)
+    _log("", quiet)
+
+    # Initialize components
+    store = ArtifactStore(
+        root=data_dir,
+        generator="m3_gc",
+        generator_version=__version__,
+    )
+    registry = ArtifactRegistry(registry_db)
+
+    # Try to load lineage graph
+    lineage_db = data_dir / "lineage.sqlite"
+    lineage = None
+    if lineage_db.exists():
+        lineage = LineageGraph(lineage_db)
+
+    # Create GC instance
+    gc = GarbageCollector(
+        data_dir=data_dir,
+        store=store,
+        registry=registry,
+        lineage=lineage,
+    )
+
+    # Run GC
+    try:
+        result = gc.run(
+            policy=policy,
+            dry_run=actual_dry_run,
+            run_dvc_gc=not no_dvc,
+            enforce_space_budget=True,
+        )
+    except PolicyNotFoundError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        sys.stderr.write("Use --list-policies to see available policies.\n")
+        registry.close()
+        if lineage:
+            lineage.close()
+        return 2
+    except Exception as e:
+        sys.stderr.write(f"Error during GC: {e}\n")
+        registry.close()
+        if lineage:
+            lineage.close()
+        return 2
+
+    # Output results
+    if output_json:
+        sys.stdout.write(result.to_json() + "\n")
+    else:
+        _log(f"GC {'would delete' if actual_dry_run else 'deleted'}:", quiet)
+        _log(f"  Artifacts scanned: {result.artifacts_scanned}", quiet)
+        _log(f"  Artifacts {'to delete' if actual_dry_run else 'deleted'}: {result.artifacts_deleted}", quiet)
+        _log(f"  Space {'to free' if actual_dry_run else 'freed'}: {format_bytes(result.bytes_freed)}", quiet)
+        _log("", quiet)
+        _log(f"Protection summary:", quiet)
+        _log(f"  Pinned artifacts: {result.pinned_protected}", quiet)
+        _log(f"  With descendants: {result.descendant_protected}", quiet)
+        _log("", quiet)
+        _log(f"Storage:", quiet)
+        _log(f"  Before: {format_bytes(result.bytes_total_before)}", quiet)
+        _log(f"  After: {format_bytes(result.bytes_total_after)}", quiet)
+
+        if result.dvc_gc_ran:
+            _log("", quiet)
+            _log(f"DVC GC: {'ran' if result.dvc_gc_ran else 'skipped'}", quiet)
+            if result.dvc_gc_output and not quiet:
+                for line in result.dvc_gc_output.strip().split("\n")[:5]:
+                    _log(f"  {line}", quiet)
+
+        if result.errors:
+            sys.stderr.write("\nErrors:\n")
+            for error in result.errors:
+                sys.stderr.write(f"  {error}\n")
+
+        if actual_dry_run:
+            _log("", quiet)
+            _log("This was a dry run. Use --execute to actually delete.", quiet)
+
+    registry.close()
+    if lineage:
+        lineage.close()
+
+    return 0 if not result.errors else 1
+
+
+def cmd_gc_pin(
+    artifact_id: str | None,
+    run_id: str | None,
+    dataset_id: str | None,
+    reason: str | None,
+    root: Path | None,
+) -> int:
+    """Pin an artifact to protect it from garbage collection.
+
+    Args:
+        artifact_id: Specific artifact ID to pin.
+        run_id: Run ID to pin all artifacts from.
+        dataset_id: Dataset ID to pin all artifacts from.
+        reason: Reason for pinning.
+        root: Project root directory.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.artifact_store import ArtifactStore
+    from formula_foundry.m3.gc import GarbageCollector
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    if not any([artifact_id, run_id, dataset_id]):
+        sys.stderr.write("Error: Must specify --artifact-id, --run-id, or --dataset-id\n")
+        return 2
+
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    store = ArtifactStore(root=data_dir, generator="m3_gc_pin", generator_version=__version__)
+    registry = ArtifactRegistry(registry_db)
+
+    gc = GarbageCollector(data_dir=data_dir, store=store, registry=registry)
+
+    gc.pin_artifact(
+        artifact_id=artifact_id,
+        run_id=run_id,
+        dataset_id=dataset_id,
+        reason=reason,
+    )
+
+    registry.close()
+
+    target = artifact_id or run_id or dataset_id
+    sys.stdout.write(f"Pinned: {target}\n")
+    if reason:
+        sys.stdout.write(f"Reason: {reason}\n")
+
+    return 0
+
+
+def cmd_gc_unpin(
+    artifact_id: str | None,
+    run_id: str | None,
+    dataset_id: str | None,
+    root: Path | None,
+) -> int:
+    """Unpin an artifact to allow garbage collection.
+
+    Args:
+        artifact_id: Specific artifact ID to unpin.
+        run_id: Run ID to unpin.
+        dataset_id: Dataset ID to unpin.
+        root: Project root directory.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.artifact_store import ArtifactStore
+    from formula_foundry.m3.gc import GarbageCollector
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    if not any([artifact_id, run_id, dataset_id]):
+        sys.stderr.write("Error: Must specify --artifact-id, --run-id, or --dataset-id\n")
+        return 2
+
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    store = ArtifactStore(root=data_dir, generator="m3_gc_unpin", generator_version=__version__)
+    registry = ArtifactRegistry(registry_db)
+
+    gc = GarbageCollector(data_dir=data_dir, store=store, registry=registry)
+
+    removed = gc.unpin_artifact(
+        artifact_id=artifact_id,
+        run_id=run_id,
+        dataset_id=dataset_id,
+    )
+
+    registry.close()
+
+    target = artifact_id or run_id or dataset_id
+    if removed:
+        sys.stdout.write(f"Unpinned: {target}\n")
+    else:
+        sys.stdout.write(f"Not pinned: {target}\n")
+
+    return 0
+
+
+def cmd_gc_estimate(
+    policy: str,
+    root: Path | None,
+    output_json: bool,
+) -> int:
+    """Estimate space savings from garbage collection.
+
+    Args:
+        policy: Name of the retention policy to use.
+        root: Project root directory.
+        output_json: If True, output results as JSON.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.artifact_store import ArtifactStore
+    from formula_foundry.m3.gc import GarbageCollector, PolicyNotFoundError, format_bytes
+    from formula_foundry.m3.lineage_graph import LineageGraph
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    store = ArtifactStore(root=data_dir, generator="m3_gc_estimate", generator_version=__version__)
+    registry = ArtifactRegistry(registry_db)
+
+    lineage_db = data_dir / "lineage.sqlite"
+    lineage = LineageGraph(lineage_db) if lineage_db.exists() else None
+
+    gc = GarbageCollector(data_dir=data_dir, store=store, registry=registry, lineage=lineage)
+
+    try:
+        estimate = gc.estimate_savings(policy=policy)
+    except PolicyNotFoundError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        registry.close()
+        if lineage:
+            lineage.close()
+        return 2
+
+    if output_json:
+        sys.stdout.write(json.dumps(estimate, indent=2) + "\n")
+    else:
+        sys.stdout.write(f"GC Estimate for policy: {policy}\n")
+        sys.stdout.write(f"\n")
+        sys.stdout.write(f"  Total artifacts: {estimate['total_artifacts']}\n")
+        sys.stdout.write(f"  To delete: {estimate['artifacts_to_delete']}\n")
+        sys.stdout.write(f"  To keep: {estimate['artifacts_to_keep']}\n")
+        sys.stdout.write(f"\n")
+        sys.stdout.write(f"  Current size: {format_bytes(estimate['current_total_bytes'])}\n")
+        sys.stdout.write(f"  Space to free: {format_bytes(estimate['bytes_to_delete'])}\n")
+        sys.stdout.write(f"  Size after GC: {format_bytes(estimate['estimated_after_bytes'])}\n")
+        if estimate['space_budget_bytes']:
+            sys.stdout.write(f"\n")
+            sys.stdout.write(f"  Space budget: {format_bytes(estimate['space_budget_bytes'])}\n")
+            status = "within budget" if estimate['within_budget'] else "OVER BUDGET"
+            sys.stdout.write(f"  Status: {status}\n")
+
+    registry.close()
+    if lineage:
+        lineage.close()
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the m3 CLI."""
     parser = build_parser()
@@ -2044,6 +2539,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                 quiet=args.quiet,
             )
         parser.error(f"Unknown artifact command: {args.artifact_command}")
+
+    if args.command == "gc":
+        return cmd_gc(
+            policy=args.policy,
+            root=args.root,
+            dry_run=args.dry_run,
+            execute=args.execute,
+            no_dvc=args.no_dvc,
+            list_policies=args.list_policies,
+            quiet=args.quiet,
+            output_json=args.json,
+        )
+
+    if args.command == "gc-pin":
+        return cmd_gc_pin(
+            artifact_id=args.artifact_id,
+            run_id=args.run_id,
+            dataset_id=args.dataset_id,
+            reason=args.reason,
+            root=args.root,
+        )
+
+    if args.command == "gc-unpin":
+        return cmd_gc_unpin(
+            artifact_id=args.artifact_id,
+            run_id=args.run_id,
+            dataset_id=args.dataset_id,
+            root=args.root,
+        )
+
+    if args.command == "gc-estimate":
+        return cmd_gc_estimate(
+            policy=args.policy,
+            root=args.root,
+            output_json=args.json,
+        )
 
     # Should not reach here due to required=True on subparsers
     parser.error(f"Unknown command: {args.command}")
