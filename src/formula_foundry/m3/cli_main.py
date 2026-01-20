@@ -524,6 +524,77 @@ def build_parser() -> argparse.ArgumentParser:
         help="Suppress non-error output",
     )
 
+    # verify subcommand
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Verify artifact integrity: hashes, lineage, and metadata",
+    )
+    verify_parser.add_argument(
+        "artifact_id",
+        nargs="?",
+        default=None,
+        help="Artifact ID to verify (if not provided, verifies all artifacts)",
+    )
+    verify_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    verify_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    verify_parser.add_argument(
+        "--hash",
+        action="store_true",
+        dest="check_hash",
+        help="Verify content hashes (default: on)",
+    )
+    verify_parser.add_argument(
+        "--no-hash",
+        action="store_true",
+        dest="skip_hash",
+        help="Skip content hash verification",
+    )
+    verify_parser.add_argument(
+        "--lineage",
+        action="store_true",
+        dest="check_lineage",
+        help="Verify lineage consistency (check all referenced inputs exist)",
+    )
+    verify_parser.add_argument(
+        "--manifest",
+        action="store_true",
+        dest="check_manifest",
+        help="Validate manifest against artifact schema",
+    )
+    verify_parser.add_argument(
+        "--registry",
+        action="store_true",
+        dest="check_registry",
+        help="Verify registry consistency (ensure registry matches manifests)",
+    )
+    verify_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Run all verification checks (hash, lineage, manifest, registry)",
+    )
+    verify_parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Attempt to repair issues (re-index missing registry entries)",
+    )
+    verify_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
+    )
+
     return parser
 
 
@@ -2791,6 +2862,446 @@ def cmd_audit(
     return 0
 
 
+def cmd_verify(
+    artifact_id: str | None,
+    root: Path | None,
+    output_format: str,
+    check_hash: bool,
+    skip_hash: bool,
+    check_lineage: bool,
+    check_manifest: bool,
+    check_registry: bool,
+    full: bool,
+    repair: bool,
+    quiet: bool,
+) -> int:
+    """Verify artifact integrity: hashes, lineage consistency, and metadata validation.
+
+    This command performs comprehensive integrity verification:
+    1. Hash verification: Recompute content hashes and compare with stored digests
+    2. Lineage consistency: Verify all referenced input artifacts exist
+    3. Manifest validation: Check manifest structure against artifact.v1 schema
+    4. Registry consistency: Ensure registry entries match actual manifests
+
+    Args:
+        artifact_id: Artifact ID to verify (if None, verifies all).
+        root: Project root directory (auto-detected if None).
+        output_format: Output format ("text" or "json").
+        check_hash: If True, verify content hashes.
+        skip_hash: If True, skip hash verification (overrides check_hash).
+        check_lineage: If True, check lineage consistency.
+        check_manifest: If True, validate manifest schema.
+        check_registry: If True, check registry consistency.
+        full: If True, run all verification checks.
+        repair: If True, attempt to repair issues.
+        quiet: If True, suppress non-error output.
+
+    Returns:
+        0 on success (all checks passed),
+        1 on warnings (issues found but repaired),
+        2 on errors (integrity problems found).
+    """
+    from formula_foundry.m3.artifact_store import (
+        ArtifactStore,
+        ArtifactNotFoundError,
+        ArtifactType,
+        ArtifactRole,
+    )
+    from formula_foundry.m3.lineage_graph import (
+        LineageGraph,
+        NodeNotFoundError,
+    )
+    from formula_foundry.m3.registry import ArtifactRegistry, ArtifactNotIndexedError
+
+    # Determine which checks to run
+    if full:
+        do_hash = True
+        do_lineage = True
+        do_manifest = True
+        do_registry = True
+    else:
+        # Default: just hash verification unless something else specified
+        any_explicit = check_hash or check_lineage or check_manifest or check_registry
+        do_hash = check_hash or (not any_explicit and not skip_hash)
+        do_lineage = check_lineage
+        do_manifest = check_manifest
+        do_registry = check_registry
+
+    if skip_hash:
+        do_hash = False
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    lineage_db = data_dir / "lineage.sqlite"
+
+    # Initialize components
+    store = ArtifactStore(
+        root=data_dir,
+        generator="m3_verify",
+        generator_version=__version__,
+    )
+    registry = ArtifactRegistry(registry_db)
+    graph = LineageGraph(lineage_db)
+    graph.initialize()
+
+    # Build graph from store if needed
+    # Suppress logging for JSON output
+    suppress_log = quiet or (output_format == "json")
+
+    if do_lineage and graph.count_nodes() == 0:
+        _log("Building lineage graph from artifact store...", suppress_log)
+        count = graph.build_from_store(store, clear_first=False)
+        _log(f"Indexed {count} artifacts into lineage graph.", suppress_log)
+
+    # Determine artifacts to verify
+    if artifact_id:
+        artifact_ids = [artifact_id]
+    else:
+        artifact_ids = store.list_manifests()
+
+    if not artifact_ids:
+        if output_format == "json":
+            report = {
+                "schema_version": 1,
+                "generated_utc": _now_utc_iso(),
+                "verification_type": "m3_verify",
+                "checks_performed": {
+                    "hash": do_hash,
+                    "lineage": do_lineage,
+                    "manifest": do_manifest,
+                    "registry": do_registry,
+                },
+                "total_artifacts": 0,
+                "passed": 0,
+                "warnings": 0,
+                "errors": 0,
+                "artifacts": [],
+            }
+            sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        else:
+            _log("No artifacts found to verify.", suppress_log)
+        graph.close()
+        registry.close()
+        return 0
+
+    # Define valid types and roles for schema validation
+    valid_types: set[str] = {
+        "coupon_spec", "resolved_design", "kicad_board", "kicad_project",
+        "gerber", "drill_file", "fab_package", "em_simulation_config",
+        "em_simulation_result", "touchstone", "sparam_matrix", "dataset_index",
+        "dataset_snapshot", "model_checkpoint", "formula_candidate",
+        "validation_report", "drc_report", "manifest", "log", "other",
+    }
+    valid_roles: set[str] = {
+        "geometry", "config", "oracle_output", "intermediate", "final_output",
+        "validation", "metadata", "cache", "checkpoint", "dataset_member",
+        "root_input",
+    }
+    valid_relations: set[str] = {
+        "derived_from", "generated_by", "validated_by", "config_from",
+        "sibling_of", "supersedes",
+    }
+
+    # Prepare verification results
+    verify_results: list[dict[str, Any]] = []
+    total_passed = 0
+    total_warnings = 0
+    total_errors = 0
+    repaired_count = 0
+
+    _log(f"Verifying {len(artifact_ids)} artifact(s)...", suppress_log)
+    checks_desc = []
+    if do_hash:
+        checks_desc.append("hash")
+    if do_lineage:
+        checks_desc.append("lineage")
+    if do_manifest:
+        checks_desc.append("manifest")
+    if do_registry:
+        checks_desc.append("registry")
+    _log(f"Checks: {', '.join(checks_desc)}", suppress_log)
+    _log("", suppress_log)
+
+    for art_id in artifact_ids:
+        result: dict[str, Any] = {
+            "artifact_id": art_id,
+            "status": "pass",
+            "checks": {},
+            "issues": [],
+            "repaired": [],
+        }
+        has_error = False
+        has_warning = False
+
+        try:
+            # Get manifest
+            manifest = store.get_manifest(art_id)
+            result["artifact_type"] = manifest.artifact_type
+            result["content_hash"] = manifest.content_hash.digest
+            result["byte_size"] = manifest.byte_size
+
+            # Check 1: Hash verification
+            if do_hash:
+                try:
+                    is_valid = store.verify(art_id)
+                    result["checks"]["hash"] = {
+                        "passed": is_valid,
+                        "expected": manifest.content_hash.digest,
+                    }
+                    if not is_valid:
+                        result["issues"].append("Content hash mismatch - artifact may be corrupted")
+                        has_error = True
+                except ArtifactNotFoundError:
+                    result["checks"]["hash"] = {"passed": False, "error": "Content file not found"}
+                    result["issues"].append("Content file missing from object store")
+                    has_error = True
+                except Exception as e:
+                    result["checks"]["hash"] = {"passed": False, "error": str(e)}
+                    result["issues"].append(f"Hash verification error: {e}")
+                    has_error = True
+
+            # Check 2: Lineage consistency
+            if do_lineage:
+                lineage_check: dict[str, Any] = {"passed": True, "missing_inputs": []}
+                for inp in manifest.lineage.inputs:
+                    if not store.exists_by_id(inp.artifact_id):
+                        lineage_check["missing_inputs"].append(inp.artifact_id)
+                        lineage_check["passed"] = False
+
+                result["checks"]["lineage"] = lineage_check
+                if not lineage_check["passed"]:
+                    result["issues"].append(
+                        f"Missing input artifacts: {lineage_check['missing_inputs']}"
+                    )
+                    has_error = True
+
+            # Check 3: Manifest schema validation
+            if do_manifest:
+                manifest_check: dict[str, Any] = {"passed": True, "issues": []}
+
+                # Validate required fields
+                if not manifest.artifact_id:
+                    manifest_check["issues"].append("Missing artifact_id")
+                    manifest_check["passed"] = False
+
+                # Validate artifact_type
+                if manifest.artifact_type not in valid_types:
+                    manifest_check["issues"].append(
+                        f"Invalid artifact_type: {manifest.artifact_type}"
+                    )
+                    manifest_check["passed"] = False
+
+                # Validate roles
+                for role in manifest.roles:
+                    if role not in valid_roles:
+                        manifest_check["issues"].append(f"Invalid role: {role}")
+                        manifest_check["passed"] = False
+
+                if not manifest.roles:
+                    manifest_check["issues"].append("Empty roles list")
+                    manifest_check["passed"] = False
+
+                # Validate lineage references
+                for inp in manifest.lineage.inputs:
+                    if inp.relation not in valid_relations:
+                        manifest_check["issues"].append(
+                            f"Invalid relation '{inp.relation}' for input {inp.artifact_id}"
+                        )
+                        manifest_check["passed"] = False
+
+                # Validate content hash format
+                if manifest.content_hash.algorithm not in ("sha256", "sha384", "sha512", "blake3"):
+                    manifest_check["issues"].append(
+                        f"Invalid hash algorithm: {manifest.content_hash.algorithm}"
+                    )
+                    manifest_check["passed"] = False
+
+                if len(manifest.content_hash.digest) < 64:
+                    manifest_check["issues"].append("Hash digest too short")
+                    manifest_check["passed"] = False
+
+                # Validate provenance
+                if not manifest.provenance.generator:
+                    manifest_check["issues"].append("Missing provenance.generator")
+                    manifest_check["passed"] = False
+
+                if not manifest.provenance.hostname:
+                    manifest_check["issues"].append("Missing provenance.hostname")
+                    manifest_check["passed"] = False
+
+                result["checks"]["manifest"] = manifest_check
+                if not manifest_check["passed"]:
+                    result["issues"].extend(manifest_check["issues"])
+                    has_error = True
+
+            # Check 4: Registry consistency
+            if do_registry:
+                registry_check: dict[str, Any] = {"passed": True, "issues": []}
+
+                # Check if artifact is in registry
+                try:
+                    registry_record = registry.get_artifact(art_id)
+
+                    # Verify registry data matches manifest
+                    if registry_record.content_hash_digest != manifest.content_hash.digest:
+                        registry_check["passed"] = False
+                        registry_check["issues"].append(
+                            f"Registry hash mismatch: registry={registry_record.content_hash_digest[:16]}..., "
+                            f"manifest={manifest.content_hash.digest[:16]}..."
+                        )
+                        has_error = True
+
+                    if registry_record.artifact_type != manifest.artifact_type:
+                        registry_check["passed"] = False
+                        registry_check["issues"].append(
+                            f"Registry type mismatch: registry={registry_record.artifact_type}, "
+                            f"manifest={manifest.artifact_type}"
+                        )
+                        has_error = True
+
+                except ArtifactNotIndexedError:
+                    # Artifact not found in registry
+                    registry_check["passed"] = False
+                    registry_check["issues"].append("Artifact not found in registry")
+
+                    if repair:
+                        # Attempt to repair by re-indexing
+                        try:
+                            registry.index_artifact(manifest)
+                            result["repaired"].append("Re-indexed artifact into registry")
+                            repaired_count += 1
+                            registry_check["repaired"] = True
+                            has_warning = True
+                        except Exception as e:
+                            registry_check["repair_error"] = str(e)
+                            has_error = True
+                    else:
+                        has_error = True
+
+                result["checks"]["registry"] = registry_check
+                # Only add issues if repair didn't fix them
+                if registry_check["issues"] and not registry_check.get("repaired"):
+                    result["issues"].extend(registry_check["issues"])
+
+        except ArtifactNotFoundError:
+            result["status"] = "error"
+            result["issues"].append(f"Manifest not found for artifact: {art_id}")
+            has_error = True
+        except Exception as e:
+            result["status"] = "error"
+            result["issues"].append(f"Verification error: {e}")
+            has_error = True
+
+        # Determine final status
+        if has_error:
+            result["status"] = "error"
+            total_errors += 1
+        elif has_warning:
+            result["status"] = "warning"
+            total_warnings += 1
+        else:
+            result["status"] = "pass"
+            total_passed += 1
+
+        verify_results.append(result)
+
+    # Output results
+    if output_format == "json":
+        report = {
+            "schema_version": 1,
+            "generated_utc": _now_utc_iso(),
+            "verification_type": "m3_verify",
+            "checks_performed": {
+                "hash": do_hash,
+                "lineage": do_lineage,
+                "manifest": do_manifest,
+                "registry": do_registry,
+            },
+            "total_artifacts": len(artifact_ids),
+            "passed": total_passed,
+            "warnings": total_warnings,
+            "errors": total_errors,
+            "repaired_count": repaired_count,
+            "artifacts": verify_results,
+        }
+        sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    else:
+        # Text format
+        for result in verify_results:
+            status_marker = {
+                "pass": "[PASS]",
+                "warning": "[WARN]",
+                "error": "[FAIL]",
+            }.get(result["status"], "[????]")
+
+            _log(f"{status_marker} {result['artifact_id']}", quiet)
+
+            if "artifact_type" in result:
+                _log(f"    Type: {result['artifact_type']}", quiet)
+            if "byte_size" in result:
+                _log(f"    Size: {result['byte_size']} bytes", quiet)
+
+            # Show check results
+            checks = result.get("checks", {})
+            if "hash" in checks:
+                h_status = "PASS" if checks["hash"].get("passed") else "FAIL"
+                _log(f"    Hash verification: {h_status}", quiet)
+            if "lineage" in checks:
+                l_status = "PASS" if checks["lineage"].get("passed") else "FAIL"
+                _log(f"    Lineage consistency: {l_status}", quiet)
+                if checks["lineage"].get("missing_inputs"):
+                    _log(f"      Missing: {checks['lineage']['missing_inputs']}", quiet)
+            if "manifest" in checks:
+                m_status = "PASS" if checks["manifest"].get("passed") else "FAIL"
+                _log(f"    Manifest validation: {m_status}", quiet)
+            if "registry" in checks:
+                r_status = "PASS" if checks["registry"].get("passed") else "FAIL"
+                _log(f"    Registry consistency: {r_status}", quiet)
+                if checks["registry"].get("repaired"):
+                    _log("      (Repaired)", quiet)
+
+            # Show issues
+            if result.get("issues"):
+                for issue in result["issues"]:
+                    _log(f"    Issue: {issue}", quiet)
+
+            # Show repairs
+            if result.get("repaired"):
+                for repair_action in result["repaired"]:
+                    _log(f"    Repaired: {repair_action}", quiet)
+
+            _log("", quiet)
+
+        # Summary
+        _log("=" * 60, quiet)
+        _log(f"Verification complete: {len(artifact_ids)} artifacts", quiet)
+        _log(f"  Passed:   {total_passed}", quiet)
+        _log(f"  Warnings: {total_warnings}", quiet)
+        _log(f"  Errors:   {total_errors}", quiet)
+        if repair and repaired_count > 0:
+            _log(f"  Repaired: {repaired_count}", quiet)
+
+    graph.close()
+    registry.close()
+
+    # Return appropriate exit code
+    if total_errors > 0:
+        return 2
+    if total_warnings > 0:
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the m3 CLI."""
     parser = build_parser()
@@ -2907,6 +3418,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             verify_hashes=args.verify_hashes,
             max_depth=args.max_depth,
             required_roles=args.required_roles,
+            quiet=args.quiet,
+        )
+
+    if args.command == "verify":
+        return cmd_verify(
+            artifact_id=args.artifact_id,
+            root=args.root,
+            output_format=args.format,
+            check_hash=args.check_hash,
+            skip_hash=args.skip_hash,
+            check_lineage=args.check_lineage,
+            check_manifest=args.check_manifest,
+            check_registry=args.check_registry,
+            full=args.full,
+            repair=args.repair,
             quiet=args.quiet,
         )
 
