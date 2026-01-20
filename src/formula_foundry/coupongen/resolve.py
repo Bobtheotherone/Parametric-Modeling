@@ -1,17 +1,36 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
+from .families import FAMILY_F1
 from .spec import CouponSpec
+
+if TYPE_CHECKING:
+    from .geom.layout import LayoutPlan
 
 
 class ResolvedDesign(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Resolved design with computed geometry and derived parameters.
+
+    This dataclass holds all resolved parameters from a CouponSpec,
+    including the computed LayoutPlan which is the single source of truth
+    for all geometry. For F1 coupons, length_right_nm is derived from
+    the continuity formula to ensure trace segments connect at the
+    discontinuity center.
+
+    The layout_plan field is excluded from serialization/hashing as it is
+    computed deterministically from the parameters. This ensures the design_hash
+    remains stable and only depends on input parameters.
+
+    Satisfies CP-2.4 per ECO-M1-ALIGN-0001.
+    """
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     schema_version: int = Field(..., ge=1)
     coupon_family: str = Field(..., min_length=1)
@@ -19,20 +38,97 @@ class ResolvedDesign(BaseModel):
     parameters_nm: dict[str, int]
     derived_features: dict[str, int]
     dimensionless_groups: dict[str, float]
+    # Derived length_right_nm for F1 coupons (ensures continuity per CP-2.2)
+    # This IS serialized and included in the design hash
+    length_right_nm: int | None = Field(default=None)
+
+    # LayoutPlan is the single source of truth for geometry (CP-2.1)
+    # Stored as a private attribute, excluded from serialization/hashing
+    # as it's computed deterministically from parameters
+    _layout_plan: "LayoutPlan | None" = None
+
+    @property
+    def layout_plan(self) -> "LayoutPlan | None":
+        """Get the computed LayoutPlan (single source of truth for geometry)."""
+        return self._layout_plan
+
+    def with_layout_plan(self, layout_plan: "LayoutPlan") -> "ResolvedDesign":
+        """Return a copy with the layout_plan set.
+
+        Since layout_plan is excluded from serialization, this method allows
+        setting it after construction while maintaining immutability.
+        """
+        new_obj = self.model_copy()
+        object.__setattr__(new_obj, "_layout_plan", layout_plan)
+        return new_obj
 
 
 def resolve(spec: CouponSpec) -> ResolvedDesign:
+    """Resolve a CouponSpec to a ResolvedDesign with computed geometry.
+
+    This function resolves all parameters from the spec and computes the
+    LayoutPlan as the single source of truth for all geometry. For F1
+    coupons, length_right_nm is derived from the continuity formula to
+    ensure trace segments connect at the discontinuity center.
+
+    The continuity formula for F1 coupons is:
+        xD = xL + length_left  (discontinuity position)
+        length_right = xR - xD (derived to ensure continuity)
+
+    where xL and xR are the signal pad X positions of the left and right
+    connectors.
+
+    Args:
+        spec: The coupon specification with all geometry parameters.
+
+    Returns:
+        ResolvedDesign with all parameters resolved and LayoutPlan computed.
+
+    Satisfies CP-2.4 per ECO-M1-ALIGN-0001.
+    """
+    from .geom.layout import compute_layout_plan
+
     payload = spec.model_dump(mode="json")
     parameters_nm = _collect_length_parameters(payload)
-    derived_features = _build_derived_features(spec)
+
+    # Create a preliminary ResolvedDesign (without LayoutPlan) for computing
+    # derived features that don't depend on the layout
+    preliminary_resolved = ResolvedDesign(
+        schema_version=spec.schema_version,
+        coupon_family=spec.coupon_family,
+        parameters_nm=parameters_nm,
+        derived_features={},  # Will be computed after LayoutPlan
+        dimensionless_groups={},  # Will be computed after LayoutPlan
+        length_right_nm=None,
+    )
+
+    # Compute LayoutPlan - the single source of truth for geometry (CP-2.1)
+    layout_plan = compute_layout_plan(spec, preliminary_resolved)
+
+    # For F1 coupons, derive length_right_nm from the LayoutPlan (CP-2.2)
+    length_right_nm: int | None = None
+    if spec.coupon_family == FAMILY_F1:
+        # Get the right segment from the layout plan
+        right_segment = layout_plan.get_segment_by_label("right")
+        if right_segment is not None:
+            length_right_nm = right_segment.length_nm
+
+    # Now compute derived features with access to LayoutPlan and derived length_right_nm
+    derived_features = _build_derived_features(spec, layout_plan, length_right_nm)
     dimensionless_groups = _build_dimensionless_groups(spec)
-    return ResolvedDesign(
+
+    # Create the final ResolvedDesign with layout_plan attached
+    resolved = ResolvedDesign(
         schema_version=spec.schema_version,
         coupon_family=spec.coupon_family,
         parameters_nm=parameters_nm,
         derived_features=derived_features,
         dimensionless_groups=dimensionless_groups,
+        length_right_nm=length_right_nm,
     )
+
+    # Attach the layout_plan (excluded from serialization/hashing)
+    return resolved.with_layout_plan(layout_plan)
 
 
 def resolved_design_canonical_json(resolved: ResolvedDesign) -> str:
@@ -100,15 +196,40 @@ def _coerce_int(value: Any) -> int:
     raise TypeError(f"Length parameter must be an integer nanometer value, got {value!r}.")
 
 
-def _build_derived_features(spec: CouponSpec) -> dict[str, int]:
+def _build_derived_features(
+    spec: CouponSpec,
+    layout_plan: "LayoutPlan",
+    derived_length_right_nm: int | None,
+) -> dict[str, int]:
+    """Build derived features using LayoutPlan as the source of truth.
+
+    For F1 coupons, uses the derived length_right_nm from the LayoutPlan
+    to compute total trace length, ensuring geometry math is not duplicated.
+
+    Args:
+        spec: The coupon specification.
+        layout_plan: The computed LayoutPlan (single source of truth for geometry).
+        derived_length_right_nm: The derived right length for F1 coupons, or None.
+
+    Returns:
+        Dictionary of derived features.
+    """
     width = int(spec.board.outline.width_nm)
     length = int(spec.board.outline.length_nm)
-    trace_left = int(spec.transmission_line.length_left_nm)
-    trace_right = int(spec.transmission_line.length_right_nm)
+
+    # Use LayoutPlan's total_trace_length_nm as the source of truth
+    # This ensures no geometry math is duplicated (CP-2.1)
+    trace_total_length_nm = layout_plan.total_trace_length_nm
+
     derived: dict[str, int] = {
         "board_area_nm2": width * length,
-        "trace_total_length_nm": trace_left + trace_right,
+        "trace_total_length_nm": trace_total_length_nm,
     }
+
+    # For F1 coupons, store the derived length_right_nm as a derived feature
+    if derived_length_right_nm is not None:
+        derived["length_right_nm"] = derived_length_right_nm
+
     if spec.discontinuity is not None:
         pad = int(spec.discontinuity.signal_via.pad_diameter_nm)
         drill = int(spec.discontinuity.signal_via.drill_nm)
