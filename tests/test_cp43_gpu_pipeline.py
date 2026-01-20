@@ -194,9 +194,21 @@ class TestGPUFilterIntegration:
 
     def test_batch_filter_with_good_candidates(self) -> None:
         """GPU filter should pass well-formed candidates."""
-        # Create candidates with known-good values
+        # Create candidates with values that respect inter-parameter constraints.
+        # The key spatial constraint is: right_connector_x < board_length - edge_clearance
+        # Parameter mappings from FamilyF1ParameterSpace:
+        #   board_length_nm: index 3, range [30M, 150M] -> u=0.8 gives 126M
+        #   right_connector_x_nm: index 13, range [70M, 145M] -> u=0.2 gives 85M
+        # This ensures right_connector_x (85M) < board_length (126M) - edge_clearance (0.2M)
         space = FamilyF1ParameterSpace()
         u_batch = np.ones((10, space.dimension)) * 0.5
+
+        # Fix spatial parameters to ensure feasibility
+        u_batch[:, 3] = 0.8   # board_length_nm: 126M nm (large enough)
+        u_batch[:, 13] = 0.2  # right_connector_x_nm: 85M nm (well within board)
+        u_batch[:, 12] = 0.2  # left_connector_x_nm: 3.6M nm (away from edge)
+        u_batch[:, 14] = 0.3  # trace_length_left_nm: modest
+        u_batch[:, 15] = 0.3  # trace_length_right_nm: modest
 
         result = batch_filter(u_batch, mode="REPAIR", seed=42, use_gpu=False)
 
