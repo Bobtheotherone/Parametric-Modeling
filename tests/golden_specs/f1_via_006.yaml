@@ -48,8 +48,8 @@ transmission_line:
   layer: F.Cu
   w_nm: "180 um"
   gap_nm: "120 um"
-  length_left_nm: "14 mm"
-  length_right_nm: "14 mm"
+  length_left_nm: "16 mm"
+  # CP-2.2: length_right_nm is deprecated for F1 - derived from continuity formula
 
 discontinuity:
   type: VIA_TRANSITION

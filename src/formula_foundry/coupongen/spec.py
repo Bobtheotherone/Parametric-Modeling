@@ -92,12 +92,26 @@ class GroundViaFence(_SpecBase):
 
 
 class TransmissionLine(_SpecBase):
+    """Transmission line parameters.
+
+    For F1 coupons, length_right_nm is deprecated and should not be specified.
+    The right length is derived from the continuity formula:
+        length_right = x_right_connector - x_discontinuity_center
+
+    If length_right_nm is provided for F1 coupons, it will be validated against
+    the derived value (must match exactly, i.e., continuity_length_error_nm == 0).
+
+    CP-2.2: Make right length derived for F1 coupons (ECO-M1-ALIGN-0001).
+    """
     type: str = Field(..., min_length=1)
     layer: str = Field(..., min_length=1)
     w_nm: LengthNM
     gap_nm: LengthNM
     length_left_nm: LengthNM
-    length_right_nm: LengthNM
+    # DEPRECATED for F1 coupons: length_right_nm is derived from continuity formula.
+    # If specified, it must match the derived value exactly (continuity_length_error_nm == 0).
+    # For F0 coupons, this field is still required (both lengths define the through-line).
+    length_right_nm: LengthNM | None = None
     ground_via_fence: GroundViaFence | None = None
 
 

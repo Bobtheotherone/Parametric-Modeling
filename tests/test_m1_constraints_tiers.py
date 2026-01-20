@@ -75,8 +75,12 @@ def _example_spec_data() -> dict[str, Any]:
             "layer": "F.Cu",
             "w_nm": 300000,
             "gap_nm": 180000,
-            "length_left_nm": 25000000,
-            "length_right_nm": 25000000,
+            # CP-2.2: For F1, length_right_nm is derived from continuity.
+            # With left connector at 5mm, right at 75mm (70mm span),
+            # and length_left=35mm, discontinuity is at 40mm,
+            # so derived length_right = 75 - 40 = 35mm (symmetric).
+            "length_left_nm": 35000000,
+            "length_right_nm": 35000000,  # Must match derived value for F1
             "ground_via_fence": {
                 "enabled": True,
                 "pitch_nm": 1500000,
@@ -315,11 +319,19 @@ class TestTier2AnalyticSpatial:
         assert not x_max_result.passed
 
     def test_traces_exceed_available_length_fails(self) -> None:
-        """Traces that don't fit between connectors should fail."""
+        """Traces that don't fit between connectors should fail.
+
+        CP-2.2 note: For F1 coupons, length_right is derived from continuity.
+        This test explicitly provides length_right_nm to test the T2 constraint
+        directly without relying on the derived value. This tests the constraint
+        logic when the user explicitly specifies both lengths (deprecated for F1,
+        but still validated in T2 if provided).
+        """
         data = _example_spec_data()
         # Available length: 75_000_000 - 5_000_000 = 70_000_000nm
+        # Set explicit lengths that exceed the available space
         data["transmission_line"]["length_left_nm"] = 40_000_000
-        data["transmission_line"]["length_right_nm"] = 40_000_000  # Total 80_000_000 > 70_000_000
+        data["transmission_line"]["length_right_nm"] = 40_000_000  # Total 80M > 70M available
         spec = CouponSpec.model_validate(data)
         limits = _default_fab_limits()
         checker = Tier2Checker()
@@ -363,8 +375,12 @@ class TestTier3GeometryCollision:
     def test_asymmetric_traces_with_symmetry_enforced_fails(self) -> None:
         """Asymmetric traces with symmetry enforced should fail."""
         data = _example_spec_data()
+        # With connectors at 5M and 75M (70M span), set asymmetric left length.
+        # For F1, derived right = 75M - (5M + left) = 70M - left
+        # If left = 20M, derived right = 50M (asymmetric)
         data["transmission_line"]["length_left_nm"] = 20_000_000
-        data["transmission_line"]["length_right_nm"] = 30_000_000  # Different from left
+        # Don't set length_right_nm - let it be derived (50M, asymmetric)
+        del data["transmission_line"]["length_right_nm"]
         data["constraints"]["symmetry"]["enforce"] = True
         spec = CouponSpec.model_validate(data)
         limits = _default_fab_limits()
@@ -378,8 +394,11 @@ class TestTier3GeometryCollision:
     def test_symmetric_traces_with_symmetry_enforced_passes(self) -> None:
         """Symmetric traces with symmetry enforced should pass."""
         data = _example_spec_data()
-        data["transmission_line"]["length_left_nm"] = 25_000_000
-        data["transmission_line"]["length_right_nm"] = 25_000_000
+        # With connectors at 5M and 75M (70M span), symmetric means:
+        # left = right = 35M (discontinuity at 40M, middle of the span)
+        data["transmission_line"]["length_left_nm"] = 35_000_000
+        # For F1, derived right = 75M - (5M + 35M) = 35M (symmetric)
+        del data["transmission_line"]["length_right_nm"]
         data["constraints"]["symmetry"]["enforce"] = True
         spec = CouponSpec.model_validate(data)
         limits = _default_fab_limits()

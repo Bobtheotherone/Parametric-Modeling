@@ -48,8 +48,11 @@ transmission_line:
   layer: F.Cu
   w_nm: "150 um"
   gap_nm: "100 um"
-  length_left_nm: "12 mm"
-  length_right_nm: "12 mm"
+  # CP-2.2: For symmetric layout with connectors at 1mm and 29mm (28mm span),
+  # set length_left = 14mm so discontinuity is at 15mm (center).
+  # Derived length_right = 29mm - 15mm = 14mm (symmetric).
+  length_left_nm: "14 mm"
+  # length_right_nm is deprecated for F1 - derived from continuity formula
 
 discontinuity:
   type: VIA_TRANSITION

@@ -103,8 +103,12 @@ def _valid_spec_data() -> dict[str, Any]:
             "layer": "F.Cu",
             "w_nm": 300000,
             "gap_nm": 180000,
-            "length_left_nm": 25000000,
-            "length_right_nm": 25000000,
+            # CP-2.2: For F1, length_right_nm is derived from continuity.
+            # With left connector at 5mm, right at 75mm (70mm span),
+            # and length_left=35mm, discontinuity is at 40mm,
+            # so derived length_right = 75 - 40 = 35mm (symmetric).
+            "length_left_nm": 35000000,
+            "length_right_nm": 35000000,  # Must match derived value for F1
             "ground_via_fence": {
                 "enabled": True,
                 "pitch_nm": 1500000,
@@ -548,8 +552,9 @@ class TestRepairEngine:
             "transmission_line": {
                 "w_nm": 50_000,
                 "gap_nm": 50_000,
-                "length_left_nm": 25000000,
-                "length_right_nm": 25000000,
+                # length_right_nm is now optional/derived for F1 (CP-2.2)
+                "length_left_nm": 35000000,
+                "length_right_nm": 35000000,
                 "ground_via_fence": None,
             },
             "board": {
