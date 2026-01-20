@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry/schemas/stackup.v1.json",
+  "title": "StackupProfile",
+  "description": "PCB stackup profile defining layer structure, thicknesses, and material properties. All dimensions are in nanometers (integer nm).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "copper_layers",
+    "layers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version for stackup profile format"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Unique identifier for the stackup profile (lowercase, underscores allowed)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name for the stackup"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the stackup and its intended use"
+    },
+    "vendor": {
+      "type": "string",
+      "description": "PCB vendor this stackup is designed for (optional)"
+    },
+    "copper_layers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32,
+      "description": "Total number of copper layers in the stackup"
+    },
+    "total_thickness_nm": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Total board thickness in nanometers (optional, computed if not provided)"
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Layer"
+      },
+      "minItems": 1,
+      "description": "Ordered list of layers from top to bottom"
+    },
+    "dielectric_defaults": {
+      "$ref": "#/$defs/DielectricProperties",
+      "description": "Default dielectric properties used when not specified per-layer"
+    }
+  },
+  "$defs": {
+    "Layer": {
+      "type": "object",
+      "required": [
+        "type",
+        "thickness_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Layer name (e.g., 'F.Cu', 'In1.Cu', 'prepreg_1')"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["copper", "dielectric", "soldermask", "silkscreen", "paste"],
+          "description": "Type of layer"
+        },
+        "thickness_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Layer thickness in nanometers"
+        },
+        "copper_weight_oz": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Copper weight in oz/ft² (only for copper layers)"
+        },
+        "dielectric": {
+          "$ref": "#/$defs/DielectricProperties",
+          "description": "Dielectric properties (only for dielectric layers)"
+        }
+      }
+    },
+    "DielectricProperties": {
+      "type": "object",
+      "required": [
+        "er",
+        "loss_tangent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "er": {
+          "type": "number",
+          "exclusiveMinimum": 1,
+          "description": "Relative permittivity (dielectric constant)"
+        },
+        "loss_tangent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Loss tangent (tan delta)"
+        },
+        "material": {
+          "type": "string",
+          "description": "Material name (e.g., 'FR4', 'Rogers 4350B')"
+        }
+      }
+    }
+  }
+}
