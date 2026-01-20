@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from formula_foundry.coupongen.api import build_coupon
+from formula_foundry.coupongen.hashing import canonical_hash_export_text
+from formula_foundry.coupongen.manifest import toolchain_hash
 from formula_foundry.coupongen.spec import CouponSpec
 
 
@@ -134,6 +136,17 @@ def test_manifest_required_fields(tmp_path: Path) -> None:
     assert manifest["design_hash"] == result.design_hash
     assert manifest["coupon_id"] == result.coupon_id
     assert manifest["toolchain"]["docker_image"].startswith("kicad/kicad:9.0.7@sha256:")
+    assert manifest["toolchain"]["kicad_version"] == "9.0.7"
+    assert manifest["toolchain"]["mode"] == "docker"
+    assert manifest["toolchain"]["kicad_cli_version"] == "9.0.7"
+    assert manifest["toolchain_hash"] == toolchain_hash(manifest["toolchain"])
+
+    exports = {entry["path"]: entry["hash"] for entry in manifest["exports"]}
+    expected_exports = {
+        "gerbers/F.Cu.gbr": canonical_hash_export_text("G04 Created*\nX0Y0D02*\n"),
+        "drill/drill.drl": canonical_hash_export_text("M48\n"),
+    }
+    assert exports == expected_exports
 
 
 def test_outputs_keyed_by_design_hash(tmp_path: Path) -> None:
