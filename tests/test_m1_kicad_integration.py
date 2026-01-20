@@ -49,6 +49,6 @@ def test_drc_clean_and_exports_in_pinned_toolchain(tmp_path: Path) -> None:
             kicad_cli_version="9.0.7",
         )
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-        assert manifest["toolchain"]["docker_image"] == spec.toolchain.kicad.docker_image
+        assert manifest["toolchain"]["docker"]["image_ref"] == spec.toolchain.kicad.docker_image
         assert manifest["verification"]["drc"]["returncode"] == 0
         assert manifest["exports"]

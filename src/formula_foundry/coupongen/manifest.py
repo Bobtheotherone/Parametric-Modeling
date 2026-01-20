@@ -7,17 +7,24 @@ Satisfies:
     - REQ-M1-018: The repo must emit a manifest.json for every build containing
                   required provenance fields and export hashes.
 
-Required manifest fields (per DESIGN_DOCUMENT.md Section 9.3):
+Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
     - schema_version, coupon_family
     - design_hash, coupon_id
-    - resolved_design
+    - resolved_design (integer nm params)
     - derived_features + dimensionless_groups
-    - fab_profile_id + resolved limits
-    - stackup
-    - toolchain (KiCad version, docker image tag/digest, kicad-cli --version output)
+    - fab_profile (id + resolved limits)
+    - stackup (nm thicknesses + material props)
+    - toolchain:
+        - kicad.version
+        - kicad.cli_version_output
+        - docker.image_ref (tag+digest)
+        - mode
+    - toolchain_hash
     - exports list with canonical hashes
-    - verification (DRC summary + constraint_proof summary)
-    - lineage (git commit hash, UTC timestamp)
+    - verification:
+        - constraints (passed + failed_ids)
+        - drc (returncode, report_path, summary, canonical_hash)
+    - lineage (git sha, UTC timestamp - explicitly excluded from design_hash)
 """
 
 from __future__ import annotations
@@ -88,6 +95,8 @@ def build_manifest(
     timestamp = timestamp_utc or _utc_timestamp()
     exports = [{"path": path, "hash": export_hashes[path]} for path in sorted(export_hashes.keys())]
     failed_constraints = [result.constraint_id for result in proof.constraints if not result.passed]
+    drc_summary = parse_drc_summary(drc_report_path)
+    drc_canonical_hash = canonicalize_drc_report(drc_report_path)
     return {
         "schema_version": spec.schema_version,
         "coupon_family": spec.coupon_family,
@@ -112,6 +121,8 @@ def build_manifest(
             "drc": {
                 "returncode": drc_returncode,
                 "report_path": str(drc_report_path),
+                "summary": drc_summary,
+                "canonical_hash": drc_canonical_hash,
             },
         },
         "lineage": {
@@ -119,6 +130,79 @@ def build_manifest(
             "timestamp_utc": timestamp,
         },
     }
+
+
+def parse_drc_summary(drc_report_path: Path) -> dict[str, int]:
+    """Parse a KiCad DRC JSON report and return a summary.
+
+    Args:
+        drc_report_path: Path to the DRC JSON report file.
+
+    Returns:
+        Dictionary with violation, warning, and exclusion counts.
+    """
+    if not drc_report_path.exists():
+        return {"violations": 0, "warnings": 0, "exclusions": 0}
+
+    try:
+        report = json.loads(drc_report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"violations": 0, "warnings": 0, "exclusions": 0}
+
+    violations = len(report.get("violations", []))
+    warnings = len(report.get("warnings", []))
+    exclusions = len(report.get("exclusions", []))
+
+    return {"violations": violations, "warnings": warnings, "exclusions": exclusions}
+
+
+def canonicalize_drc_report(drc_report_path: Path) -> str:
+    """Canonicalize a DRC report and return its hash.
+
+    Per Section 13.5.2, canonicalization removes/normalizes:
+    - timestamps
+    - absolute paths
+    - tool invocation environment
+    And ensures stable key ordering.
+
+    Args:
+        drc_report_path: Path to the DRC JSON report file.
+
+    Returns:
+        SHA-256 hash of the canonicalized DRC report.
+    """
+    if not drc_report_path.exists():
+        return sha256_bytes(b"")
+
+    try:
+        report = json.loads(drc_report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return sha256_bytes(b"")
+
+    canonical_report = _canonicalize_drc_object(report)
+    canonical_text = canonical_json_dumps(canonical_report)
+    return sha256_bytes(canonical_text.encode("utf-8"))
+
+
+def _canonicalize_drc_object(obj: Any) -> Any:
+    """Recursively canonicalize a DRC report object.
+
+    Removes timestamps, absolute paths, and environment-specific keys.
+    """
+    if isinstance(obj, dict):
+        result = {}
+        for key in sorted(obj.keys()):
+            if key in {"date", "time", "timestamp", "source", "filename"}:
+                continue
+            value = obj[key]
+            if isinstance(value, str) and "/" in value and len(value) > 20:
+                continue
+            result[key] = _canonicalize_drc_object(value)
+        return result
+    elif isinstance(obj, list):
+        return [_canonicalize_drc_object(item) for item in obj]
+    else:
+        return obj
 
 
 def write_manifest(path: Path, manifest: Mapping[str, Any]) -> None:

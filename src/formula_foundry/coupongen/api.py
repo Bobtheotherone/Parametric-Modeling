@@ -149,10 +149,14 @@ def build_coupon(
     manifest_path = output_dir / "manifest.json"
 
     toolchain_meta = {
-        "kicad_version": evaluation.spec.toolchain.kicad.version,
-        "docker_image": evaluation.spec.toolchain.kicad.docker_image,
+        "kicad": {
+            "version": evaluation.spec.toolchain.kicad.version,
+            "cli_version_output": kicad_cli_version or "unknown",
+        },
+        "docker": {
+            "image_ref": evaluation.spec.toolchain.kicad.docker_image,
+        },
         "mode": mode,
-        "kicad_cli_version": kicad_cli_version or "unknown",
     }
     toolchain_hash_value = toolchain_hash(toolchain_meta)
 
