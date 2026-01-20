@@ -62,6 +62,16 @@ from .repair import (
     write_constraint_proof,
 )
 
+# Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
+from .gpu_filter import (
+    BatchFilterResult,
+    FamilyF1ParameterSpace,
+    GPUConstraintFilter,
+    ParameterMapping,
+    batch_filter,
+    is_gpu_available,
+)
+
 __all__ = [
     # Core constraint types (backward compatible)
     "ConstraintEvaluation",
@@ -95,4 +105,11 @@ __all__ = [
     "generate_constraint_proof",
     "repair_spec_tiered",
     "write_constraint_proof",
+    # GPU-accelerated batch filtering (new)
+    "BatchFilterResult",
+    "FamilyF1ParameterSpace",
+    "GPUConstraintFilter",
+    "ParameterMapping",
+    "batch_filter",
+    "is_gpu_available",
 ]
