@@ -33,7 +33,8 @@ from formula_foundry.substrate import sha256_bytes
 # ---------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_SPECS_DIR = ROOT / "golden_specs"
+TESTS_DIR = Path(__file__).resolve().parents[1]
+GOLDEN_SPECS_DIR = TESTS_DIR / "golden_specs"
 GOLDEN_HASHES_PATH = ROOT / "golden_hashes" / "design_hashes.json"
 
 
