@@ -1,0 +1,72 @@
+# Golden spec F0-005: Wide gap F0 calibration thru line
+# Parameters: 180um trace width, 200um gap, 20mm length per side
+schema_version: 1
+coupon_family: F0_CAL_THRU_LINE
+units: nm
+
+toolchain:
+  kicad:
+    version: "9.0.7"
+    docker_image: "kicad/kicad:9.0.7"
+
+fab_profile:
+  id: oshpark_4layer
+
+stackup:
+  copper_layers: 4
+  thicknesses_nm:
+    L1_to_L2: "170 um"
+    L2_to_L3: "1090 um"
+    L3_to_L4: "170 um"
+  materials:
+    er: 3.66
+    loss_tangent: 0.0095
+
+board:
+  outline:
+    width_nm: "14 mm"
+    length_nm: "45 mm"
+    corner_radius_nm: "500 um"
+  origin:
+    mode: EDGE_L_CENTER
+  text:
+    coupon_id: "F0-CAL-005"
+    include_manifest_hash: true
+
+connectors:
+  left:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["1 mm", "0 nm"]
+    rotation_deg: 0
+  right:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["44 mm", "0 nm"]
+    rotation_deg: 180
+
+transmission_line:
+  type: CPWG
+  layer: F.Cu
+  w_nm: "180 um"
+  gap_nm: "200 um"
+  length_left_nm: "20 mm"
+  length_right_nm: "20 mm"
+
+discontinuity: null
+
+constraints:
+  mode: REJECT
+  drc:
+    must_pass: true
+    severity: all
+  symmetry:
+    enforce: true
+  allow_unconnected_copper: false
+
+export:
+  gerbers:
+    enabled: true
+    format: gerbers
+  drill:
+    enabled: true
+    format: excellon
+  outputs_dir: "./outputs"
