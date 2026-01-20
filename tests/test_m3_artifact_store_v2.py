@@ -20,6 +20,7 @@ from formula_foundry.m3.artifact_store import (
     Lineage,
     LineageReference,
     Provenance,
+    compute_spec_id,
 )
 
 if TYPE_CHECKING:
@@ -575,3 +576,110 @@ class TestManifestSchema:
 
         assert parsed["schema_version"] == 1
         assert parsed["artifact_id"] == manifest.artifact_id
+
+
+class TestSpecIdComputation:
+    """Tests for spec_id computation following Section 9.1 of the design document."""
+
+    def test_compute_spec_id_deterministic(self) -> None:
+        """Test that compute_spec_id produces deterministic results."""
+        digest = hashlib.sha256(b"hello world").hexdigest()
+
+        spec_id_1 = compute_spec_id(digest)
+        spec_id_2 = compute_spec_id(digest)
+
+        assert spec_id_1 == spec_id_2
+        assert len(spec_id_1) == 12
+
+    def test_compute_spec_id_different_inputs(self) -> None:
+        """Test that different content produces different spec IDs."""
+        digest_a = hashlib.sha256(b"content a").hexdigest()
+        digest_b = hashlib.sha256(b"content b").hexdigest()
+
+        spec_id_a = compute_spec_id(digest_a)
+        spec_id_b = compute_spec_id(digest_b)
+
+        assert spec_id_a != spec_id_b
+
+    def test_compute_spec_id_lowercase_alphanumeric(self) -> None:
+        """Test that spec_id contains only lowercase alphanumeric characters."""
+        digest = hashlib.sha256(b"test content").hexdigest()
+        spec_id = compute_spec_id(digest)
+
+        # Base32 uses a-z and 2-7
+        assert spec_id.isalnum()
+        assert spec_id == spec_id.lower()
+
+    def test_compute_spec_id_custom_length(self) -> None:
+        """Test that spec_id can be generated with custom length."""
+        digest = hashlib.sha256(b"custom length").hexdigest()
+
+        spec_id_8 = compute_spec_id(digest, length=8)
+        spec_id_16 = compute_spec_id(digest, length=16)
+
+        assert len(spec_id_8) == 8
+        assert len(spec_id_16) == 16
+        assert spec_id_16.startswith(spec_id_8)
+
+    def test_manifest_spec_id_property(self, tmp_path: Path) -> None:
+        """Test that ArtifactManifest.spec_id property works correctly."""
+        store = ArtifactStore(tmp_path / "data")
+        content = b"test content for spec_id"
+
+        manifest = store.put(
+            content=content,
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+
+        expected_digest = hashlib.sha256(content).hexdigest()
+        expected_spec_id = compute_spec_id(expected_digest)
+
+        assert manifest.spec_id == expected_spec_id
+        assert len(manifest.spec_id) == 12
+
+    def test_store_compute_spec_id(self, tmp_path: Path) -> None:
+        """Test ArtifactStore.compute_spec_id method."""
+        store = ArtifactStore(tmp_path / "data")
+        content = b"compute spec_id test"
+
+        spec_id = store.compute_spec_id(content)
+        expected_digest = hashlib.sha256(content).hexdigest()
+        expected_spec_id = compute_spec_id(expected_digest)
+
+        assert spec_id == expected_spec_id
+
+    def test_store_get_spec_id(self, tmp_path: Path) -> None:
+        """Test ArtifactStore.get_spec_id method."""
+        store = ArtifactStore(tmp_path / "data")
+        content = b"get spec_id test"
+
+        manifest = store.put(
+            content=content,
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+
+        retrieved_spec_id = store.get_spec_id(manifest.artifact_id)
+        assert retrieved_spec_id == manifest.spec_id
+
+    def test_spec_id_consistent_with_coupon_id(self) -> None:
+        """Test that spec_id follows the same pattern as coupon_id_from_design_hash.
+
+        This verifies alignment with Section 9.1:
+        coupon_id = base32(design_hash)[0:12]
+        """
+        import base64
+
+        content = b'{"coupon_family": "F1", "design_vector": [1, 2, 3]}'
+        digest = hashlib.sha256(content).hexdigest()
+        digest_bytes = bytes.fromhex(digest)
+
+        # Manual computation matching the design spec
+        encoded = base64.b32encode(digest_bytes).decode("ascii").lower().rstrip("=")
+        expected_coupon_id = encoded[:12]
+
+        # Should match compute_spec_id
+        assert compute_spec_id(digest) == expected_coupon_id
