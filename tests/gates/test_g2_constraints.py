@@ -105,18 +105,23 @@ def _u_to_param(u: float, param_name: str) -> int:
     return int(min_val + u * (max_val - min_val))
 
 
-def _generate_spec_from_u(u_vector: list[float], derive_length_right: bool = False) -> dict[str, Any]:
+def _generate_spec_from_u(u_vector: list[float], derive_length_right: bool = True) -> dict[str, Any]:
     """Generate a CouponSpec dictionary from normalized u vector.
 
     The u vector has 19 dimensions corresponding to the parameters defined
     in _PARAM_RANGES. Values in [0, 1] are mapped to physical ranges.
 
+    For F1 family specs, length_right_nm is derived from the F1 continuity
+    equation rather than taken directly from the u vector (per CP-2.2/CP-3.3):
+        length_right = right_connector_x - (left_connector_x + length_left)
+
     Args:
         u_vector: List of 19 normalized values in [0, 1]
-        derive_length_right: If True, derive length_right_nm from connector
-            positions and length_left_nm to satisfy F1 continuity constraint.
-            This ensures: discontinuity_center = left_connector + length_left
-            and length_right = right_connector - discontinuity_center
+        derive_length_right: If True (default), derive length_right_nm from
+            connector positions and length_left_nm to satisfy F1 continuity
+            constraint. This ensures: discontinuity_center = left_connector + length_left
+            and length_right = right_connector - discontinuity_center.
+            Set to False only for tests that explicitly need non-compliant specs.
 
     Returns:
         CouponSpec dictionary ready for validation
@@ -125,13 +130,14 @@ def _generate_spec_from_u(u_vector: list[float], derive_length_right: bool = Fal
     param_names = list(_PARAM_RANGES.keys())
     params = {name: _u_to_param(u_vector[i], name) for i, name in enumerate(param_names)}
 
-    # For F1 coupons with derive_length_right=True, compute length_right_nm
-    # to satisfy the continuity constraint (CP-2.2):
-    # discontinuity_center = left_connector_x + length_left
-    # length_right = right_connector_x - discontinuity_center
+    # CP-3.3: Derive length_right from F1 continuity equation for F1 family specs
+    # This ensures generated specs satisfy the continuity constraint (CP-2.2)
     if derive_length_right:
-        discontinuity_center = params["left_connector_x_nm"] + params["length_left_nm"]
-        params["length_right_nm"] = params["right_connector_x_nm"] - discontinuity_center
+        left_x = params["left_connector_x_nm"]
+        right_x = params["right_connector_x_nm"]
+        length_left = params["length_left_nm"]
+        derived_length_right = max(0, right_x - (left_x + length_left))
+        params["length_right_nm"] = derived_length_right
 
     return {
         "schema_version": 1,

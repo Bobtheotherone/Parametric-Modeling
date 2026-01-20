@@ -81,8 +81,11 @@ def _example_spec_data() -> dict[str, Any]:
             "layer": "F.Cu",
             "w_nm": 300000,
             "gap_nm": 180000,
-            "length_left_nm": 25000000,
-            "length_right_nm": 25000000,
+            # CP-3.3: For F1 continuity, length_right must equal:
+            #   right_x - (left_x + length_left) = 75M - (5M + 35M) = 35M
+            # Using symmetric lengths with total span = 70M
+            "length_left_nm": 35000000,
+            "length_right_nm": 35000000,
             "ground_via_fence": {
                 "enabled": True,
                 "pitch_nm": 1500000,
