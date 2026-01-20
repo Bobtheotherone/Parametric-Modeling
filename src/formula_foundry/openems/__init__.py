@@ -1,4 +1,22 @@
 from .cli_main import build_parser
+from .convergence import (
+    ConvergenceCheckResult,
+    ConvergenceConfig,
+    ConvergenceReport,
+    ConvergenceStatus,
+    EnergyDecayData,
+    MeshInfo,
+    build_convergence_manifest_entry,
+    check_energy_decay,
+    check_frequency_resolution,
+    check_passivity,
+    check_port_power_balance,
+    convergence_gates_passed,
+    load_energy_decay_json,
+    validate_convergence,
+    validate_simulation_convergence,
+    write_convergence_report,
+)
 from .convert import build_simulation_spec, simulation_canonical_json, write_simulation_spec
 from .manifest import (
     ConvergenceMetrics,
@@ -240,4 +258,21 @@ __all__ = [
     "manifest_hash",
     "validate_m2_manifest",
     "write_m2_manifest",
+    # Convergence checking (REQ-M2-008)
+    "ConvergenceCheckResult",
+    "ConvergenceConfig",
+    "ConvergenceReport",
+    "ConvergenceStatus",
+    "EnergyDecayData",
+    "MeshInfo",
+    "build_convergence_manifest_entry",
+    "check_energy_decay",
+    "check_frequency_resolution",
+    "check_passivity",
+    "check_port_power_balance",
+    "convergence_gates_passed",
+    "load_energy_decay_json",
+    "validate_convergence",
+    "validate_simulation_convergence",
+    "write_convergence_report",
 ]
