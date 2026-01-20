@@ -21,6 +21,12 @@ dev = [
   "mypy>=1.10",
 ]
 
+# M3 tracking dependencies
+tracking = [
+  "mlflow>=2.10",
+  "pyyaml>=6.0",
+]
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-q"
