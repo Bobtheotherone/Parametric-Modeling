@@ -33,7 +33,8 @@ from .canonicalize import (
     canonicalize_kicad_pcb,
     normalize_line_endings,
 )
-from .cli import KicadCliMode, KicadCliRunner, build_drc_args
+from .cli import KicadCliMode, KicadCliRunner, build_drc_args, get_kicad_cli_version
+from .runners import DockerKicadRunner, IKicadRunner, KicadRunResult
 from .sexpr import (
     SExprAtom,
     SExprList,
@@ -64,6 +65,11 @@ __all__ = [
     "KicadCliMode",
     "KicadCliRunner",
     "build_drc_args",
+    "get_kicad_cli_version",
+    # Runners
+    "DockerKicadRunner",
+    "IKicadRunner",
+    "KicadRunResult",
     # Canonicalization
     "canonical_hash_drill",
     "canonical_hash_export",
