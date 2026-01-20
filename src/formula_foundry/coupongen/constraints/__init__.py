@@ -38,11 +38,14 @@ from .core import (
 )
 
 # Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
+# Updated for CP-4.1 formal API with mode, seed, and RepairMeta
 from .gpu_filter import (
     BatchFilterResult,
+    FabProfiles,
     FamilyF1ParameterSpace,
     GPUConstraintFilter,
     ParameterMapping,
+    RepairMeta,
     batch_filter,
     is_gpu_available,
 )
@@ -106,11 +109,13 @@ __all__ = [
     "generate_constraint_proof",
     "repair_spec_tiered",
     "write_constraint_proof",
-    # GPU-accelerated batch filtering (new)
+    # GPU-accelerated batch filtering (new, updated for CP-4.1)
     "BatchFilterResult",
+    "FabProfiles",
     "FamilyF1ParameterSpace",
     "GPUConstraintFilter",
     "ParameterMapping",
+    "RepairMeta",
     "batch_filter",
     "is_gpu_available",
 ]
