@@ -1,5 +1,16 @@
 from .cli_main import build_parser
 from .convert import build_simulation_spec, simulation_canonical_json, write_simulation_spec
+from .manifest import (
+    ConvergenceMetrics,
+    M2ManifestBuilder,
+    MeshStatistics,
+    PortConfiguration,
+    build_m2_manifest,
+    load_m2_manifest,
+    manifest_hash,
+    validate_m2_manifest,
+    write_m2_manifest,
+)
 from .csx_primitives import (
     BoundingBox3D,
     CSXBox,
@@ -219,4 +230,14 @@ __all__ = [
     "extract_sparams_from_touchstone",
     "load_port_signals_json",
     "write_extraction_result",
+    # M2 Manifest generation (REQ-M2-018)
+    "ConvergenceMetrics",
+    "M2ManifestBuilder",
+    "MeshStatistics",
+    "PortConfiguration",
+    "build_m2_manifest",
+    "load_m2_manifest",
+    "manifest_hash",
+    "validate_m2_manifest",
+    "write_m2_manifest",
 ]
