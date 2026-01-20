@@ -1,3 +1,15 @@
+"""KiCad CLI runner with local binary and Docker support.
+
+This module provides a runner for kicad-cli that can execute:
+- Locally using the system-installed kicad-cli binary
+- Via Docker using a pinned KiCad Docker image (e.g., kicad/kicad:9.0.7)
+
+Satisfies REQ-M1-015 through REQ-M1-017:
+- REQ-M1-015: Runner supports local binary or pinned Docker image execution
+- REQ-M1-016: DRC with severity-all, JSON report output, and exit-code gating
+- REQ-M1-017: Gerber and drill file export via KiCad CLI
+"""
+
 from __future__ import annotations
 
 import subprocess
@@ -65,6 +77,20 @@ class KicadCliRunner:
 
 
 def build_drc_args(board_path: Path, report_path: Path) -> list[str]:
+    """Build kicad-cli DRC command arguments.
+
+    Satisfies REQ-M1-016:
+    - --severity-all: Report violations at all severity levels
+    - --format json: Output in JSON format for programmatic parsing
+    - --exit-code-violations: Return non-zero exit code if violations exist
+
+    Args:
+        board_path: Path to the .kicad_pcb file to check.
+        report_path: Path where the JSON DRC report will be written.
+
+    Returns:
+        List of command-line arguments for kicad-cli pcb drc.
+    """
     return [
         "pcb",
         "drc",
@@ -76,3 +102,10 @@ def build_drc_args(board_path: Path, report_path: Path) -> list[str]:
         str(report_path),
         str(board_path),
     ]
+
+
+__all__ = [
+    "KicadCliMode",
+    "KicadCliRunner",
+    "build_drc_args",
+]
