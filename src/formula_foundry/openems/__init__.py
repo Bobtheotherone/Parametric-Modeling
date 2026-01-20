@@ -37,12 +37,25 @@ from .geometry_adapter import (
     build_csx_geometry,
     build_csx_geometry_from_resolved,
 )
+from .ports import (
+    DeembedSpec,
+    DeembedType,
+    ImpedanceSpec,
+    PortBuilder,
+    PortGeometrySpec,
+    PortPosition,
+    PortType,
+    WaveguidePortSpec,
+    build_ports_from_resolved,
+    waveguide_port_to_basic_port_spec,
+)
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
 from .sim_runner import SimulationResult, SimulationRunner, SimulationSolverMode
 from .spec import (
     SIMULATIONSPEC_SCHEMA,
     BoundarySpec,
     ConductorMaterialSpec,
+    DeembedConfigSpec,
     DielectricMaterialSpec,
     EngineSpec,
     ExcitationSpec,
@@ -100,6 +113,7 @@ __all__ = [
     # Simulation spec models
     "BoundarySpec",
     "ConductorMaterialSpec",
+    "DeembedConfigSpec",
     "DielectricMaterialSpec",
     "EngineSpec",
     "ExcitationSpec",
@@ -157,4 +171,15 @@ __all__ = [
     "generate_adaptive_mesh_lines",
     "generate_z_mesh_lines",
     "mesh_line_summary",
+    # Port configuration (REQ-M2-005)
+    "DeembedSpec",
+    "DeembedType",
+    "ImpedanceSpec",
+    "PortBuilder",
+    "PortGeometrySpec",
+    "PortPosition",
+    "PortType",
+    "WaveguidePortSpec",
+    "build_ports_from_resolved",
+    "waveguide_port_to_basic_port_spec",
 ]
