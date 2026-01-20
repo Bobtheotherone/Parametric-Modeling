@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "kicad_version": "9.0.7",
+  "docker_image": "kicad/kicad:9.0.7",
+  "docker_digest": "sha256:PLACEHOLDER",
+  "toolchain_hash": null
+}
