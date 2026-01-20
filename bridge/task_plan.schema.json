@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ParallelTaskPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "milestone_id",
+    "max_parallel_tasks",
+    "tasks",
+    "rationale"
+  ],
+  "properties": {
+    "milestone_id": {"type": "string"},
+    "max_parallel_tasks": {"type": "integer", "minimum": 1, "maximum": 32},
+    "rationale": {"type": "string"},
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "description",
+          "preferred_agent",
+          "estimated_intensity",
+          "locks",
+          "depends_on",
+          "solo"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "preferred_agent": {"type": "string", "enum": ["codex", "claude", "either"]},
+          "estimated_intensity": {"type": "string", "enum": ["low", "medium", "high"]},
+          "locks": {"type": "array", "items": {"type": "string"}},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "solo": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}
