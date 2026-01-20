@@ -41,7 +41,14 @@ class _CountingRunner:
 
     def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         self.gerber_calls += 1
-        (out_dir / "F.Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        # Create all required layers for a 4-layer board (per Section 13.5.3)
+        (out_dir / "board-F_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-In1_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-In2_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-B_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-F_Mask.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-B_Mask.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-Edge_Cuts.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
         return _completed_process()
 
     def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:

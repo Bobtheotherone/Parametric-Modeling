@@ -1,0 +1,58 @@
+{
+  "$schema": "https://formula-foundry.dev/schemas/layer-sets.v1.json",
+  "schema_version": 1,
+  "description": "Expected layer sets per family and layer count (per Section 13.5.3)",
+  "layer_sets": {
+    "2_layer": {
+      "copper": ["F.Cu", "B.Cu"],
+      "mask": ["F.Mask", "B.Mask"],
+      "silkscreen": ["F.SilkS", "B.SilkS"],
+      "edge": ["Edge.Cuts"],
+      "required": ["F.Cu", "B.Cu", "F.Mask", "B.Mask", "Edge.Cuts"],
+      "optional": ["F.SilkS", "B.SilkS", "F.Paste", "B.Paste"]
+    },
+    "4_layer": {
+      "copper": ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"],
+      "mask": ["F.Mask", "B.Mask"],
+      "silkscreen": ["F.SilkS", "B.SilkS"],
+      "edge": ["Edge.Cuts"],
+      "required": ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu", "F.Mask", "B.Mask", "Edge.Cuts"],
+      "optional": ["F.SilkS", "B.SilkS", "F.Paste", "B.Paste"]
+    },
+    "6_layer": {
+      "copper": ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"],
+      "mask": ["F.Mask", "B.Mask"],
+      "silkscreen": ["F.SilkS", "B.SilkS"],
+      "edge": ["Edge.Cuts"],
+      "required": ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu", "F.Mask", "B.Mask", "Edge.Cuts"],
+      "optional": ["F.SilkS", "B.SilkS", "F.Paste", "B.Paste"]
+    }
+  },
+  "family_overrides": {
+    "F0_CAL_THRU_LINE": {
+      "description": "Calibration through-line coupon - single layer signal trace",
+      "signal_layers_min": 1,
+      "requires_via_layers": false
+    },
+    "F1_SINGLE_ENDED_VIA": {
+      "description": "Single-ended via transition coupon - requires at least 2 copper layers for via",
+      "signal_layers_min": 2,
+      "requires_via_layers": true
+    }
+  },
+  "gerber_extension_map": {
+    "F.Cu": "-F_Cu.gbr",
+    "B.Cu": "-B_Cu.gbr",
+    "In1.Cu": "-In1_Cu.gbr",
+    "In2.Cu": "-In2_Cu.gbr",
+    "In3.Cu": "-In3_Cu.gbr",
+    "In4.Cu": "-In4_Cu.gbr",
+    "F.Mask": "-F_Mask.gbr",
+    "B.Mask": "-B_Mask.gbr",
+    "F.SilkS": "-F_SilkS.gbr",
+    "B.SilkS": "-B_SilkS.gbr",
+    "F.Paste": "-F_Paste.gbr",
+    "B.Paste": "-B_Paste.gbr",
+    "Edge.Cuts": "-Edge_Cuts.gbr"
+  }
+}

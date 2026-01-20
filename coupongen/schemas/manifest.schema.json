@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://formula-foundry.dev/schemas/manifest.v1.json",
   "title": "CouponManifest",
-  "description": "Manifest schema for coupon builds with complete provenance (per Section 13.5.1)",
+  "description": "Manifest schema for coupon builds with complete provenance (per Section 13.5.1) and layer set validation (per Section 13.5.3)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -152,6 +152,11 @@
           "type": "string",
           "enum": ["local", "docker"],
           "description": "Execution mode for KiCad CLI"
+        },
+        "generator_git_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git SHA of the coupongen code that generated this manifest"
         }
       }
     },
@@ -237,6 +242,58 @@
         }
       }
     },
+    "LayerSetValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "copper_layer_count", "family", "expected_layers", "actual_layers"],
+      "description": "Layer set validation result per Section 13.5.3",
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "Whether all required layers are present"
+        },
+        "copper_layer_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of copper layers in the design"
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Coupon family identifier"
+        },
+        "expected_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of required layers for this layer count (e.g., F.Cu, In1.Cu, In2.Cu, B.Cu, F.Mask, B.Mask, Edge.Cuts)"
+        },
+        "actual_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of layers found in exported gerber files"
+        },
+        "missing_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of required layers that were not found in exports"
+        },
+        "extra_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of unexpected layers found in exports"
+        }
+      }
+    },
     "Verification": {
       "type": "object",
       "additionalProperties": false,
@@ -247,6 +304,13 @@
         },
         "drc": {
           "$ref": "#/$defs/DrcVerification"
+        },
+        "layer_set": {
+          "oneOf": [
+            { "$ref": "#/$defs/LayerSetValidation" },
+            { "type": "null" }
+          ],
+          "description": "Layer set validation result (per Section 13.5.3)"
         }
       }
     },
