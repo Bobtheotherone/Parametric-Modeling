@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/constraint_proof.v1.json",
+  "title": "ConstraintProof",
+  "description": "Constraint proof schema version 1 - Documents constraint evaluation results with signed margins and repair info",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "passed",
+    "total_constraints",
+    "failed_constraints",
+    "tiers",
+    "constraints"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version identifier; must be 1 for this schema version"
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Overall pass/fail status of all must_pass constraints"
+    },
+    "first_failure_tier": {
+      "anyOf": [
+        {"$ref": "#/$defs/ConstraintTier"},
+        {"type": "null"}
+      ],
+      "description": "First tier with a must_pass constraint failure, null if all passed"
+    },
+    "total_constraints": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of constraints evaluated"
+    },
+    "failed_constraints": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of constraints that failed"
+    },
+    "tiers": {
+      "type": "object",
+      "description": "Constraint IDs grouped by tier",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Full per-constraint evaluation details",
+      "items": {"$ref": "#/$defs/ConstraintEvaluation"}
+    },
+    "repair_applied": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether REPAIR mode was applied"
+    },
+    "repair_info": {
+      "anyOf": [
+        {"$ref": "#/$defs/RepairInfo"},
+        {"type": "null"}
+      ],
+      "description": "Repair details if REPAIR mode was applied"
+    },
+    "evaluation_timestamp_utc": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when constraints were evaluated"
+    },
+    "design_hash": {
+      "type": "string",
+      "description": "Design hash of the evaluated spec"
+    }
+  },
+  "$defs": {
+    "ConstraintTier": {
+      "title": "ConstraintTier",
+      "type": "string",
+      "enum": ["T0", "T1", "T2", "T3", "T4"],
+      "description": "Constraint evaluation tier (T0=parameter bounds, T1=derived scalars, T2=spatial, T3=collision, T4=external)"
+    },
+    "ConstraintCategory": {
+      "title": "ConstraintCategory",
+      "type": "string",
+      "enum": ["FABRICATION", "GEOMETRY", "TOPOLOGY", "SPACING", "MATERIAL", "ELECTRICAL"],
+      "description": "Functional category of the constraint"
+    },
+    "ConstraintSeverity": {
+      "title": "ConstraintSeverity",
+      "type": "string",
+      "enum": ["ERROR", "WARNING", "INFO"],
+      "description": "Severity level for constraint violations"
+    },
+    "ConstraintEvaluation": {
+      "title": "ConstraintEvaluation",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "description", "tier", "value", "limit", "margin", "passed"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique constraint identifier (e.g., 'T0_TRACE_WIDTH_MIN')"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the constraint"
+        },
+        "tier": {
+          "$ref": "#/$defs/ConstraintTier"
+        },
+        "category": {
+          "$ref": "#/$defs/ConstraintCategory"
+        },
+        "value": {
+          "type": "number",
+          "description": "Actual value being checked"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Limit value for the constraint"
+        },
+        "margin": {
+          "type": "number",
+          "description": "Signed margin: positive means passing, negative means failing"
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "Whether the constraint was satisfied"
+        },
+        "severity": {
+          "$ref": "#/$defs/ConstraintSeverity"
+        },
+        "must_pass": {
+          "type": "boolean",
+          "description": "Whether this constraint must pass for validity"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Detailed failure reason (empty if passed)"
+        },
+        "repair_hint": {
+          "type": "string",
+          "description": "Hint for auto-repair in REPAIR mode"
+        }
+      }
+    },
+    "RepairAction": {
+      "title": "RepairAction",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "before", "after", "reason", "constraint_id"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Dotted path to the repaired parameter (e.g., 'transmission_line.w_nm')"
+        },
+        "before": {
+          "type": "integer",
+          "description": "Original value before repair (in nm)"
+        },
+        "after": {
+          "type": "integer",
+          "description": "Repaired value (in nm)"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Human-readable explanation of why the repair was needed"
+        },
+        "constraint_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ID of the constraint that triggered this repair"
+        }
+      }
+    },
+    "RepairInfo": {
+      "title": "RepairInfo",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repair_map", "repair_reason", "repair_distance"],
+      "properties": {
+        "repair_map": {
+          "type": "object",
+          "description": "Mapping from parameter paths to {before, after} dicts",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["before", "after"],
+            "properties": {
+              "before": {"type": "integer"},
+              "after": {"type": "integer"}
+            }
+          }
+        },
+        "repair_reason": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of human-readable repair explanations"
+        },
+        "repair_distance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Normalized total distance of all repairs"
+        },
+        "repair_actions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/RepairAction"},
+          "description": "Detailed list of all repair actions taken"
+        },
+        "original_passed": {
+          "type": "boolean",
+          "description": "Whether constraints passed before repair"
+        },
+        "repaired_passed": {
+          "type": "boolean",
+          "description": "Whether constraints passed after repair"
+        }
+      }
+    }
+  }
+}
