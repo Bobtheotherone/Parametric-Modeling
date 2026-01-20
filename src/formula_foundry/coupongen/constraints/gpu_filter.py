@@ -5,22 +5,44 @@ on GPU, enabling filtering of millions of candidates before invoking KiCad
 or expensive geometry operations.
 
 The filter operates on normalized design vectors u in [0,1]^d and returns:
-- feasible_mask: Boolean mask indicating which candidates pass all constraints
-- repaired_candidates: Candidates repaired to satisfy constraints
-- repair_metadata: Information about repairs applied
+- mask: Boolean mask indicating which candidates pass all constraints
+- u_repaired: Candidates repaired to satisfy constraints (in REPAIR mode)
+- repair_meta: Information about repairs applied
 
 REQ-M1-GPU-FILTER: GPU vectorized constraint prefilter for batch candidate filtering
+
+CP-4.1: Formal batch_filter API with dual backend (CuPy if available, else NumPy)
+        and identical semantics per Section 13.4.1.
+
+API Signature:
+    batch_filter(u_batch, profiles, mode, seed) -> BatchFilterResult
+
+Where:
+    - u_batch: Array of shape (N, d) with normalized values in [0, 1]
+    - profiles: FabProfiles (dict or FabCapabilityProfile) with fab limits
+    - mode: "REJECT" or "REPAIR" - controls constraint handling
+    - seed: int for deterministic repair (ensures reproducibility)
+
+Returns BatchFilterResult with:
+    - mask: Boolean array of shape (N,) - True for feasible candidates
+    - u_repaired: Array of shape (N, d) with repaired normalized vectors
+    - repair_meta: RepairMeta with repair statistics and details
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Union
 
 import numpy as np
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+    from ..fab_profiles import FabCapabilityProfile
+
+# Type alias for FabProfiles - accepts dict or FabCapabilityProfile
+FabProfiles = Union[dict[str, int], "FabCapabilityProfile"]
 
 # Try to import CuPy, fall back to NumPy if unavailable
 try:
@@ -211,34 +233,102 @@ class FamilyF1ParameterSpace:
 
 
 @dataclass(frozen=True)
-class BatchFilterResult:
-    """Result of batch constraint filtering.
+class RepairMeta:
+    """Metadata about repairs applied during batch filtering.
+
+    Per CP-4.1 Section 13.4.2, repair metadata includes:
+    - repair_counts: Number of repairs applied per candidate
+    - repair_distances: L2 norm of repair in normalized space per candidate
+    - tier_violations: Violation counts by tier (before repair)
+    - constraint_margins: Margin values for each constraint (after repair)
+    - seed: Random seed used for deterministic repair
+    - mode: Mode used ("REJECT" or "REPAIR")
 
     Attributes:
-        feasible_mask: Boolean array of shape (N,) - True for feasible candidates
-        repaired_u: Array of shape (N, d) with repaired normalized vectors
         repair_counts: Array of shape (N,) counting repairs per candidate
-        repair_distances: Array of shape (N,) with repair distances per candidate
-        tier_violations: Dict mapping tier to violation counts per candidate
+        repair_distances: Array of shape (N,) with L2 repair distances
+        tier_violations: Dict mapping tier ("T0", "T1", "T2") to violation counts
         constraint_margins: Dict mapping constraint ID to margin arrays
+        seed: Random seed used for deterministic repair operations
+        mode: Constraint handling mode that was used
     """
 
-    feasible_mask: NDArray[np.bool_]
-    repaired_u: NDArray[np.floating[Any]]
     repair_counts: NDArray[np.intp]
     repair_distances: NDArray[np.floating[Any]]
     tier_violations: dict[str, NDArray[np.intp]]
     constraint_margins: dict[str, NDArray[np.floating[Any]]]
+    seed: int
+    mode: Literal["REJECT", "REPAIR"]
+
+
+@dataclass(frozen=True)
+class BatchFilterResult:
+    """Result of batch constraint filtering per CP-4.1 API.
+
+    This is the formal return type for batch_filter() as specified in
+    Section 13.4.1. The result provides:
+    - mask: Boolean feasibility mask
+    - u_repaired: Repaired normalized vectors
+    - repair_meta: Detailed repair metadata
+
+    Attributes:
+        mask: Boolean array of shape (N,) - True for feasible candidates
+        u_repaired: Array of shape (N, d) with repaired normalized vectors
+        repair_meta: RepairMeta with detailed repair information
+
+    Legacy attributes (for backward compatibility):
+        feasible_mask: Alias for mask
+        repaired_u: Alias for u_repaired
+        repair_counts: Forwarded from repair_meta
+        repair_distances: Forwarded from repair_meta
+        tier_violations: Forwarded from repair_meta
+        constraint_margins: Forwarded from repair_meta
+    """
+
+    mask: NDArray[np.bool_]
+    u_repaired: NDArray[np.floating[Any]]
+    repair_meta: RepairMeta
+
+    # Legacy attribute aliases for backward compatibility
+    @property
+    def feasible_mask(self) -> NDArray[np.bool_]:
+        """Legacy alias for mask (backward compatibility)."""
+        return self.mask
+
+    @property
+    def repaired_u(self) -> NDArray[np.floating[Any]]:
+        """Legacy alias for u_repaired (backward compatibility)."""
+        return self.u_repaired
+
+    @property
+    def repair_counts(self) -> NDArray[np.intp]:
+        """Forwarded from repair_meta (backward compatibility)."""
+        return self.repair_meta.repair_counts
+
+    @property
+    def repair_distances(self) -> NDArray[np.floating[Any]]:
+        """Forwarded from repair_meta (backward compatibility)."""
+        return self.repair_meta.repair_distances
+
+    @property
+    def tier_violations(self) -> dict[str, NDArray[np.intp]]:
+        """Forwarded from repair_meta (backward compatibility)."""
+        return self.repair_meta.tier_violations
+
+    @property
+    def constraint_margins(self) -> dict[str, NDArray[np.floating[Any]]]:
+        """Forwarded from repair_meta (backward compatibility)."""
+        return self.repair_meta.constraint_margins
 
     @property
     def n_candidates(self) -> int:
         """Return number of candidates."""
-        return len(self.feasible_mask)
+        return len(self.mask)
 
     @property
     def n_feasible(self) -> int:
         """Return number of feasible candidates."""
-        return int(self.feasible_mask.sum())
+        return int(self.mask.sum())
 
     @property
     def feasibility_rate(self) -> float:
@@ -763,23 +853,40 @@ class GPUConstraintFilter:
     def batch_filter(
         self,
         u_batch: NDArray[np.floating[Any]],
-        repair: bool = True,
+        *,
+        mode: Literal["REJECT", "REPAIR"] = "REPAIR",
+        seed: int = 0,
         max_repair_iterations: int = 3,
     ) -> BatchFilterResult:
-        """Filter a batch of candidate design vectors.
+        """Filter a batch of candidate design vectors per CP-4.1 API.
 
         This is the main entry point for batch constraint filtering.
-        It checks Tier 0-2 constraints and optionally repairs violations.
+        It checks Tier 0-2 constraints and optionally repairs violations
+        based on the mode parameter.
 
         Args:
             u_batch: Array of shape (N, d) with normalized values in [0, 1]
-            repair: Whether to attempt repair of constraint violations
-            max_repair_iterations: Maximum repair iterations
+            mode: Constraint handling mode:
+                  - "REJECT": Only check constraints, do not repair
+                  - "REPAIR": Attempt to repair constraint violations
+            seed: Random seed for deterministic repair operations
+            max_repair_iterations: Maximum repair iterations (REPAIR mode only)
 
         Returns:
-            BatchFilterResult with feasibility mask, repaired vectors, and metadata
+            BatchFilterResult with:
+            - mask: Boolean feasibility mask
+            - u_repaired: Repaired normalized vectors
+            - repair_meta: RepairMeta with detailed repair information
         """
         xp = self.xp
+
+        # Set seed for deterministic repair (affects numpy RNG if used)
+        # Note: Current repair is deterministic (clamping), but seed is stored
+        # for future stochastic repairs and auditing
+        if seed != 0:
+            np.random.seed(seed)
+            if self.use_gpu and _HAS_CUPY:
+                cp.random.seed(seed)
 
         # Transfer to device
         u = self._to_device(u_batch.astype(np.float64))
@@ -818,9 +925,9 @@ class GPUConstraintFilter:
         # Initial feasibility
         feasible = t0_passed & t1_passed & t2_passed
 
-        # Repair loop
+        # Repair loop (only in REPAIR mode)
         repaired_u = u.copy()
-        if repair:
+        if mode == "REPAIR":
             for _iteration in range(max_repair_iterations):
                 if xp.all(feasible):
                     break
@@ -864,59 +971,34 @@ class GPUConstraintFilter:
         result_tier_violations = {tier: self._to_host(counts) for tier, counts in tier_violations.items()}
         result_margins = {key: self._to_host(margin) for key, margin in all_margins.items()}
 
-        return BatchFilterResult(
-            feasible_mask=result_feasible,
-            repaired_u=result_repaired,
+        # Build RepairMeta
+        repair_meta = RepairMeta(
             repair_counts=result_repair_counts,
             repair_distances=result_repair_distances,
             tier_violations=result_tier_violations,
             constraint_margins=result_margins,
+            seed=seed,
+            mode=mode,
+        )
+
+        return BatchFilterResult(
+            mask=result_feasible,
+            u_repaired=result_repaired,
+            repair_meta=repair_meta,
         )
 
 
-def batch_filter(
-    u_batch: NDArray[np.floating[Any]],
-    fab_limits: dict[str, int] | None = None,
-    repair: bool = True,
-    use_gpu: bool = True,
-) -> BatchFilterResult:
-    """Convenience function for batch constraint filtering.
-
-    This is the primary API for GPU-accelerated constraint prefiltering.
-    It checks Tier 0-2 constraints on a batch of normalized design vectors
-    and returns a feasibility mask along with repaired candidates.
+def _resolve_fab_limits(profiles: FabProfiles | None) -> dict[str, int]:
+    """Resolve fab limits from profiles (dict or FabCapabilityProfile).
 
     Args:
-        u_batch: Array of shape (N, d) with normalized values in [0, 1]
-                 where d is the dimension of the parameter space (19 for F1 family)
-        fab_limits: Dictionary of fab capability limits in nm. If None, uses defaults.
-        repair: Whether to attempt repair of constraint violations
-        use_gpu: Whether to use GPU acceleration if available
+        profiles: FabProfiles (dict or FabCapabilityProfile) or None for defaults
 
     Returns:
-        BatchFilterResult containing:
-        - feasible_mask: Boolean mask of feasible candidates
-        - repaired_u: Repaired normalized vectors
-        - repair_counts: Number of repairs per candidate
-        - repair_distances: Distance moved by repair in normalized space
-        - tier_violations: Violation counts by tier
-        - constraint_margins: Margin values for each constraint
-
-    Example:
-        >>> import numpy as np
-        >>> from formula_foundry.coupongen.constraints.gpu_filter import batch_filter
-        >>>
-        >>> # Generate 1M random candidate vectors
-        >>> u_batch = np.random.rand(1_000_000, 19)
-        >>>
-        >>> # Filter candidates
-        >>> result = batch_filter(u_batch)
-        >>>
-        >>> print(f"Feasibility rate: {result.feasibility_rate:.2%}")
-        >>> print(f"Feasible candidates: {result.n_feasible}")
+        Dictionary of fab capability limits in nm
     """
-    if fab_limits is None:
-        fab_limits = {
+    if profiles is None:
+        return {
             "min_trace_width_nm": 100_000,
             "min_gap_nm": 100_000,
             "min_drill_nm": 200_000,
@@ -927,5 +1009,88 @@ def batch_filter(
             "min_board_width_nm": 5_000_000,
         }
 
-    filter_instance = GPUConstraintFilter(fab_limits, use_gpu=use_gpu)
-    return filter_instance.batch_filter(u_batch, repair=repair)
+    # If it's already a dict, return it directly
+    if isinstance(profiles, dict):
+        return profiles
+
+    # It's a FabCapabilityProfile - extract limits
+    # Import here to avoid circular imports
+    from ..fab_profiles import get_fab_limits
+
+    return get_fab_limits(profiles)
+
+
+def batch_filter(
+    u_batch: NDArray[np.floating[Any]],
+    profiles: FabProfiles | None = None,
+    mode: Literal["REJECT", "REPAIR"] = "REPAIR",
+    seed: int = 0,
+    *,
+    use_gpu: bool = True,
+    # Legacy parameters for backward compatibility
+    fab_limits: dict[str, int] | None = None,
+    repair: bool | None = None,
+) -> BatchFilterResult:
+    """Formal batch_filter API per CP-4.1 Section 13.4.1.
+
+    This is the primary API for GPU-accelerated constraint prefiltering.
+    It checks Tier 0-2 constraints on a batch of normalized design vectors
+    and returns a BatchFilterResult with mask, u_repaired, and repair_meta.
+
+    The dual backend (CuPy if available, else NumPy) ensures identical
+    semantics regardless of hardware, satisfying CP-4.1 requirements.
+
+    Args:
+        u_batch: Array of shape (N, d) with normalized values in [0, 1]
+                 where d is the dimension of the parameter space (19 for F1 family)
+        profiles: FabProfiles - either a dict of fab limits or a FabCapabilityProfile.
+                  If None, uses conservative defaults.
+        mode: Constraint handling mode:
+              - "REJECT": Only check constraints, do not repair
+              - "REPAIR": Attempt to repair constraint violations (default)
+        seed: Random seed for deterministic repair operations (default 0)
+        use_gpu: Whether to use GPU acceleration if available (default True)
+        fab_limits: DEPRECATED - use profiles parameter instead
+        repair: DEPRECATED - use mode parameter instead
+
+    Returns:
+        BatchFilterResult containing:
+        - mask: Boolean array of feasible candidates
+        - u_repaired: Repaired normalized vectors
+        - repair_meta: RepairMeta with repair statistics and details
+
+        Legacy attributes are also available for backward compatibility:
+        - feasible_mask: Alias for mask
+        - repaired_u: Alias for u_repaired
+        - repair_counts, repair_distances, tier_violations, constraint_margins
+
+    Example:
+        >>> import numpy as np
+        >>> from formula_foundry.coupongen.constraints.gpu_filter import batch_filter
+        >>>
+        >>> # Generate 1M random candidate vectors
+        >>> u_batch = np.random.rand(1_000_000, 19)
+        >>>
+        >>> # Filter candidates with REPAIR mode
+        >>> result = batch_filter(u_batch, mode="REPAIR", seed=42)
+        >>>
+        >>> print(f"Feasibility rate: {result.feasibility_rate:.2%}")
+        >>> print(f"Feasible candidates: {result.n_feasible}")
+        >>> print(f"Mode used: {result.repair_meta.mode}")
+        >>> print(f"Seed used: {result.repair_meta.seed}")
+
+    Note:
+        The seed parameter ensures deterministic repair operations across
+        runs, which is critical for reproducibility per CP-4.1 requirements.
+    """
+    # Handle legacy parameters
+    if fab_limits is not None and profiles is None:
+        profiles = fab_limits
+    if repair is not None:
+        mode = "REPAIR" if repair else "REJECT"
+
+    # Resolve fab limits from profiles
+    resolved_limits = _resolve_fab_limits(profiles)
+
+    filter_instance = GPUConstraintFilter(resolved_limits, use_gpu=use_gpu)
+    return filter_instance.batch_filter(u_batch, mode=mode, seed=seed)
