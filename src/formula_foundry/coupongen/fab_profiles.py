@@ -175,11 +175,20 @@ def get_fab_limits(profile: FabCapabilityProfile) -> dict[str, int]:
         profile: A loaded FabCapabilityProfile
 
     Returns:
-        Dictionary with constraint limits used by evaluate_constraints
+        Dictionary with constraint limits used by evaluate_constraints and gpu_filter
     """
     via_drill = profile.drill.min_via_drill_nm
     if via_drill is None:
         via_drill = profile.drill.min_pth_diameter_nm
+
+    # Get via-to-via spacing (used by gpu_filter Tier2 constraints)
+    min_via_to_via = profile.via.min_via_to_via_nm
+    if min_via_to_via is None:
+        # Default to hole-to-hole spacing if available, else use via diameter
+        min_via_to_via = profile.drill.min_hole_to_hole_nm or 200_000
+
+    # Get minimum board dimension (used by gpu_filter Tier0 constraints)
+    min_board_width = profile.board.min_board_width_nm or 5_000_000
 
     return {
         "min_trace_width_nm": int(profile.trace.min_width_nm),
@@ -192,6 +201,9 @@ def get_fab_limits(profile: FabCapabilityProfile) -> dict[str, int]:
         "min_soldermask_web_nm": int(profile.soldermask.min_web_nm),
         "min_silkscreen_width_nm": int(profile.silkscreen.min_width_nm),
         "min_silkscreen_clearance_nm": int(profile.silkscreen.min_clearance_nm),
+        # Additional limits for GPU batch filter (CP-4.1)
+        "min_via_to_via_nm": int(min_via_to_via),
+        "min_board_width_nm": int(min_board_width),
     }
 
 

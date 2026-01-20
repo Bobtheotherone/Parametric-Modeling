@@ -119,7 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
         "batch-filter",
         help="Filter batch of normalized design vectors using GPU prefilter (CP-4.1 API)",
     )
-    batch_filter.add_argument("u_npy", type=Path, help="Input .npy file with normalized vectors (N, d)")
+    batch_filter.add_argument(
+        "input_file",
+        type=Path,
+        help="Input file with normalized vectors: .npy (N, d) or .jsonl (one JSON array per line)",
+    )
     batch_filter.add_argument("--out", type=Path, required=True, help="Output directory for results")
     batch_filter.add_argument(
         "--repair",
@@ -313,28 +317,69 @@ def _toolchain_from_image(image: str) -> KicadToolchain:
     return KicadToolchain(version="9.0.7", docker_image=resolved)
 
 
+def _load_u_vectors(input_path: Path) -> np.ndarray | None:
+    """Load normalized design vectors from .npy or .jsonl file.
+
+    Args:
+        input_path: Path to input file (.npy or .jsonl)
+
+    Returns:
+        2D numpy array of shape (N, d) or None on error
+    """
+    suffix = input_path.suffix.lower()
+
+    if suffix == ".npy":
+        return np.load(input_path)
+    elif suffix == ".jsonl":
+        import json
+        vectors = []
+        with open(input_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    vec = json.loads(line)
+                    if not isinstance(vec, list):
+                        raise ValueError(f"Line {line_num}: expected JSON array, got {type(vec).__name__}")
+                    vectors.append(vec)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"Line {line_num}: invalid JSON: {e}") from e
+        if not vectors:
+            raise ValueError("JSONL file contains no valid vectors")
+        return np.array(vectors, dtype=np.float64)
+    else:
+        raise ValueError(f"Unsupported file format: {suffix}. Use .npy or .jsonl")
+
+
 def _run_batch_filter(args: argparse.Namespace) -> int:
     """Run batch-filter command: filter normalized design vectors using GPU prefilter.
 
     Per CP-4.2, this command wires to the GPU filter API (CP-4.1) to prefilter
     candidate design vectors before expensive KiCad operations.
 
-    Input: u.npy with shape (N, d) where d is the parameter dimension (19 for F1)
+    Input: u.npy or u.jsonl with normalized vectors (N, d) where d is the parameter dimension (19 for F1)
     Output: Directory with:
         - mask.npy: Boolean feasibility mask (N,)
         - u_repaired.npy: Repaired normalized vectors (N, d)
         - metadata.json: Filtering statistics and parameters
     """
     # Load input u vectors
-    u_npy_path: Path = args.u_npy
-    if not u_npy_path.exists():
-        sys.stderr.write(f"Error: Input file not found: {u_npy_path}\n")
+    input_path: Path = args.input_file
+    if not input_path.exists():
+        sys.stderr.write(f"Error: Input file not found: {input_path}\n")
         return 1
 
     try:
-        u_batch = np.load(u_npy_path)
+        u_batch = _load_u_vectors(input_path)
+        if u_batch is None:
+            sys.stderr.write("Error: Failed to load input file\n")
+            return 1
+    except ValueError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 1
     except Exception as e:
-        sys.stderr.write(f"Error: Failed to load .npy file: {e}\n")
+        sys.stderr.write(f"Error: Failed to load input file: {e}\n")
         return 1
 
     if u_batch.ndim != 2:
@@ -373,7 +418,7 @@ def _run_batch_filter(args: argparse.Namespace) -> int:
 
     # Build metadata
     metadata = {
-        "input_file": str(u_npy_path),
+        "input_file": str(input_path),
         "n_candidates": result.n_candidates,
         "n_feasible": result.n_feasible,
         "feasibility_rate": result.feasibility_rate,
