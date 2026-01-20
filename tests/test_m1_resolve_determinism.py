@@ -135,6 +135,7 @@ def _example_spec_data_reordered() -> dict[str, object]:
 
 
 def test_resolve_emits_integer_nm_and_groups() -> None:
+    """Resolve must emit integer nanometer parameters and dimensionless groups."""
     spec = CouponSpec.model_validate(_example_spec_data())
     resolved = resolve(spec)
 
@@ -150,6 +151,7 @@ def test_resolve_emits_integer_nm_and_groups() -> None:
 
 
 def test_design_hash_is_stable() -> None:
+    """Design hash must be stable across multiple resolves of the same spec."""
     spec = CouponSpec.model_validate(_example_spec_data())
     resolved_a = resolve(spec)
     resolved_b = resolve(spec)
@@ -158,6 +160,7 @@ def test_design_hash_is_stable() -> None:
 
 
 def test_resolved_design_canonical_json_is_stable() -> None:
+    """Canonical JSON must be byte-identical regardless of input key order."""
     spec_a = CouponSpec.model_validate(_example_spec_data())
     spec_b = CouponSpec.model_validate(_example_spec_data_reordered())
     resolved_a = resolve(spec_a)
@@ -167,6 +170,7 @@ def test_resolved_design_canonical_json_is_stable() -> None:
 
 
 def test_design_hash_matches_canonical_json_sha256() -> None:
+    """Design hash must be sha256 of the canonical JSON representation."""
     spec = CouponSpec.model_validate(_example_spec_data())
     resolved = resolve(spec)
 
