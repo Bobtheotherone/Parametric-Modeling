@@ -10,8 +10,9 @@ Key features:
 - Support for F0 (calibration) and F1 (via transition) coupon families
 - Integer nanometer coordinate system with mm conversion for output
 - F1 antipads/cutouts and return vias with configurable patterns
+- All geometry consumed from LayoutPlan (single source of truth per CP-2.6)
 
-Satisfies REQ-M1-007, REQ-M1-012 and REQ-M1-013.
+Satisfies REQ-M1-007, REQ-M1-012, REQ-M1-013 and CP-2.6 (ECO-M1-ALIGN-0001).
 """
 
 from __future__ import annotations
@@ -23,10 +24,7 @@ from typing import TYPE_CHECKING
 
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
 from ..families import FAMILY_F1
-from ..geom.primitives import (
-    OriginMode,
-    create_coordinate_frame,
-)
+from ..geom.layout import LayoutPlan
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
@@ -112,9 +110,12 @@ class BoardWriter:
     using the S-expression format. All UUIDs/timestamps are deterministically
     generated from the spec content.
 
+    All geometry (track endpoints, via positions, footprint placements) is
+    consumed from the LayoutPlan in ResolvedDesign, which is the single source
+    of truth for geometry (CP-2.6). No duplicate geometry math is performed.
+
     For F1 coupons, this class uses the F1 builder composition to correctly
-    position the via transition and generate antipads/cutouts with configurable
-    return via patterns.
+    generate antipads/cutouts with configurable return via patterns.
     """
 
     def __init__(self, spec: CouponSpec, resolved: ResolvedDesign) -> None:
@@ -122,20 +123,26 @@ class BoardWriter:
 
         Args:
             spec: Coupon specification.
-            resolved: Resolved design parameters.
+            resolved: Resolved design parameters with computed LayoutPlan.
+
+        Raises:
+            ValueError: If resolved.layout_plan is None.
         """
         self.spec = spec
         self.resolved = resolved
         self._uuid_counter = 0
 
-        # Set up coordinate frame
-        self.frame = create_coordinate_frame(
-            origin_mode=OriginMode(spec.board.origin.mode),
-            board_width_nm=int(spec.board.outline.length_nm),
-            board_height_nm=int(spec.board.outline.width_nm),
-        )
+        # Get LayoutPlan from ResolvedDesign - this is the single source of
+        # truth for all geometry (CP-2.6)
+        layout_plan = resolved.layout_plan
+        if layout_plan is None:
+            raise ValueError(
+                "ResolvedDesign.layout_plan is None. The resolver must compute "
+                "a LayoutPlan before passing to BoardWriter."
+            )
+        self._layout_plan: LayoutPlan = layout_plan
 
-        # Build F1 composition if applicable
+        # Build F1 composition if applicable (still needed for antipads/cutouts)
         self._f1_composition: F1CouponComposition | None = None
         if spec.coupon_family == FAMILY_F1:
             self._f1_composition = build_f1_coupon(spec, resolved)
@@ -212,18 +219,26 @@ class BoardWriter:
         ]
 
     def _build_outline(self) -> list[SExprList]:
-        """Build board outline as gr_rect on Edge.Cuts layer."""
-        width_nm = int(self.spec.board.outline.width_nm)
-        length_nm = int(self.spec.board.outline.length_nm)
-        half_width = width_nm // 2
+        """Build board outline as gr_rect on Edge.Cuts layer.
+
+        Uses LayoutPlan as the single source of truth for board dimensions
+        (CP-2.6). The board dimensions and edge coordinates are read directly
+        from the LayoutPlan.
+        """
+        # Get board dimensions from LayoutPlan (single source of truth)
+        lp = self._layout_plan
+        y_top = lp.y_board_top_edge_nm
+        y_bottom = lp.y_board_bottom_edge_nm
+        x_left = lp.x_board_left_edge_nm
+        x_right = lp.x_board_right_edge_nm
 
         outline_uuid = self._next_uuid("board.outline")
 
         return [
             [
                 "gr_rect",
-                ["start", nm_to_mm(0), nm_to_mm(-half_width)],
-                ["end", nm_to_mm(length_nm), nm_to_mm(half_width)],
+                ["start", nm_to_mm(x_left), nm_to_mm(y_bottom)],
+                ["end", nm_to_mm(x_right), nm_to_mm(y_top)],
                 ["layer", "Edge.Cuts"],
                 ["width", 0.1],
                 ["tstamp", outline_uuid],
@@ -231,20 +246,34 @@ class BoardWriter:
         ]
 
     def _build_footprints(self) -> list[SExprList]:
-        """Build footprint instances for connectors."""
-        footprints: list[SExprList] = []
+        """Build footprint instances for connectors.
 
-        for side in ("left", "right"):
-            connector = getattr(self.spec.connectors, side)
+        Uses LayoutPlan port positions as the single source of truth for
+        connector placement (CP-2.6). The footprint reference position and
+        rotation are read from the LayoutPlan's left_port and right_port.
+        """
+        footprints: list[SExprList] = []
+        lp = self._layout_plan
+
+        # Map side to port plan
+        port_plans = {
+            "left": lp.left_port,
+            "right": lp.right_port,
+        }
+
+        for side, port in port_plans.items():
             uuid_value = self._next_uuid(f"connector.{side}")
-            x_nm = int(connector.position_nm[0])
-            y_nm = int(connector.position_nm[1])
+            # Use port reference position from LayoutPlan
+            x_nm = port.x_ref_nm
+            y_nm = port.y_ref_nm
+            # Convert rotation from millidegrees to degrees for KiCad
+            rotation_deg = port.rotation_mdeg // 1000
 
             fp: SExprList = [
                 "footprint",
-                connector.footprint,
+                port.footprint,
                 ["layer", "F.Cu"],
-                ["at", nm_to_mm(x_nm), nm_to_mm(y_nm), connector.rotation_deg],
+                ["at", nm_to_mm(x_nm), nm_to_mm(y_nm), rotation_deg],
                 ["tstamp", uuid_value],
             ]
             footprints.append(fp)
@@ -252,69 +281,62 @@ class BoardWriter:
         return footprints
 
     def _build_tracks(self) -> list[SExprList]:
-        """Build track segments for transmission lines."""
+        """Build track segments for transmission lines.
+
+        Uses LayoutPlan segments as the single source of truth for track
+        endpoints (CP-2.6). All segment positions, widths, and layers are
+        read from the LayoutPlan's segment definitions.
+
+        This eliminates duplicate geometry math - the LayoutPlan already
+        has computed the correct segment endpoints ensuring topological
+        continuity (e.g., left segment end == discontinuity == right segment start).
+        """
         tracks: list[SExprList] = []
-        tl = self.spec.transmission_line
+        lp = self._layout_plan
 
-        # Left side track: from left connector to center (or discontinuity)
-        left_conn = self.spec.connectors.left
-        left_start_x = int(left_conn.position_nm[0])
-        left_end_x = left_start_x + int(tl.length_left_nm)
+        # Iterate over all segments in the LayoutPlan
+        for segment in lp.segments:
+            track_uuid = self._next_uuid(f"track.{segment.label}")
 
-        left_track_uuid = self._next_uuid("track.left")
-        tracks.append(
-            [
-                "segment",
-                ["start", nm_to_mm(left_start_x), nm_to_mm(0)],
-                ["end", nm_to_mm(left_end_x), nm_to_mm(0)],
-                ["width", nm_to_mm(int(tl.w_nm))],
-                ["layer", tl.layer],
-                ["net", 1],
-                ["tstamp", left_track_uuid],
-            ]
-        )
+            # Net ID: SIG net is 1
+            net_id = 1 if segment.net_name == "SIG" else 0
 
-        # Right side track: from center (or discontinuity) to right connector
-        right_conn = self.spec.connectors.right
-        right_end_x = int(right_conn.position_nm[0])
-        right_start_x = right_end_x - int(tl.length_right_nm)
-
-        right_track_uuid = self._next_uuid("track.right")
-        tracks.append(
-            [
-                "segment",
-                ["start", nm_to_mm(right_start_x), nm_to_mm(0)],
-                ["end", nm_to_mm(right_end_x), nm_to_mm(0)],
-                ["width", nm_to_mm(int(tl.w_nm))],
-                ["layer", tl.layer],
-                ["net", 1],
-                ["tstamp", right_track_uuid],
-            ]
-        )
+            tracks.append(
+                [
+                    "segment",
+                    ["start", nm_to_mm(segment.x_start_nm), nm_to_mm(segment.y_nm)],
+                    ["end", nm_to_mm(segment.x_end_nm), nm_to_mm(segment.y_nm)],
+                    ["width", nm_to_mm(segment.width_nm)],
+                    ["layer", segment.layer],
+                    ["net", net_id],
+                    ["tstamp", track_uuid],
+                ]
+            )
 
         return tracks
 
     def _build_vias(self) -> list[SExprList]:
         """Build via elements for discontinuity.
 
-        For F1 coupons, uses the F1 builder composition to get the correct
-        discontinuity center position calculated from left connector + left
-        trace length.
+        Uses LayoutPlan's x_disc_nm as the single source of truth for the
+        discontinuity center X position (CP-2.6). The Y position is taken
+        from the LayoutPlan's y_centerline_nm.
+
+        For F1 coupons, the F1 builder composition is still used for return
+        via positions and antipad/cutout geometry, but the signal via position
+        comes from the LayoutPlan.
         """
         vias: list[SExprList] = []
+        lp = self._layout_plan
         disc = self.spec.discontinuity
-        if disc is None:
+
+        if disc is None or not lp.has_discontinuity:
             return vias
 
-        # Calculate discontinuity center position
-        # For F1, use the composition's calculated position
-        if self._f1_composition is not None:
-            center_x = self._f1_composition.discontinuity_position.x
-            center_y = self._f1_composition.discontinuity_position.y
-        else:
-            # Fallback for non-F1 coupons (F0 shouldn't have discontinuity)
-            center_x = int(self.spec.board.outline.length_nm) // 2
-            center_y = 0
+        # Get discontinuity position from LayoutPlan (single source of truth)
+        center_x = lp.x_disc_nm
+        assert center_x is not None  # Checked by has_discontinuity
+        center_y = lp.y_centerline_nm
 
         signal_via_uuid = self._next_uuid("via.signal")
 
@@ -331,6 +353,7 @@ class BoardWriter:
         )
 
         # Return vias if present - use F1 composition for correct positioning
+        # (the F1 builder uses the same discontinuity position internally)
         if disc.return_vias is not None:
             if self._f1_composition is not None and self._f1_composition.return_vias:
                 # Use pre-computed return via positions from the F1 builder
@@ -348,7 +371,7 @@ class BoardWriter:
                         ]
                     )
             else:
-                # Fallback calculation
+                # Fallback calculation using LayoutPlan discontinuity position
                 rv = disc.return_vias
                 radius = int(rv.radius_nm)
                 count = rv.count
