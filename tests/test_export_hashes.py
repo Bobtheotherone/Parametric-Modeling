@@ -500,6 +500,7 @@ class TestManifestExportRecording:
 
         assert "toolchain" in manifest
         toolchain = manifest["toolchain"]
-        assert "kicad_version" in toolchain
-        assert "docker_image" in toolchain
-        assert "@sha256:" in toolchain["docker_image"]
+        assert "kicad" in toolchain
+        assert "version" in toolchain["kicad"]
+        assert "docker" in toolchain
+        assert "@sha256:" in toolchain["docker"]["image_ref"]

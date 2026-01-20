@@ -5,10 +5,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import jsonschema
+
 from formula_foundry.coupongen.api import build_coupon
 from formula_foundry.coupongen.hashing import canonical_hash_export_text
 from formula_foundry.coupongen.manifest import toolchain_hash
 from formula_foundry.coupongen.spec import CouponSpec
+
+_SCHEMA_PATH = Path(__file__).parent.parent / "coupongen" / "schemas" / "manifest.schema.json"
 
 
 class _FakeRunner:
@@ -135,11 +139,19 @@ def test_manifest_required_fields(tmp_path: Path) -> None:
     assert required <= set(manifest.keys())
     assert manifest["design_hash"] == result.design_hash
     assert manifest["coupon_id"] == result.coupon_id
-    assert manifest["toolchain"]["docker_image"].startswith("kicad/kicad:9.0.7@sha256:")
-    assert manifest["toolchain"]["kicad_version"] == "9.0.7"
+    assert manifest["toolchain"]["docker"]["image_ref"].startswith("kicad/kicad:9.0.7@sha256:")
+    assert manifest["toolchain"]["kicad"]["version"] == "9.0.7"
     assert manifest["toolchain"]["mode"] == "docker"
-    assert manifest["toolchain"]["kicad_cli_version"] == "9.0.7"
+    assert manifest["toolchain"]["kicad"]["cli_version_output"] == "9.0.7"
     assert manifest["toolchain_hash"] == toolchain_hash(manifest["toolchain"])
+
+    # Verify DRC summary is present per Section 13.5.1
+    assert "summary" in manifest["verification"]["drc"]
+    assert "canonical_hash" in manifest["verification"]["drc"]
+    drc_summary = manifest["verification"]["drc"]["summary"]
+    assert "violations" in drc_summary
+    assert "warnings" in drc_summary
+    assert "exclusions" in drc_summary
 
     exports = {entry["path"]: entry["hash"] for entry in manifest["exports"]}
     expected_exports = {
@@ -162,3 +174,21 @@ def test_outputs_keyed_by_design_hash(tmp_path: Path) -> None:
     folder_name = result.output_dir.name
     assert result.design_hash in folder_name
     assert result.coupon_id in folder_name
+
+
+def test_manifest_validates_against_schema(tmp_path: Path) -> None:
+    """Verify that generated manifests validate against manifest.schema.json."""
+    spec = CouponSpec.model_validate(_example_spec_data())
+    result = build_coupon(
+        spec,
+        out_root=tmp_path,
+        mode="docker",
+        runner=_FakeRunner(),
+        kicad_cli_version="9.0.7",
+    )
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    # Should not raise ValidationError
+    jsonschema.validate(instance=manifest, schema=schema)
