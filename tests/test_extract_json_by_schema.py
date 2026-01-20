@@ -709,5 +709,180 @@ class TestTaskPlanNormalization:
         assert task["depends_on"] == []
 
 
+# -----------------------------
+# Regression tests for specific failure patterns
+# -----------------------------
+
+class TestRegressionProseWithFencedJson:
+    """Regression test for run 20260120T100520Z failure.
+
+    The failure pattern was:
+    1. Raw stream contains multiple JSON arrays (one per line)
+    2. Each array contains Claude CLI events
+    3. The "result" event has a "result" field containing:
+       - Prose text explaining the analysis
+       - A JSON code fence (```json...```) with the actual task plan
+       - More prose after the fence
+
+    The original extractor failed because:
+    - strip_fences() only worked when the string STARTED with ```
+    - When prose precedes the fence, strip_fences returned the original string
+    - json.loads() then failed on the prose+json mix
+    """
+
+    def test_strip_fences_with_prose_before_and_after(self) -> None:
+        """strip_fences should extract fenced content even with surrounding prose."""
+        text = (
+            "Here is my analysis of the situation.\n\n"
+            "```json\n"
+            '{"key": "value"}\n'
+            "```\n\n"
+            "That concludes my response."
+        )
+        result = strip_fences(text)
+        assert result == '{"key": "value"}'
+
+    def test_strip_fences_with_prose_before_fence(self) -> None:
+        """strip_fences handles prose before code fence."""
+        text = "Some explanation text\n```json\n{\"a\": 1}\n```"
+        result = strip_fences(text)
+        assert result == '{"a": 1}'
+
+    def test_extract_from_result_with_prose_and_fenced_json(
+        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+    ) -> None:
+        """Extracts JSON from result event where plan is fenced but surrounded by prose.
+
+        This is the exact pattern that caused run 20260120T100520Z to fail.
+        """
+        # Simulate the result field content with prose + fenced JSON
+        result_text = (
+            "Now I see the situation more clearly. The 5 root failure tasks have "
+            "**commits** on their task branches, but those branches were never "
+            "**merged** into `agent-run/20260120T091327Z`.\n\n"
+            "Based on my analysis:\n"
+            "1. The 5 root failure tasks are **implemented** but have merge conflicts\n"
+            "2. These need to be resolved first\n\n"
+            f"```json\n{json.dumps(valid_task_plan)}\n```"
+        )
+
+        result_event = {
+            "type": "result",
+            "subtype": "success",
+            "result": result_text,
+            "session_id": "test-session"
+        }
+
+        # Wrap in an array like Claude CLI does
+        stream = json.dumps([result_event])
+
+        result = extract_from_claude_stream(stream, task_plan_schema)
+        assert result is not None
+        assert result["milestone_id"] == "M2"
+        assert validate_against_schema(result, task_plan_schema)
+
+    def test_extract_from_multiline_stream_with_tool_events(
+        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+    ) -> None:
+        """Handles multi-line stream with tool_use/tool_result events.
+
+        Simulates the actual run 20260120T100520Z stream structure:
+        - Line 1: Array of events including tool_use, tool_result, and a result
+        - Line 2: Another array of events with the final result
+        """
+        # Line 1: First session with tool events and partial result
+        line1_events = [
+            {"type": "system", "subtype": "init", "session_id": "session1"},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_123",
+                            "name": "Read",
+                            "input": {"file_path": "/some/file.md"}
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_123",
+                            "content": "File content here"
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": "Analysis from first session without a valid plan"
+            }
+        ]
+
+        # Line 2: Second session with the actual task plan in fenced JSON
+        result_with_fenced_plan = (
+            "After thorough analysis, here is the task plan:\n\n"
+            f"```json\n{json.dumps(valid_task_plan)}\n```"
+        )
+        line2_events = [
+            {"type": "system", "subtype": "init", "session_id": "session2"},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_456",
+                            "name": "Grep",
+                            "input": {"pattern": "milestone"}
+                        }
+                    ]
+                }
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": result_with_fenced_plan
+            }
+        ]
+
+        # Combine as two lines (NDJSON-like format)
+        stream = json.dumps(line1_events) + "\n" + json.dumps(line2_events)
+
+        result = extract_from_claude_stream(stream, task_plan_schema)
+        assert result is not None
+        assert result["milestone_id"] == "M2"
+        assert validate_against_schema(result, task_plan_schema)
+
+    def test_extract_json_embedded_in_prose_without_fences(
+        self, task_plan_schema: Dict[str, Any], valid_task_plan: Dict[str, Any]
+    ) -> None:
+        """Extracts JSON embedded in prose even without code fences.
+
+        Sometimes Claude outputs JSON inline without fences.
+        """
+        result_text = (
+            "Based on my analysis, here is the task plan: "
+            f"{json.dumps(valid_task_plan)} "
+            "This should handle all the requirements."
+        )
+
+        result_event = {
+            "type": "result",
+            "result": result_text
+        }
+
+        stream = json.dumps([result_event])
+        result = extract_from_claude_stream(stream, task_plan_schema)
+        assert result is not None
+        assert result["milestone_id"] == "M2"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

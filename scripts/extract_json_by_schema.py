@@ -130,8 +130,15 @@ def normalize_task_plan(obj: Any) -> Any:
 
 
 def strip_fences(s: str) -> str:
-    """Remove markdown code fences from a string."""
+    """Remove markdown code fences from a string.
+
+    Handles both:
+    - Strings that start with ``` (entire content is fenced)
+    - Strings with prose before/after fenced content (extract fenced part)
+    """
     s = s.strip()
+
+    # Case 1: Entire string starts with fence
     if s.startswith("```"):
         lines = s.splitlines()
         if lines and lines[0].startswith("```"):
@@ -139,6 +146,25 @@ def strip_fences(s: str) -> str:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         return "\n".join(lines).strip()
+
+    # Case 2: Fence is embedded in prose - extract the fenced content
+    # Look for ```json or ``` followed by content
+    fence_start = s.find("```json")
+    if fence_start == -1:
+        fence_start = s.find("```")
+
+    if fence_start != -1:
+        # Find where the fence opening line ends
+        newline_after_fence = s.find("\n", fence_start)
+        if newline_after_fence == -1:
+            return s
+
+        # Find the closing fence
+        fence_close = s.find("```", newline_after_fence)
+        if fence_close != -1:
+            # Extract content between fences
+            return s[newline_after_fence + 1:fence_close].strip()
+
     return s
 
 
@@ -198,6 +224,46 @@ def try_parse_json(s: str) -> Optional[Any]:
         return json.loads(s)
     except Exception:
         return None
+
+
+def extract_json_from_text(text: str) -> List[Any]:
+    """Extract all valid JSON objects from a text string.
+
+    Tries multiple strategies:
+    1. Direct JSON parsing of the whole string
+    2. Stripping markdown fences and parsing
+    3. Extracting balanced JSON objects from the text
+
+    Returns a list of parsed JSON objects (may be empty).
+    """
+    results = []
+
+    # Strategy 1: Direct parse
+    direct = try_parse_json(text)
+    if direct is not None:
+        results.append(direct)
+        return results  # If direct parse works, use it
+
+    # Strategy 2: Strip fences and parse
+    stripped = strip_fences(text)
+    if stripped != text:  # Only try if stripping changed something
+        parsed = try_parse_json(stripped)
+        if parsed is not None:
+            results.append(parsed)
+            return results
+
+    # Strategy 3: Extract balanced JSON objects
+    pos = 0
+    while pos < len(text):
+        obj_str, end_pos = extract_balanced_json(text, pos)
+        if obj_str is None:
+            break
+        parsed = try_parse_json(obj_str)
+        if parsed is not None:
+            results.append(parsed)
+        pos = end_pos
+
+    return results
 
 
 def validate_against_schema(obj: Any, schema: dict) -> bool:
@@ -310,11 +376,13 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
         if obj_type == "result":
             result_str = obj.get("result")
             if isinstance(result_str, str) and result_str.strip():
-                inner = try_parse_json(strip_fences(result_str))
-                if isinstance(inner, dict):
-                    validated = _try_validate_with_normalization(inner, schema, is_task_plan)
-                    if validated is not None:
-                        candidates.append(validated)
+                # Try multiple extraction strategies
+                extracted = extract_json_from_text(result_str)
+                for inner in extracted:
+                    if isinstance(inner, dict):
+                        validated = _try_validate_with_normalization(inner, schema, is_task_plan)
+                        if validated is not None:
+                            candidates.append(validated)
 
         # type="assistant" with message.content[*].text
         elif obj_type == "assistant":
@@ -324,11 +392,13 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     text_content = block.get("text", "")
                     if text_content:
-                        inner = try_parse_json(strip_fences(text_content))
-                        if isinstance(inner, dict):
-                            validated = _try_validate_with_normalization(inner, schema, is_task_plan)
-                            if validated is not None:
-                                candidates.append(validated)
+                        # Try multiple extraction strategies
+                        extracted = extract_json_from_text(text_content)
+                        for inner in extracted:
+                            if isinstance(inner, dict):
+                                validated = _try_validate_with_normalization(inner, schema, is_task_plan)
+                                if validated is not None:
+                                    candidates.append(validated)
 
     # If no candidates found from parsed objects, try extracting balanced JSON
     if not candidates:
