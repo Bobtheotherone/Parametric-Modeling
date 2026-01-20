@@ -19,9 +19,15 @@ Satisfies CP-2.1 (ECO-M1-ALIGN-0001).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .primitives import OriginMode
+
+if TYPE_CHECKING:
+    from ..resolve import ResolvedDesign
+    from ..spec import CouponSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,3 +480,270 @@ def derive_right_length_nm(
         )
 
     return right_length_nm
+
+
+def compute_layout_plan(
+    spec: CouponSpec,
+    resolved: ResolvedDesign,  # noqa: ARG001 - reserved for future use
+) -> LayoutPlan:
+    """Compute LayoutPlan from CouponSpec and ResolvedDesign.
+
+    This is the main entry point for computing layout geometry from a
+    specification. It loads footprint metadata to get pad centers,
+    enforces EDGE_L_CENTER origin, and for F1 coupons derives the right
+    trace length from the continuity formula.
+
+    For F1 coupons, the continuity formula is:
+        xD = xL + length_left  (discontinuity position)
+        length_right = xR - xD (derived to ensure continuity)
+
+    where xL and xR are the signal pad X positions of the left and right
+    connectors.
+
+    Args:
+        spec: The coupon specification with all geometry parameters.
+        resolved: The resolved design (reserved for future extensions).
+
+    Returns:
+        LayoutPlan with all geometry computed and validated.
+
+    Raises:
+        FileNotFoundError: If footprint metadata cannot be loaded.
+        ValueError: If geometry constraints cannot be satisfied.
+
+    Satisfies CP-2.3 per ECO-M1-ALIGN-0001 Section 13.2.4.
+    """
+    from ..families import FAMILY_F0, FAMILY_F1
+
+    from .footprint_meta import load_footprint_meta
+
+    # Extract board dimensions
+    board_length_nm = int(spec.board.outline.length_nm)
+    board_width_nm = int(spec.board.outline.width_nm)
+    board_corner_radius_nm = int(spec.board.outline.corner_radius_nm)
+
+    # Load footprint metadata for left and right connectors
+    left_footprint = spec.connectors.left.footprint
+    right_footprint = spec.connectors.right.footprint
+
+    left_meta = load_footprint_meta(left_footprint)
+    right_meta = load_footprint_meta(right_footprint)
+
+    # Get connector placement positions from spec
+    left_connector_pos = spec.connectors.left.position_nm
+    right_connector_pos = spec.connectors.right.position_nm
+    left_rotation_deg = spec.connectors.left.rotation_deg
+    right_rotation_deg = spec.connectors.right.rotation_deg
+
+    # Compute signal pad positions in board coordinates
+    # The pad center is relative to the anchor, so we need to transform
+    # based on connector placement and rotation
+    left_signal_pad_x, left_signal_pad_y = _transform_pad_position(
+        anchor_x=int(left_connector_pos[0]),
+        anchor_y=int(left_connector_pos[1]),
+        pad_offset_x=left_meta.signal_pad.center_x_nm,
+        pad_offset_y=left_meta.signal_pad.center_y_nm,
+        rotation_deg=left_rotation_deg,
+    )
+
+    right_signal_pad_x, right_signal_pad_y = _transform_pad_position(
+        anchor_x=int(right_connector_pos[0]),
+        anchor_y=int(right_connector_pos[1]),
+        pad_offset_x=right_meta.signal_pad.center_x_nm,
+        pad_offset_y=right_meta.signal_pad.center_y_nm,
+        rotation_deg=right_rotation_deg,
+    )
+
+    # Get trace parameters
+    trace_width_nm = int(spec.transmission_line.w_nm)
+    trace_layer = spec.transmission_line.layer
+    length_left_nm = int(spec.transmission_line.length_left_nm)
+
+    # Build port plans
+    left_port = PortPlan(
+        x_ref_nm=int(left_connector_pos[0]),
+        y_ref_nm=int(left_connector_pos[1]),
+        signal_pad_x_nm=left_signal_pad_x,
+        signal_pad_y_nm=left_signal_pad_y,
+        footprint=left_meta.footprint_path,
+        rotation_mdeg=left_rotation_deg * 1000,
+        side="left",
+    )
+
+    right_port = PortPlan(
+        x_ref_nm=int(right_connector_pos[0]),
+        y_ref_nm=int(right_connector_pos[1]),
+        signal_pad_x_nm=right_signal_pad_x,
+        signal_pad_y_nm=right_signal_pad_y,
+        footprint=right_meta.footprint_path,
+        rotation_mdeg=right_rotation_deg * 1000,
+        side="right",
+    )
+
+    # Dispatch based on coupon family
+    if spec.coupon_family == FAMILY_F0:
+        return _compute_f0_layout(
+            board_length_nm=board_length_nm,
+            board_width_nm=board_width_nm,
+            board_corner_radius_nm=board_corner_radius_nm,
+            left_port=left_port,
+            right_port=right_port,
+            trace_width_nm=trace_width_nm,
+            trace_layer=trace_layer,
+        )
+    elif spec.coupon_family == FAMILY_F1:
+        return _compute_f1_layout(
+            board_length_nm=board_length_nm,
+            board_width_nm=board_width_nm,
+            board_corner_radius_nm=board_corner_radius_nm,
+            left_port=left_port,
+            right_port=right_port,
+            trace_width_nm=trace_width_nm,
+            trace_layer=trace_layer,
+            length_left_nm=length_left_nm,
+        )
+    else:
+        raise ValueError(f"Unsupported coupon family: {spec.coupon_family}")
+
+
+def _transform_pad_position(
+    anchor_x: int,
+    anchor_y: int,
+    pad_offset_x: int,
+    pad_offset_y: int,
+    rotation_deg: int,
+) -> tuple[int, int]:
+    """Transform pad position from footprint-relative to board coordinates.
+
+    Args:
+        anchor_x: Connector anchor X position in board coordinates.
+        anchor_y: Connector anchor Y position in board coordinates.
+        pad_offset_x: Pad X offset relative to footprint anchor.
+        pad_offset_y: Pad Y offset relative to footprint anchor.
+        rotation_deg: Connector rotation in degrees.
+
+    Returns:
+        Tuple of (x, y) pad position in board coordinates.
+    """
+    # Apply rotation to the pad offset
+    rad = math.radians(rotation_deg)
+    cos_r = math.cos(rad)
+    sin_r = math.sin(rad)
+
+    # Rotate offset vector
+    rotated_x = pad_offset_x * cos_r - pad_offset_y * sin_r
+    rotated_y = pad_offset_x * sin_r + pad_offset_y * cos_r
+
+    # Add to anchor position (round to int for determinism)
+    return (
+        anchor_x + round(rotated_x),
+        anchor_y + round(rotated_y),
+    )
+
+
+def _compute_f0_layout(
+    *,
+    board_length_nm: int,
+    board_width_nm: int,
+    board_corner_radius_nm: int,
+    left_port: PortPlan,
+    right_port: PortPlan,
+    trace_width_nm: int,
+    trace_layer: str,
+) -> LayoutPlan:
+    """Compute layout for F0 (through-line) coupon.
+
+    F0 coupons have a single continuous trace from left to right port.
+    """
+    # Single through segment from left signal pad to right signal pad
+    through_segment = SegmentPlan(
+        x_start_nm=left_port.signal_pad_x_nm,
+        x_end_nm=right_port.signal_pad_x_nm,
+        y_nm=left_port.signal_pad_y_nm,  # Assume centerline at y=0
+        width_nm=trace_width_nm,
+        layer=trace_layer,
+        net_name="SIG",
+        label="through",
+    )
+
+    return LayoutPlan(
+        origin_mode=OriginMode.EDGE_L_CENTER,
+        board_length_nm=board_length_nm,
+        board_width_nm=board_width_nm,
+        board_corner_radius_nm=board_corner_radius_nm,
+        left_port=left_port,
+        right_port=right_port,
+        segments=(through_segment,),
+        x_disc_nm=None,
+        y_centerline_nm=left_port.signal_pad_y_nm,
+        coupon_family="F0_CAL_THRU_LINE",
+    )
+
+
+def _compute_f1_layout(
+    *,
+    board_length_nm: int,
+    board_width_nm: int,
+    board_corner_radius_nm: int,
+    left_port: PortPlan,
+    right_port: PortPlan,
+    trace_width_nm: int,
+    trace_layer: str,
+    length_left_nm: int,
+) -> LayoutPlan:
+    """Compute layout for F1 (via transition) coupon.
+
+    F1 coupons have two trace segments meeting at a via discontinuity.
+    The right length is derived from the continuity formula:
+        xD = xL + length_left (discontinuity position)
+        length_right = xR - xD (derived to ensure segments meet)
+
+    where xL is the left signal pad X and xR is the right signal pad X.
+    """
+    # Discontinuity position: xD = xL + length_left
+    x_disc_nm = left_port.signal_pad_x_nm + length_left_nm
+
+    # Derived right length: xR - xD (the continuity formula)
+    derived_right_length = right_port.signal_pad_x_nm - x_disc_nm
+
+    if derived_right_length < 0:
+        raise ValueError(
+            f"Left length ({length_left_nm}) places discontinuity ({x_disc_nm}) "
+            f"beyond right signal pad ({right_port.signal_pad_x_nm}). "
+            f"Derived right length would be negative ({derived_right_length})."
+        )
+
+    # Left segment: from left signal pad to discontinuity
+    left_segment = SegmentPlan(
+        x_start_nm=left_port.signal_pad_x_nm,
+        x_end_nm=x_disc_nm,
+        y_nm=left_port.signal_pad_y_nm,
+        width_nm=trace_width_nm,
+        layer=trace_layer,
+        net_name="SIG",
+        label="left",
+    )
+
+    # Right segment: from discontinuity to right signal pad
+    right_segment = SegmentPlan(
+        x_start_nm=x_disc_nm,
+        x_end_nm=right_port.signal_pad_x_nm,
+        y_nm=right_port.signal_pad_y_nm,
+        width_nm=trace_width_nm,
+        layer=trace_layer,
+        net_name="SIG",
+        label="right",
+    )
+
+    return LayoutPlan(
+        origin_mode=OriginMode.EDGE_L_CENTER,
+        board_length_nm=board_length_nm,
+        board_width_nm=board_width_nm,
+        board_corner_radius_nm=board_corner_radius_nm,
+        left_port=left_port,
+        right_port=right_port,
+        segments=(left_segment, right_segment),
+        x_disc_nm=x_disc_nm,
+        y_centerline_nm=left_port.signal_pad_y_nm,
+        coupon_family="F1_SINGLE_ENDED_VIA",
+    )
