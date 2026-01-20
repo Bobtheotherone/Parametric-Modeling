@@ -41,6 +41,14 @@ minversion = "8.0"
 addopts = "-q"
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+markers = [
+    "kicad_integration: marks tests as KiCad integration tests (require Docker + KiCad toolchain)",
+    "gate_g1: Gate G1 - resolved design determinism",
+    "gate_g2: Gate G2 - constraint proof completeness and reject/repair behavior",
+    "gate_g3: Gate G3 - DRC clean (KiCad DRC passes with zero violations)",
+    "gate_g4: Gate G4 - export completeness (all required layers + drill files present)",
+    "gate_g5: Gate G5 - stable canonical hashes across repeated runs",
+]
 
 [tool.ruff]
 line-length = 130
