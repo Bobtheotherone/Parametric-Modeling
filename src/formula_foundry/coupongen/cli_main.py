@@ -1,4 +1,4 @@
-"""CLI for coupon generation (CP-3.5).
+"""CLI for coupon generation (CP-4.3).
 
 This module provides the command-line interface for coupon generation:
 - validate: Validate spec using ConstraintEngine (Tier 0-3)
@@ -12,6 +12,11 @@ This module provides the command-line interface for coupon generation:
 CP-3.5: Pipeline Integration
 - The validate command now uses ConstraintEngine by default for full tiered validation
 - Build command supports --use-engine flag to use ConstraintEngine
+
+CP-4.3: GPU Pipeline Integration
+- build-batch integrates GPU Tier0-2 filter on candidates by default
+- Falls back to NumPy if CuPy is unavailable
+- Records CuPy/CUDA versions in manifest when GPU is used
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 
@@ -36,8 +41,10 @@ from .api import (
     validate_spec_with_engine,
 )
 from .constraints.gpu_filter import batch_filter as gpu_batch_filter
+from .constraints.gpu_filter import is_gpu_available
 from .constraints.tiers import ConstraintViolationError
 from .fab_profiles import get_fab_limits, list_available_profiles, load_fab_profile
+from .param_mapping import u_to_spec_f1
 from .spec import CouponSpec, KicadToolchain
 
 
@@ -139,10 +146,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable GPU acceleration (use NumPy backend)",
     )
 
-    # CP-4.2: Build batch command - build multiple coupons from spec template and u vectors
+    # CP-4.3: Build batch command - build multiple coupons from spec template and u vectors
+    # with integrated GPU Tier0-2 filtering
     build_batch = subparsers.add_parser(
         "build-batch",
-        help="Build multiple coupons from spec template and filtered u vectors",
+        help="Build multiple coupons from spec template and filtered u vectors (CP-4.3)",
     )
     build_batch.add_argument("spec_template", type=Path, help="Spec template YAML file")
     build_batch.add_argument("--u", type=Path, required=True, help="Input .npy file with u vectors (N, d)")
@@ -159,7 +167,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-filter",
         action="store_true",
         default=False,
-        help="Skip feasibility filtering (assume all vectors are valid)",
+        help="Skip GPU feasibility filtering (assume all vectors are valid)",
+    )
+    build_batch.add_argument(
+        "--no-gpu",
+        action="store_true",
+        default=False,
+        help="Disable GPU acceleration for filtering (use NumPy backend)",
+    )
+    build_batch.add_argument(
+        "--profile",
+        type=str,
+        default="generic",
+        help=f"Fab profile ID for GPU filter constraints (available: {', '.join(list_available_profiles())})",
+    )
+    build_batch.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for deterministic repair in GPU filter (default: 0)",
+    )
+    build_batch.add_argument(
+        "--constraint-mode",
+        choices=["REJECT", "REPAIR"],
+        default="REPAIR",
+        help="GPU filter constraint mode (default: REPAIR)",
     )
 
     return parser
@@ -374,13 +406,18 @@ def _run_batch_filter(args: argparse.Namespace) -> int:
 def _run_build_batch(args: argparse.Namespace) -> int:
     """Run build-batch command: build multiple coupons from spec template and u vectors.
 
-    Per CP-4.2, this command integrates the GPU batch filter with the build pipeline
-    to efficiently process large candidate batches.
+    Per CP-4.3, this command integrates the GPU batch filter with the build pipeline
+    to efficiently process large candidate batches. The pipeline is:
 
-    Note: Full implementation of build-batch requires mapping from normalized u vectors
-    to spec parameters, which is family-dependent. This implementation provides the
-    CLI interface and basic scaffolding; the full parameter mapping is deferred to
-    a future enhancement.
+    1. GPU Tier0-2 filter on candidates (unless --skip-filter)
+    2. For survivors: map u -> spec params (resolve)
+    3. Tier3 CPU constraint check via ConstraintEngine
+    4. Generate KiCad board
+    5. Run DRC
+    6. Export fabrication files
+    7. Build manifest with CuPy/CUDA versions when GPU used
+
+    GPU filter uses CuPy by default when available, falls back to NumPy otherwise.
     """
     spec_template_path: Path = args.spec_template
     u_npy_path: Path = args.u
@@ -393,6 +430,14 @@ def _run_build_batch(args: argparse.Namespace) -> int:
         sys.stderr.write(f"Error: Input u vectors not found: {u_npy_path}\n")
         return 1
 
+    # Load spec template
+    try:
+        spec_template = load_spec(spec_template_path)
+    except Exception as e:
+        sys.stderr.write(f"Error: Failed to load spec template: {e}\n")
+        return 1
+
+    # Load u vectors
     try:
         u_batch = np.load(u_npy_path)
     except Exception as e:
@@ -404,41 +449,234 @@ def _run_build_batch(args: argparse.Namespace) -> int:
         return 1
 
     n_total = len(u_batch)
-    limit = args.limit if args.limit is not None else n_total
+    use_gpu = not args.no_gpu
+    gpu_used = False
+    cupy_version = None
+    cuda_version = None
+
+    # Track GPU availability for manifest
+    if use_gpu and is_gpu_available():
+        gpu_used = True
+        try:
+            import cupy as cp
+            cupy_version = cp.__version__
+            cuda_version = str(cp.cuda.runtime.runtimeGetVersion())
+        except Exception:
+            pass
 
     # Create output directory
     out_root: Path = args.out
     out_root.mkdir(parents=True, exist_ok=True)
 
-    # Build summary
+    # Step 1: GPU Tier0-2 filter (unless --skip-filter)
+    filter_result = None
+    u_feasible = u_batch
+    feasible_indices = np.arange(n_total)
+
+    if not args.skip_filter:
+        # Load fab profile for GPU filter
+        try:
+            profile = load_fab_profile(args.profile)
+            fab_limits = get_fab_limits(profile)
+        except FileNotFoundError:
+            available = list_available_profiles()
+            sys.stderr.write(f"Error: Unknown fab profile '{args.profile}'. Available: {', '.join(available)}\n")
+            return 1
+
+        # Determine filter mode
+        filter_mode: Literal["REJECT", "REPAIR"] = args.constraint_mode
+
+        # Run GPU filter
+        filter_result = gpu_batch_filter(
+            u_batch,
+            profiles=fab_limits,
+            mode=filter_mode,
+            seed=args.seed,
+            use_gpu=use_gpu,
+        )
+
+        # Get feasible vectors (either original or repaired based on mode)
+        if filter_mode == "REPAIR":
+            u_feasible = filter_result.u_repaired[filter_result.mask]
+        else:
+            u_feasible = u_batch[filter_result.mask]
+
+        feasible_indices = np.where(filter_result.mask)[0]
+
+        # Write filter metadata
+        filter_meta = {
+            "n_candidates": filter_result.n_candidates,
+            "n_feasible": filter_result.n_feasible,
+            "feasibility_rate": filter_result.feasibility_rate,
+            "mode": filter_mode,
+            "seed": args.seed,
+            "profile": args.profile,
+            "use_gpu": use_gpu,
+            "gpu_used": gpu_used,
+            "tier_violations_summary": {
+                tier: int(counts.sum()) for tier, counts in filter_result.tier_violations.items()
+            },
+        }
+        if gpu_used:
+            filter_meta["cupy_version"] = cupy_version
+            filter_meta["cuda_version"] = cuda_version
+
+        filter_meta_path = out_root / "filter_metadata.json"
+        filter_meta_path.write_text(canonical_json_dumps(filter_meta), encoding="utf-8")
+
+        # Save filter outputs
+        np.save(out_root / "mask.npy", filter_result.mask)
+        np.save(out_root / "u_repaired.npy", filter_result.u_repaired)
+
+    # Apply limit after filtering
+    limit = args.limit if args.limit is not None else len(u_feasible)
+    limit = min(limit, len(u_feasible))
+
+    # Track build results
     builds_completed = 0
     builds_failed = 0
-    build_results: list[dict[str, str]] = []
+    build_results: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
 
-    # Note: Full implementation would:
-    # 1. Load spec template
-    # 2. Optionally filter u_batch using batch_filter (unless --skip-filter)
-    # 3. Map each feasible u vector to spec parameters
-    # 4. Build each coupon using build_coupon
-    #
-    # For now, we provide the CLI interface and report that build-batch
-    # requires the parameter mapping implementation.
+    # Step 2-6: For each feasible u vector, build the coupon
+    for i in range(limit):
+        u_vec = u_feasible[i]
+        original_idx = int(feasible_indices[i]) if i < len(feasible_indices) else i
 
-    summary_payload = canonical_json_dumps(
-        {
-            "output_dir": str(out_root),
-            "n_input_vectors": n_total,
-            "limit": limit,
-            "skip_filter": args.skip_filter,
-            "builds_completed": builds_completed,
-            "builds_failed": builds_failed,
-            "status": "interface_ready",
-            "note": "Full build-batch implementation requires u-to-spec parameter mapping",
-        }
-    )
+        try:
+            # Map u vector to CouponSpec
+            spec = u_to_spec_f1(u_vec, spec_template)
+
+            # Override toolchain image if specified
+            if args.toolchain_image:
+                spec_payload = spec.model_dump(mode="json")
+                spec_payload["toolchain"]["kicad"]["docker_image"] = args.toolchain_image
+                spec = CouponSpec.model_validate(spec_payload)
+
+            # Build coupon using ConstraintEngine (includes Tier3 CPU check)
+            try:
+                result = build_coupon_with_engine(
+                    spec,
+                    out_root=out_root,
+                    kicad_mode=args.mode,
+                )
+
+                build_results.append({
+                    "index": original_idx,
+                    "design_hash": result.design_hash,
+                    "coupon_id": result.coupon_id,
+                    "output_dir": str(result.output_dir),
+                    "cache_hit": result.cache_hit,
+                    "status": "success",
+                })
+                builds_completed += 1
+
+                # Add GPU metadata to manifest if GPU was used
+                if gpu_used and result.manifest_path.exists():
+                    _add_gpu_metadata_to_manifest(
+                        result.manifest_path,
+                        cupy_version=cupy_version,
+                        cuda_version=cuda_version,
+                    )
+
+            except ConstraintViolationError as e:
+                builds_failed += 1
+                errors.append({
+                    "index": original_idx,
+                    "error": "constraint_violation",
+                    "tier": e.tier,
+                    "constraint_ids": e.constraint_ids,
+                })
+            except RuntimeError as e:
+                builds_failed += 1
+                errors.append({
+                    "index": original_idx,
+                    "error": "build_error",
+                    "message": str(e),
+                })
+
+        except Exception as e:
+            builds_failed += 1
+            errors.append({
+                "index": original_idx,
+                "error": "spec_mapping_error",
+                "message": str(e),
+            })
+
+    # Write batch summary
+    batch_summary = {
+        "output_dir": str(out_root),
+        "n_input_vectors": n_total,
+        "n_feasible_after_filter": len(u_feasible),
+        "limit_applied": limit,
+        "skip_filter": args.skip_filter,
+        "builds_completed": builds_completed,
+        "builds_failed": builds_failed,
+        "gpu_filter_used": not args.skip_filter,
+        "gpu_backend_used": gpu_used,
+        "status": "completed",
+    }
+
+    if gpu_used:
+        batch_summary["cupy_version"] = cupy_version
+        batch_summary["cuda_version"] = cuda_version
+
+    if filter_result is not None:
+        batch_summary["filter_feasibility_rate"] = filter_result.feasibility_rate
+
+    batch_summary_path = out_root / "batch_summary.json"
+    batch_summary_path.write_text(canonical_json_dumps(batch_summary), encoding="utf-8")
+
+    # Write detailed build results
+    results_payload = {
+        "builds": build_results,
+        "errors": errors,
+    }
+    results_path = out_root / "build_results.json"
+    results_path.write_text(canonical_json_dumps(results_payload), encoding="utf-8")
+
+    # Write summary to stdout
+    summary_payload = canonical_json_dumps(batch_summary)
     sys.stdout.write(summary_payload + "\n")
 
-    return 0
+    return 0 if builds_failed == 0 else 1
+
+
+def _add_gpu_metadata_to_manifest(
+    manifest_path: Path,
+    cupy_version: str | None,
+    cuda_version: str | None,
+) -> None:
+    """Add GPU metadata to an existing manifest file.
+
+    Per CP-4.3, when GPU is used for batch filtering, record CuPy/CUDA versions
+    in the manifest under toolchain.gpu section.
+
+    Args:
+        manifest_path: Path to the manifest.json file
+        cupy_version: CuPy version string (or None if unavailable)
+        cuda_version: CUDA runtime version string (or None if unavailable)
+    """
+    import json
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+        # Add GPU metadata to toolchain
+        if "toolchain" not in manifest:
+            manifest["toolchain"] = {}
+
+        manifest["toolchain"]["gpu"] = {
+            "used": True,
+            "cupy_version": cupy_version,
+            "cuda_runtime_version": cuda_version,
+        }
+
+        # Re-write manifest
+        manifest_path.write_text(canonical_json_dumps(manifest) + "\n", encoding="utf-8")
+    except Exception:
+        # Don't fail the build if we can't update the manifest
+        pass
 
 
 if __name__ == "__main__":
