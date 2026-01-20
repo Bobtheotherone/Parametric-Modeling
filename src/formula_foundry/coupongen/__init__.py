@@ -86,6 +86,11 @@ from .toolchain import (
     compute_toolchain_hash,
     load_toolchain_lock,
 )
+from .toolchain_capture import (
+    ToolchainProvenance,
+    ToolchainProvenanceError,
+    capture_toolchain_provenance,
+)
 from .units import LengthNM, parse_length_nm
 
 __all__ = [
@@ -196,4 +201,8 @@ __all__ = [
     # Toolchain functions
     "compute_toolchain_hash",
     "load_toolchain_lock",
+    # Toolchain capture (CP-5.3)
+    "ToolchainProvenance",
+    "ToolchainProvenanceError",
+    "capture_toolchain_provenance",
 ]
