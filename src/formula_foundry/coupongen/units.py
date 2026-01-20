@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import BeforeValidator, WithJsonSchema
 
+_INTEGER_RE = re.compile(r"^[+-]?\d+$")
 _LENGTH_RE = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$")
 
 _UNIT_SCALES_NM: dict[str, int] = {
@@ -21,13 +22,14 @@ _MAX_I64 = 2**63 - 1
 _LENGTH_JSON_SCHEMA = {
     "anyOf": [
         {"type": "integer"},
+        {"type": "string", "pattern": r"^\s*[+-]?\d+\s*$"},
         {
             "type": "string",
             "pattern": r"^\s*[+-]?\d+(?:\.\d+)?\s*(nm|um|mm|mil)\s*$",
         },
     ],
     "title": "LengthNM",
-    "description": "Integer nanometers or a string with nm/um/mm/mil units.",
+    "description": "Integer nanometers (int or numeric string) or a string with nm/um/mm/mil units.",
 }
 
 
@@ -43,6 +45,8 @@ def parse_length_nm(value: str | int | float) -> int:
         text = value.strip()
         if not text:
             raise ValueError("LengthNM requires a numeric value.")
+        if _INTEGER_RE.match(text):
+            return _check_i64(int(text))
         match = _LENGTH_RE.match(text)
         if not match:
             raise ValueError(
