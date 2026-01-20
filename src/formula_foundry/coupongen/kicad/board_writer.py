@@ -9,16 +9,20 @@ Key features:
 - S-expression output using the sexpr module
 - Support for F0 (calibration) and F1 (via transition) coupon families
 - Integer nanometer coordinate system with mm conversion for output
+- F1 antipads/cutouts and return vias with configurable patterns
 
-Satisfies REQ-M1-012 and REQ-M1-013.
+Satisfies REQ-M1-007, REQ-M1-012 and REQ-M1-013.
 """
 
 from __future__ import annotations
 
+import math
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
+from ..families import FAMILY_F1
 from ..geom.primitives import (
     ArcTrack,
     BoardOutline,
@@ -124,6 +128,10 @@ class BoardWriter:
     This class generates .kicad_pcb files from CouponSpec and ResolvedDesign
     using the S-expression format. All UUIDs/timestamps are deterministically
     generated from the spec content.
+
+    For F1 coupons, this class uses the F1 builder composition to correctly
+    position the via transition and generate antipads/cutouts with configurable
+    return via patterns.
     """
 
     def __init__(self, spec: CouponSpec, resolved: ResolvedDesign) -> None:
@@ -143,6 +151,11 @@ class BoardWriter:
             board_width_nm=int(spec.board.outline.length_nm),
             board_height_nm=int(spec.board.outline.width_nm),
         )
+
+        # Build F1 composition if applicable
+        self._f1_composition: F1CouponComposition | None = None
+        if spec.coupon_family == FAMILY_F1:
+            self._f1_composition = build_f1_coupon(spec, resolved)
 
     def _next_uuid(self, path: str) -> str:
         """Generate the next deterministic UUID for a path."""
@@ -184,6 +197,11 @@ class BoardWriter:
         # Add vias if discontinuity present
         if self.spec.discontinuity is not None:
             elements.extend(self._build_vias())
+
+        # Add antipads and cutouts for F1 coupons
+        if self._f1_composition is not None:
+            elements.extend(self._build_antipads())
+            elements.extend(self._build_cutouts())
 
         return elements
 
@@ -294,20 +312,33 @@ class BoardWriter:
         return tracks
 
     def _build_vias(self) -> list[SExprList]:
-        """Build via elements for discontinuity."""
+        """Build via elements for discontinuity.
+
+        For F1 coupons, uses the F1 builder composition to get the correct
+        discontinuity center position calculated from left connector + left
+        trace length.
+        """
         vias: list[SExprList] = []
         disc = self.spec.discontinuity
         if disc is None:
             return vias
 
-        # Signal via at the center
-        center_x = int(self.spec.board.outline.length_nm) // 2
+        # Calculate discontinuity center position
+        # For F1, use the composition's calculated position
+        if self._f1_composition is not None:
+            center_x = self._f1_composition.discontinuity_position.x
+            center_y = self._f1_composition.discontinuity_position.y
+        else:
+            # Fallback for non-F1 coupons (F0 shouldn't have discontinuity)
+            center_x = int(self.spec.board.outline.length_nm) // 2
+            center_y = 0
+
         signal_via_uuid = self._next_uuid("via.signal")
 
         vias.append(
             [
                 "via",
-                ["at", nm_to_mm(center_x), nm_to_mm(0)],
+                ["at", nm_to_mm(center_x), nm_to_mm(center_y)],
                 ["size", nm_to_mm(int(disc.signal_via.diameter_nm))],
                 ["drill", nm_to_mm(int(disc.signal_via.drill_nm))],
                 ["layers", "F.Cu", "B.Cu"],
@@ -316,33 +347,130 @@ class BoardWriter:
             ]
         )
 
-        # Return vias if present
+        # Return vias if present - use F1 composition for correct positioning
         if disc.return_vias is not None:
-            import math
+            if self._f1_composition is not None and self._f1_composition.return_vias:
+                # Use pre-computed return via positions from the F1 builder
+                for i, return_via in enumerate(self._f1_composition.return_vias):
+                    via_uuid = self._indexed_uuid("via.return", i)
+                    vias.append(
+                        [
+                            "via",
+                            ["at", nm_to_mm(return_via.position.x), nm_to_mm(return_via.position.y)],
+                            ["size", nm_to_mm(return_via.diameter_nm)],
+                            ["drill", nm_to_mm(return_via.drill_nm)],
+                            ["layers", return_via.layers[0], return_via.layers[1]],
+                            ["net", 2],
+                            ["tstamp", via_uuid],
+                        ]
+                    )
+            else:
+                # Fallback calculation
+                rv = disc.return_vias
+                radius = int(rv.radius_nm)
+                count = rv.count
 
-            rv = disc.return_vias
-            radius = int(rv.radius_nm)
-            count = rv.count
+                for i in range(count):
+                    angle = 2 * math.pi * i / count
+                    vx = center_x + int(radius * math.cos(angle))
+                    vy = center_y + int(radius * math.sin(angle))
+                    via_uuid = self._indexed_uuid("via.return", i)
 
-            for i in range(count):
-                angle = 2 * math.pi * i / count
-                vx = center_x + int(radius * math.cos(angle))
-                vy = int(radius * math.sin(angle))
-                via_uuid = self._indexed_uuid("via.return", i)
-
-                vias.append(
-                    [
-                        "via",
-                        ["at", nm_to_mm(vx), nm_to_mm(vy)],
-                        ["size", nm_to_mm(int(rv.via.diameter_nm))],
-                        ["drill", nm_to_mm(int(rv.via.drill_nm))],
-                        ["layers", "F.Cu", "B.Cu"],
-                        ["net", 2],
-                        ["tstamp", via_uuid],
-                    ]
-                )
+                    vias.append(
+                        [
+                            "via",
+                            ["at", nm_to_mm(vx), nm_to_mm(vy)],
+                            ["size", nm_to_mm(int(rv.via.diameter_nm))],
+                            ["drill", nm_to_mm(int(rv.via.drill_nm))],
+                            ["layers", "F.Cu", "B.Cu"],
+                            ["net", 2],
+                            ["tstamp", via_uuid],
+                        ]
+                    )
 
         return vias
+
+    def _build_antipads(self) -> list[SExprList]:
+        """Build antipad polygons for F1 coupons.
+
+        Antipads are cutout regions on internal copper layers that provide
+        clearance around the signal via. They are generated as filled zones
+        with the 'keepout' attribute or as explicit zone cutouts.
+        """
+        antipads: list[SExprList] = []
+
+        if self._f1_composition is None:
+            return antipads
+
+        all_antipads = self._f1_composition.all_antipads
+        for i, antipad in enumerate(all_antipads):
+            antipad_uuid = self._indexed_uuid("antipad", i)
+
+            # Build the polygon points
+            pts: SExprList = ["pts"]
+            for vertex in antipad.vertices:
+                pts.append(["xy", nm_to_mm(vertex.x), nm_to_mm(vertex.y)])
+
+            # Create a zone cutout on the appropriate layer
+            zone: SExprList = [
+                "zone",
+                ["net", 0],
+                ["net_name", ""],
+                ["layer", antipad.layer],
+                ["tstamp", antipad_uuid],
+                ["hatch", "edge", 0.5],
+                ["priority", 0],
+                ["connect_pads", ["clearance", 0]],
+                ["min_thickness", 0.1],
+                ["filled_areas_thickness", "no"],
+                ["keepout", ["tracks", "not_allowed"], ["vias", "not_allowed"], ["pads", "not_allowed"], ["copperpour", "not_allowed"], ["footprints", "allowed"]],
+                ["fill", ["thermal_gap", 0.5], ["thermal_bridge_width", 0.5]],
+                ["polygon", pts],
+            ]
+            antipads.append(zone)
+
+        return antipads
+
+    def _build_cutouts(self) -> list[SExprList]:
+        """Build plane cutout polygons for F1 coupons.
+
+        Plane cutouts are typically slot-shaped or rectangular regions
+        that provide impedance tuning or thermal relief around the via
+        transition.
+        """
+        cutouts: list[SExprList] = []
+
+        if self._f1_composition is None:
+            return cutouts
+
+        all_cutouts = self._f1_composition.all_cutouts
+        for i, cutout in enumerate(all_cutouts):
+            cutout_uuid = self._indexed_uuid("cutout", i)
+
+            # Build the polygon points
+            pts: SExprList = ["pts"]
+            for vertex in cutout.vertices:
+                pts.append(["xy", nm_to_mm(vertex.x), nm_to_mm(vertex.y)])
+
+            # Create a zone cutout on the appropriate layer
+            zone: SExprList = [
+                "zone",
+                ["net", 0],
+                ["net_name", ""],
+                ["layer", cutout.layer],
+                ["tstamp", cutout_uuid],
+                ["hatch", "edge", 0.5],
+                ["priority", 0],
+                ["connect_pads", ["clearance", 0]],
+                ["min_thickness", 0.1],
+                ["filled_areas_thickness", "no"],
+                ["keepout", ["tracks", "not_allowed"], ["vias", "not_allowed"], ["pads", "not_allowed"], ["copperpour", "not_allowed"], ["footprints", "allowed"]],
+                ["fill", ["thermal_gap", 0.5], ["thermal_bridge_width", 0.5]],
+                ["polygon", pts],
+            ]
+            cutouts.append(zone)
+
+        return cutouts
 
     def write(self, out_path: Path) -> None:
         """Write the board file to disk.

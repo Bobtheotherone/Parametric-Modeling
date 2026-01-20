@@ -309,3 +309,238 @@ class TestWriteBoard:
         # Should have signal via and return vias
         via_count = content.count("(via")
         assert via_count == 5  # 1 signal + 4 return
+
+
+@pytest.fixture
+def f1_spec_with_antipads(f1_spec_data: dict) -> CouponSpec:
+    """F1 spec with antipads and cutouts configured."""
+    spec = f1_spec_data.copy()
+    spec["discontinuity"] = {
+        "type": "VIA_TRANSITION",
+        "signal_via": {
+            "drill_nm": 300000,
+            "diameter_nm": 650000,
+            "pad_diameter_nm": 900000,
+        },
+        "antipads": {
+            "In1.Cu": {
+                "shape": "ROUNDRECT",
+                "rx_nm": 1200000,
+                "ry_nm": 900000,
+                "corner_nm": 250000,
+            },
+            "In2.Cu": {
+                "shape": "CIRCLE",
+                "r_nm": 1100000,
+            },
+        },
+        "return_vias": {
+            "pattern": "RING",
+            "count": 4,
+            "radius_nm": 1700000,
+            "via": {"drill_nm": 300000, "diameter_nm": 650000},
+        },
+        "plane_cutouts": {
+            "In1.Cu": {
+                "shape": "SLOT",
+                "length_nm": 3000000,
+                "width_nm": 1500000,
+                "rotation_deg": 0,
+            },
+        },
+    }
+    return CouponSpec.model_validate(spec)
+
+
+class TestF1BoardWriterWithAntipads:
+    """Tests for F1 board generation with antipads and cutouts (REQ-M1-007)."""
+
+    def test_f1_via_position_uses_composition(self, f1_spec: CouponSpec) -> None:
+        """Signal via should be at discontinuity position from builder composition."""
+        from formula_foundry.coupongen.builders.f1_builder import build_f1_coupon
+        from formula_foundry.coupongen.kicad.sexpr import nm_to_mm
+
+        resolved = resolve(f1_spec)
+        composition = build_f1_coupon(f1_spec, resolved)
+        writer = BoardWriter(f1_spec, resolved)
+        board = writer.build_board()
+
+        # Find signal via
+        vias = [e for e in board if isinstance(e, list) and e[0] == "via"]
+        signal_via = vias[0]  # First via is signal via
+
+        # Extract position
+        at_elem = [e for e in signal_via if isinstance(e, list) and e[0] == "at"][0]
+        via_x_mm = at_elem[1]
+        via_y_mm = at_elem[2]
+
+        # Verify position matches composition
+        expected_x_mm = nm_to_mm(composition.discontinuity_position.x)
+        expected_y_mm = nm_to_mm(composition.discontinuity_position.y)
+
+        assert via_x_mm == expected_x_mm
+        assert via_y_mm == expected_y_mm
+
+    def test_f1_board_includes_antipads(
+        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
+    ) -> None:
+        """F1 board with antipads should include zone keepouts."""
+        resolved = resolve(f1_spec_with_antipads)
+        board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have zone elements for antipads
+        assert "(zone" in content
+        # Should have zones on internal layers (unquoted in KiCad S-expr format)
+        assert "In1.Cu" in content
+
+    def test_f1_board_includes_cutouts(
+        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
+    ) -> None:
+        """F1 board with plane cutouts should include zone keepouts."""
+        resolved = resolve(f1_spec_with_antipads)
+        board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have zone elements
+        zone_count = content.count("(zone")
+        # Should have antipads (2) + cutouts (1) = 3 zones
+        assert zone_count >= 3
+
+    def test_f1_antipad_zones_have_keepout(
+        self, f1_spec_with_antipads: CouponSpec
+    ) -> None:
+        """Antipad zones should have keepout properties set."""
+        resolved = resolve(f1_spec_with_antipads)
+        writer = BoardWriter(f1_spec_with_antipads, resolved)
+        board = writer.build_board()
+
+        # Find zone elements
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+
+        # Each zone should have keepout element
+        for zone in zones:
+            keepout_elems = [e for e in zone if isinstance(e, list) and e[0] == "keepout"]
+            assert len(keepout_elems) == 1
+
+    def test_f1_return_vias_positioned_around_discontinuity(
+        self, f1_spec: CouponSpec
+    ) -> None:
+        """Return vias should be positioned around the discontinuity center."""
+        from formula_foundry.coupongen.builders.f1_builder import build_f1_coupon
+
+        resolved = resolve(f1_spec)
+        composition = build_f1_coupon(f1_spec, resolved)
+        writer = BoardWriter(f1_spec, resolved)
+        board = writer.build_board()
+
+        # Find all vias
+        vias = [e for e in board if isinstance(e, list) and e[0] == "via"]
+
+        # Skip signal via (first one), check return vias
+        center_x = composition.discontinuity_position.x
+        center_y = composition.discontinuity_position.y
+        radius_nm = 1700000  # From spec
+
+        for via in vias[1:]:  # Skip signal via
+            at_elem = [e for e in via if isinstance(e, list) and e[0] == "at"][0]
+            via_x_mm_str = at_elem[1]
+            via_y_mm_str = at_elem[2]
+
+            # nm_to_mm returns strings, need to convert back to nm
+            via_x_nm = int(float(via_x_mm_str) * 1_000_000)
+            via_y_nm = int(float(via_y_mm_str) * 1_000_000)
+
+            # Calculate distance from center
+            dx = via_x_nm - center_x
+            dy = via_y_nm - center_y
+            distance = (dx ** 2 + dy ** 2) ** 0.5
+
+            # Should be approximately at radius_nm (allow small rounding error)
+            assert abs(distance - radius_nm) < 1000  # 1um tolerance
+
+    def test_f1_board_deterministic_with_antipads(
+        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
+    ) -> None:
+        """F1 board with antipads should be deterministic."""
+        resolved = resolve(f1_spec_with_antipads)
+
+        board_path1 = write_board(f1_spec_with_antipads, resolved, tmp_path / "run1")
+        board_path2 = write_board(f1_spec_with_antipads, resolved, tmp_path / "run2")
+
+        content1 = board_path1.read_text(encoding="utf-8")
+        content2 = board_path2.read_text(encoding="utf-8")
+
+        assert content1 == content2
+
+    def test_f1_antipad_polygon_vertices(
+        self, f1_spec_with_antipads: CouponSpec
+    ) -> None:
+        """Antipad zones should have polygon vertices."""
+        resolved = resolve(f1_spec_with_antipads)
+        writer = BoardWriter(f1_spec_with_antipads, resolved)
+        board = writer.build_board()
+
+        # Find zone elements
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+
+        # Each zone should have a polygon with pts
+        for zone in zones:
+            polygon_elems = [e for e in zone if isinstance(e, list) and e[0] == "polygon"]
+            assert len(polygon_elems) == 1
+
+            polygon = polygon_elems[0]
+            pts_elems = [e for e in polygon if isinstance(e, list) and e[0] == "pts"]
+            assert len(pts_elems) == 1
+
+            pts = pts_elems[0]
+            # Should have multiple xy points
+            xy_points = [e for e in pts if isinstance(e, list) and e[0] == "xy"]
+            assert len(xy_points) >= 3  # At least a triangle
+
+
+class TestF1RequirementCoverageInBoardWriter:
+    """Tests verifying REQ-M1-007 coverage in board writer."""
+
+    def test_req_m1_007_end_to_end_via_transition(
+        self, f1_spec_with_antipads: CouponSpec, tmp_path: Path
+    ) -> None:
+        """REQ-M1-007: Full F1 coupon with all features generates valid board."""
+        resolved = resolve(f1_spec_with_antipads)
+        board_path = write_board(f1_spec_with_antipads, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Verify all required elements are present
+        # 1. Board outline (Edge.Cuts)
+        assert "(gr_rect" in content
+        assert "Edge.Cuts" in content
+
+        # 2. Footprints (connectors) - count standalone "(footprint" at start of element
+        # Note: zones contain "footprints" as keepout attribute, so we count lines
+        import re
+        footprint_matches = re.findall(r'\(footprint\s+[\w:]+', content)
+        assert len(footprint_matches) == 2  # Left and right connectors
+
+        # 3. Transmission line tracks
+        assert "(segment" in content
+        segment_count = content.count("(segment")
+        assert segment_count == 2  # Left and right tracks
+
+        # 4. Signal via
+        assert "(via" in content
+
+        # 5. Return vias (4 vias in RING pattern)
+        # Count via elements (not "vias" attributes in keepout zones)
+        # Via elements start with "(via" followed by newline, not "(vias"
+        via_count = len(re.findall(r'\(via\n', content))
+        assert via_count == 5  # 1 signal + 4 return
+
+        # 6. Antipads (zones on internal layers)
+        assert "(zone" in content
+
+        # 7. Plane cutouts - zones for antipads (2) + cutouts (1) = 3
+        zone_count = content.count("(zone")
+        assert zone_count >= 3  # 2 antipads + 1 cutout
