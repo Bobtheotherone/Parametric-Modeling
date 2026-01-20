@@ -457,6 +457,26 @@ class ArtifactRegistry:
                 ),
             )
 
+    def index_dataset_snapshot(self, snapshot: Any) -> None:
+        """Index a DatasetSnapshot in the registry.
+
+        This is a convenience method that extracts fields from a DatasetSnapshot
+        and calls index_dataset.
+
+        Args:
+            snapshot: A DatasetSnapshot instance.
+        """
+        self.index_dataset(
+            dataset_id=snapshot.dataset_id,
+            version=snapshot.version,
+            artifact_count=snapshot.member_count,
+            total_bytes=snapshot.total_bytes,
+            created_utc=snapshot.created_utc,
+            description=snapshot.description,
+            manifest_hash=snapshot.content_hash.digest,
+            parquet_index_path=snapshot.index_path,
+        )
+
     def index_run(
         self,
         run_id: str,
