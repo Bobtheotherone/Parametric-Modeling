@@ -7,6 +7,7 @@ Commands:
     init: Initialize data directory structure, DVC, MLflow config, and registry.
     run: Execute a DVC stage with metadata stamping and artifact tracking.
     gc: Garbage collect old artifacts with configurable retention policies.
+    audit: Generate deterministic provenance reports for artifacts.
 """
 
 from __future__ import annotations
@@ -468,6 +469,59 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Output results as JSON",
+    )
+
+    # audit subcommand
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Generate deterministic provenance report for artifacts",
+    )
+    audit_parser.add_argument(
+        "artifact_id",
+        nargs="?",
+        default=None,
+        help="Artifact ID to audit (if not provided, audits all artifacts)",
+    )
+    audit_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    audit_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text)",
+    )
+    audit_parser.add_argument(
+        "--trace-roots",
+        action="store_true",
+        help="Trace lineage to root artifacts",
+    )
+    audit_parser.add_argument(
+        "--verify-hashes",
+        action="store_true",
+        help="Verify content hashes for artifacts",
+    )
+    audit_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=None,
+        help="Maximum depth for ancestor traversal",
+    )
+    audit_parser.add_argument(
+        "--required-roles",
+        type=str,
+        default=None,
+        help="Comma-separated list of roles that must exist in roots",
+    )
+    audit_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output",
     )
 
     return parser
@@ -2469,6 +2523,274 @@ def cmd_gc_estimate(
     return 0
 
 
+def cmd_audit(
+    artifact_id: str | None,
+    root: Path | None,
+    output_format: str,
+    trace_roots: bool,
+    verify_hashes: bool,
+    max_depth: int | None,
+    required_roles: str | None,
+    quiet: bool,
+) -> int:
+    """Generate deterministic provenance report for artifacts.
+
+    This command audits artifacts by:
+    1. Listing all ancestors (inputs that contributed to the artifact)
+    2. Computing key metrics (node count, edge count, types, etc.)
+    3. Optionally verifying content hashes
+    4. Optionally checking that required roles exist in root artifacts
+
+    Args:
+        artifact_id: Artifact ID to audit (if None, audits all).
+        root: Project root directory (auto-detected if None).
+        output_format: Output format ("text" or "json").
+        trace_roots: If True, trace lineage to root artifacts.
+        verify_hashes: If True, verify content hashes.
+        max_depth: Maximum depth for ancestor traversal.
+        required_roles: Comma-separated list of required roles in roots.
+        quiet: If True, suppress non-error output.
+
+    Returns:
+        0 on success, 2 on error.
+    """
+    from formula_foundry.m3.artifact_store import ArtifactStore
+    from formula_foundry.m3.lineage_graph import (
+        LineageGraph,
+        NodeNotFoundError,
+    )
+    from formula_foundry.m3.registry import ArtifactRegistry
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    registry_db = data_dir / "registry.db"
+    if not registry_db.exists():
+        sys.stderr.write("Error: M3 not initialized. Run 'm3 init' first.\n")
+        return 2
+
+    lineage_db = data_dir / "lineage.sqlite"
+
+    # Initialize components
+    store = ArtifactStore(
+        root=data_dir,
+        generator="m3_audit",
+        generator_version=__version__,
+    )
+    registry = ArtifactRegistry(registry_db)
+    graph = LineageGraph(lineage_db)
+    graph.initialize()
+
+    # Parse required roles
+    roles_list: list[str] | None = None
+    if required_roles:
+        roles_list = [r.strip() for r in required_roles.split(",")]
+
+    # Build graph from store if not already populated
+    if graph.count_nodes() == 0:
+        _log("Building lineage graph from artifact store...", quiet)
+        count = graph.build_from_store(store, clear_first=False)
+        _log(f"Indexed {count} artifacts into lineage graph.", quiet)
+
+    # Determine artifacts to audit
+    if artifact_id:
+        artifact_ids = [artifact_id]
+    else:
+        artifact_ids = store.list_manifests()
+
+    if not artifact_ids:
+        if output_format == "json":
+            report = {
+                "schema_version": 1,
+                "generated_utc": _now_utc_iso(),
+                "total_artifacts": 0,
+                "verification_failures": 0,
+                "missing_roles": 0,
+                "artifacts": [],
+                "graph_stats": graph.get_stats(),
+            }
+            sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        else:
+            _log("No artifacts found to audit.", quiet)
+        graph.close()
+        registry.close()
+        return 0
+
+    # Prepare audit results
+    audit_results: list[dict[str, Any]] = []
+    verification_failures: list[str] = []
+    missing_roles: list[str] = []
+
+    _log(f"Auditing {len(artifact_ids)} artifact(s)...", quiet)
+    _log("", quiet)
+
+    for art_id in artifact_ids:
+        result: dict[str, Any] = {
+            "artifact_id": art_id,
+            "status": "ok",
+            "issues": [],
+        }
+
+        try:
+            # Get manifest
+            manifest = store.get_manifest(art_id)
+            result["artifact_type"] = manifest.artifact_type
+            result["content_hash"] = manifest.content_hash.digest
+            result["byte_size"] = manifest.byte_size
+            result["created_utc"] = manifest.created_utc
+            result["roles"] = manifest.roles
+            result["run_id"] = manifest.lineage.run_id
+            result["stage_name"] = manifest.lineage.stage_name
+
+            # Verify hash if requested
+            if verify_hashes:
+                try:
+                    is_valid = store.verify(art_id)
+                    result["hash_verified"] = is_valid
+                    if not is_valid:
+                        result["status"] = "hash_mismatch"
+                        result["issues"].append("Content hash mismatch")
+                        verification_failures.append(art_id)
+                except Exception as e:
+                    result["hash_verified"] = False
+                    result["status"] = "verification_error"
+                    result["issues"].append(f"Verification error: {e}")
+                    verification_failures.append(art_id)
+
+            # Get lineage information
+            if graph.has_node(art_id):
+                try:
+                    if trace_roots:
+                        subgraph = graph.trace_to_roots(art_id)
+                    else:
+                        subgraph = graph.get_ancestors(art_id, max_depth=max_depth)
+
+                    result["ancestor_count"] = subgraph.node_count - 1  # Exclude self
+                    result["edge_count"] = subgraph.edge_count
+                    result["root_ids"] = subgraph.get_roots()
+
+                    # Compute type distribution in ancestors
+                    type_counts: dict[str, int] = {}
+                    for node in subgraph.nodes.values():
+                        t = node.artifact_type
+                        type_counts[t] = type_counts.get(t, 0) + 1
+                    result["ancestor_types"] = type_counts
+
+                    # Check required roles in roots
+                    if roles_list:
+                        root_roles: set[str] = set()
+                        for root_id in subgraph.get_roots():
+                            if root_id != art_id:
+                                try:
+                                    root_manifest = store.get_manifest(root_id)
+                                    root_roles.update(root_manifest.roles)
+                                except Exception:
+                                    pass
+
+                        missing = set(roles_list) - root_roles
+                        if missing:
+                            result["status"] = "missing_roles"
+                            result["issues"].append(
+                                f"Required roles not found in roots: {sorted(missing)}"
+                            )
+                            missing_roles.append(art_id)
+                        result["root_roles"] = sorted(root_roles)
+
+                except NodeNotFoundError:
+                    result["ancestor_count"] = 0
+                    result["edge_count"] = 0
+                    result["root_ids"] = [art_id]
+            else:
+                # Node not in graph, add it
+                graph.add_manifest(manifest)
+                result["ancestor_count"] = 0
+                result["edge_count"] = 0
+                result["root_ids"] = [art_id]
+                result["issues"].append("Node was not in lineage graph (now indexed)")
+
+        except Exception as e:
+            result["status"] = "error"
+            result["issues"].append(f"Error: {e}")
+
+        audit_results.append(result)
+
+    # Output results
+    if output_format == "json":
+        report = {
+            "schema_version": 1,
+            "generated_utc": _now_utc_iso(),
+            "total_artifacts": len(artifact_ids),
+            "verification_failures": len(verification_failures),
+            "missing_roles": len(missing_roles),
+            "artifacts": audit_results,
+            "graph_stats": graph.get_stats(),
+        }
+        sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    else:
+        # Text format
+        for result in audit_results:
+            _log(f"Artifact: {result['artifact_id']}", quiet)
+            _log(f"  Status: {result['status']}", quiet)
+            if "artifact_type" in result:
+                _log(f"  Type: {result['artifact_type']}", quiet)
+            if "byte_size" in result:
+                _log(f"  Size: {result['byte_size']} bytes", quiet)
+            if "content_hash" in result:
+                _log(f"  Hash: {result['content_hash'][:16]}...", quiet)
+            if "created_utc" in result:
+                _log(f"  Created: {result['created_utc']}", quiet)
+            if "roles" in result:
+                _log(f"  Roles: {', '.join(result['roles'])}", quiet)
+            if "run_id" in result:
+                _log(f"  Run ID: {result['run_id']}", quiet)
+            if "ancestor_count" in result:
+                _log(f"  Ancestors: {result['ancestor_count']}", quiet)
+            if "root_ids" in result:
+                if len(result["root_ids"]) <= 5:
+                    _log(f"  Roots: {', '.join(result['root_ids'])}", quiet)
+                else:
+                    _log(f"  Roots: {len(result['root_ids'])} root artifacts", quiet)
+            if result.get("hash_verified") is not None:
+                status = "PASS" if result["hash_verified"] else "FAIL"
+                _log(f"  Hash verification: {status}", quiet)
+            if result.get("issues"):
+                for issue in result["issues"]:
+                    _log(f"  Issue: {issue}", quiet)
+            _log("", quiet)
+
+        # Summary
+        _log("=" * 60, quiet)
+        _log(f"Total artifacts audited: {len(artifact_ids)}", quiet)
+        if verify_hashes:
+            passed = len(artifact_ids) - len(verification_failures)
+            _log(f"Hash verification: {passed}/{len(artifact_ids)} passed", quiet)
+        if roles_list:
+            passed = len(artifact_ids) - len(missing_roles)
+            _log(f"Required roles check: {passed}/{len(artifact_ids)} passed", quiet)
+
+        # Graph stats
+        stats = graph.get_stats()
+        _log("", quiet)
+        _log("Lineage Graph Stats:", quiet)
+        _log(f"  Total nodes: {stats['node_count']}", quiet)
+        _log(f"  Total edges: {stats['edge_count']}", quiet)
+        _log(f"  Root nodes: {stats['root_count']}", quiet)
+        _log(f"  Leaf nodes: {stats['leaf_count']}", quiet)
+
+    graph.close()
+    registry.close()
+
+    # Return error code if there were failures
+    if verification_failures or missing_roles:
+        return 2
+
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Main entry point for the m3 CLI."""
     parser = build_parser()
@@ -2574,6 +2896,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             policy=args.policy,
             root=args.root,
             output_json=args.json,
+        )
+
+    if args.command == "audit":
+        return cmd_audit(
+            artifact_id=args.artifact_id,
+            root=args.root,
+            output_format=args.format,
+            trace_roots=args.trace_roots,
+            verify_hashes=args.verify_hashes,
+            max_depth=args.max_depth,
+            required_roles=args.required_roles,
+            quiet=args.quiet,
         )
 
     # Should not reach here due to required=True on subparsers
