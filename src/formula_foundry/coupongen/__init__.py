@@ -52,6 +52,7 @@ from .fab_profiles import (
 )
 from .families import FAMILY_F0, FAMILY_F1, SUPPORTED_FAMILIES, validate_family
 from .hashing import (
+    canonical_drc_json,
     canonical_hash_export_text,
     canonical_hash_kicad_pcb_text,
     canonicalize_export_text,
@@ -166,6 +167,7 @@ __all__ = [
     "build_coupon",
     "build_drc_args",
     "build_manifest",
+    "canonical_drc_json",
     "canonical_hash_export_text",
     "canonical_hash_kicad_pcb_text",
     "canonicalize_export_text",
