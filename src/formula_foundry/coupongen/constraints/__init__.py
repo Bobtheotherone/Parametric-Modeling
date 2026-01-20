@@ -95,6 +95,17 @@ from .primitives import (
 from .primitives import ConstraintResult as PrimitiveConstraintResult
 from .primitives import ConstraintTier as PrimitiveConstraintTier
 
+# Export connectivity oracle (CP-2.5, Section 13.2.5)
+from .connectivity import (
+    ConnectivityChecker,
+    ConnectivityNode,
+    ConnectivityOracle,
+    NodeType,
+    UnionFind,
+    build_oracle_from_layout,
+    check_layout_connectivity,
+)
+
 __all__ = [
     # Core constraint types (backward compatible)
     "ConstraintEvaluation",
@@ -151,4 +162,12 @@ __all__ = [
     "create_equality_constraint_result",
     "create_max_constraint_result",
     "create_min_constraint_result",
+    # Connectivity oracle (CP-2.5, Section 13.2.5)
+    "ConnectivityChecker",
+    "ConnectivityNode",
+    "ConnectivityOracle",
+    "NodeType",
+    "UnionFind",
+    "build_oracle_from_layout",
+    "check_layout_connectivity",
 ]
