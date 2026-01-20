@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "oshpark_4layer",
+  "name": "OSH Park 4-Layer",
+  "vendor": "OSH Park",
+  "description": "DFM constraints for OSH Park's 4-layer PCB service. Based on OSH Park design rules: 5 mil trace/space, 10 mil drill, 4 mil annular ring.",
+  "layer_counts": [4],
+  "trace": {
+    "min_width_nm": 127000,
+    "min_spacing_nm": 127000
+  },
+  "drill": {
+    "min_diameter_nm": 254000,
+    "min_pth_diameter_nm": 254000,
+    "min_via_drill_nm": 254000,
+    "min_hole_to_hole_nm": 178000,
+    "aspect_ratio_max": 10.0
+  },
+  "via": {
+    "min_annular_ring_nm": 101600,
+    "min_diameter_nm": 457200,
+    "min_via_to_via_nm": 203200,
+    "min_via_to_trace_nm": 127000
+  },
+  "soldermask": {
+    "min_expansion_nm": 50800,
+    "max_expansion_nm": 101600,
+    "min_web_nm": 101600,
+    "min_opening_nm": 203200
+  },
+  "silkscreen": {
+    "min_width_nm": 152400,
+    "min_height_nm": 762000,
+    "min_clearance_nm": 152400
+  },
+  "board": {
+    "min_edge_clearance_nm": 381000,
+    "min_board_width_nm": 6350000,
+    "min_board_length_nm": 6350000,
+    "max_board_width_nm": 152400000,
+    "max_board_length_nm": 152400000
+  }
+}

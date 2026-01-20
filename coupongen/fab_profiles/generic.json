@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "id": "generic",
+  "name": "Generic Conservative",
+  "vendor": "Generic",
+  "description": "Conservative DFM constraints suitable for most standard PCB fabricators. Uses common industry minimums: 4 mil trace/space, 8 mil drill, 4 mil annular ring.",
+  "layer_counts": [2, 4, 6, 8],
+  "trace": {
+    "min_width_nm": 101600,
+    "min_spacing_nm": 101600
+  },
+  "drill": {
+    "min_diameter_nm": 203200,
+    "min_pth_diameter_nm": 203200,
+    "min_via_drill_nm": 203200,
+    "min_hole_to_hole_nm": 203200,
+    "aspect_ratio_max": 8.0
+  },
+  "via": {
+    "min_annular_ring_nm": 101600,
+    "min_diameter_nm": 406400,
+    "min_via_to_via_nm": 203200,
+    "min_via_to_trace_nm": 101600
+  },
+  "soldermask": {
+    "min_expansion_nm": 50800,
+    "max_expansion_nm": 101600,
+    "min_web_nm": 101600,
+    "min_opening_nm": 152400
+  },
+  "silkscreen": {
+    "min_width_nm": 152400,
+    "min_height_nm": 762000,
+    "min_clearance_nm": 127000
+  },
+  "board": {
+    "min_edge_clearance_nm": 254000,
+    "min_board_width_nm": 5080000,
+    "min_board_length_nm": 5080000
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "oshpark_4layer",
+  "name": "OSH Park 4-Layer Standard",
+  "description": "OSH Park's standard 4-layer stackup: 1.6mm total, 2oz outer copper, 0.5oz inner copper, FR408 substrate.",
+  "vendor": "OSH Park",
+  "copper_layers": 4,
+  "total_thickness_nm": 1600000,
+  "dielectric_defaults": {
+    "er": 3.66,
+    "loss_tangent": 0.0095,
+    "material": "FR408"
+  },
+  "layers": [
+    {
+      "name": "F.Cu",
+      "type": "copper",
+      "thickness_nm": 70000,
+      "copper_weight_oz": 2.0
+    },
+    {
+      "name": "prepreg_1",
+      "type": "dielectric",
+      "thickness_nm": 170000,
+      "dielectric": {
+        "er": 3.66,
+        "loss_tangent": 0.0095,
+        "material": "FR408 Prepreg"
+      }
+    },
+    {
+      "name": "In1.Cu",
+      "type": "copper",
+      "thickness_nm": 17500,
+      "copper_weight_oz": 0.5
+    },
+    {
+      "name": "core",
+      "type": "dielectric",
+      "thickness_nm": 1090000,
+      "dielectric": {
+        "er": 3.66,
+        "loss_tangent": 0.0095,
+        "material": "FR408 Core"
+      }
+    },
+    {
+      "name": "In2.Cu",
+      "type": "copper",
+      "thickness_nm": 17500,
+      "copper_weight_oz": 0.5
+    },
+    {
+      "name": "prepreg_2",
+      "type": "dielectric",
+      "thickness_nm": 170000,
+      "dielectric": {
+        "er": 3.66,
+        "loss_tangent": 0.0095,
+        "material": "FR408 Prepreg"
+      }
+    },
+    {
+      "name": "B.Cu",
+      "type": "copper",
+      "thickness_nm": 70000,
+      "copper_weight_oz": 2.0
+    }
+  ]
+}
