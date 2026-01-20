@@ -79,6 +79,13 @@ from .stackups import (
     load_stackup,
     load_stackup_from_dict,
 )
+from .toolchain import (
+    DEFAULT_LOCK_PATH,
+    ToolchainConfig,
+    ToolchainLoadError,
+    compute_toolchain_hash,
+    load_toolchain_lock,
+)
 from .units import LengthNM, parse_length_nm
 
 __all__ = [
@@ -181,4 +188,12 @@ __all__ = [
     "compute_cache_key",
     "is_cache_valid",
     "run_export_pipeline",
+    # Toolchain types
+    "ToolchainConfig",
+    "ToolchainLoadError",
+    # Toolchain constants
+    "DEFAULT_LOCK_PATH",
+    # Toolchain functions
+    "compute_toolchain_hash",
+    "load_toolchain_lock",
 ]
