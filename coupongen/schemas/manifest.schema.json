@@ -152,6 +152,11 @@
           "type": "string",
           "enum": ["local", "docker"],
           "description": "Execution mode for KiCad CLI"
+        },
+        "generator_git_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git SHA of the coupongen code that generated this manifest"
         }
       }
     },
