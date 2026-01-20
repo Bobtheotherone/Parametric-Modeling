@@ -1,0 +1,113 @@
+# MLflow Configuration for Formula Foundry M3 Artifact Tracking
+#
+# This configuration sets up MLflow with a local SQLite backend store
+# and local artifact root. All paths are relative to the project root.
+#
+# Design doc reference: Section 16 - MLflow configuration with SQLite backend
+
+# Tracking server configuration (local mode - no server required)
+tracking:
+  # Backend store for experiment/run metadata
+  # Uses SQLite for portability and simplicity
+  backend_store_uri: "sqlite:///data/mlflow/mlruns.db"
+
+  # Local artifact storage root (artifact files, not metadata)
+  artifact_root: "data/mlflow/artifacts"
+
+  # Default experiment name for formula foundry runs
+  default_experiment: "formula-foundry"
+
+# Experiment naming conventions
+experiments:
+  # Prefix for all experiments
+  prefix: "ff"
+
+  # Standard experiment names per milestone
+  names:
+    m1_coupongen: "ff-m1-coupongen"
+    m2_simulation: "ff-m2-simulation"
+    m3_pipeline: "ff-m3-pipeline"
+    m4_macromodel: "ff-m4-macromodel"
+    m5_symbolic: "ff-m5-symbolic"
+    m6_loop: "ff-m6-loop"
+
+# Run tagging conventions
+tags:
+  # Required tags for every run
+  required:
+    - "git_sha"
+    - "design_doc_sha256"
+    - "environment_fingerprint"
+    - "determinism_mode"
+
+  # Optional tags
+  optional:
+    - "coupon_id"
+    - "design_hash"
+    - "toolchain_hash"
+    - "backend"
+
+# Parameter logging conventions
+parameters:
+  # Parameters logged for coupon generation runs
+  coupongen:
+    - "coupon_family"
+    - "fab_profile"
+    - "stackup_id"
+    - "constraint_mode"
+
+  # Parameters logged for simulation runs
+  simulation:
+    - "sim_type"
+    - "mesh_resolution"
+    - "frequency_range"
+    - "port_count"
+
+  # Parameters logged for symbolic regression runs
+  symbolic:
+    - "formula_complexity"
+    - "dataset_version"
+    - "search_algorithm"
+
+# Metrics logging conventions
+metrics:
+  # Metrics logged for simulation runs
+  simulation:
+    - "insertion_loss_db"
+    - "return_loss_db"
+    - "runtime_seconds"
+    - "mesh_cell_count"
+
+  # Metrics logged for symbolic regression runs
+  symbolic:
+    - "rmse"
+    - "r_squared"
+    - "formula_complexity_score"
+    - "parsimony_score"
+
+# Artifact linking strategy
+artifacts:
+  # Link to substrate artifact store rather than duplicating
+  # This avoids double-storing large files
+  link_mode: "reference"
+
+  # Artifacts to log as references (path in MLflow -> logical path in artifact store)
+  references:
+    - "manifest.json"
+    - "logs.jsonl"
+
+  # Artifacts to log directly (small files only)
+  direct:
+    - "metrics.json"
+    - "params.json"
+
+# Retention and cleanup
+retention:
+  # Keep runs for at least this many days before GC eligible
+  min_retention_days: 30
+
+  # Keep at least this many recent runs per experiment
+  min_runs_per_experiment: 100
+
+  # Archive runs older than this (moved to archive experiment)
+  archive_after_days: 90
