@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 coupongen = "formula_foundry.coupongen.cli_main:main"
+m3 = "formula_foundry.m3.cli_main:main"
 
 [project.optional-dependencies]
 dev = [
