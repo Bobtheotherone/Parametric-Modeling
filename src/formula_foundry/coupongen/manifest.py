@@ -6,6 +6,7 @@ provenance information and export hashes.
 Satisfies:
     - REQ-M1-018: The repo must emit a manifest.json for every build containing
                   required provenance fields and export hashes.
+    - CP-5.1: Ensure toolchain provenance always captured (lock_file_toolchain_hash)
 
 Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
     - schema_version, coupon_family
@@ -19,7 +20,9 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
         - kicad.cli_version_output
         - docker.image_ref (tag+digest)
         - mode
-    - toolchain_hash
+        - generator_git_sha
+        - lock_file_toolchain_hash (CP-5.1: from toolchain lock file)
+    - toolchain_hash (computed from runtime toolchain metadata)
     - exports list with canonical hashes
     - verification:
         - constraints (passed + failed_ids)

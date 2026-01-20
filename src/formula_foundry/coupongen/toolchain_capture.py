@@ -1,15 +1,17 @@
 """Toolchain provenance capture for coupon builds.
 
 This module ensures complete toolchain provenance is captured for Docker builds,
-per CP-5.3 requirements:
+per CP-5.1 and CP-5.3 requirements:
 - kicad-cli version is always run inside the container
 - Docker image reference (tag+digest) is recorded
 - KiCad version string is recorded
 - CLI version output is recorded
 - Generator git sha is recorded
 - 'unknown' values are never allowed for docker builds
+- toolchain_hash from lock file is recorded for traceability
 
 Satisfies:
+    - CP-5.1: Ensure toolchain provenance always captured
     - CP-5.3: Ensure toolchain provenance always captured
     - D5: Toolchain provenance incomplete in manifest (fix)
 """
@@ -25,6 +27,7 @@ from formula_foundry.substrate import get_git_sha
 from .kicad import KicadCliRunner, get_kicad_cli_version
 from .kicad.cli import KicadCliMode
 from .kicad.runners.docker import DockerKicadRunner, load_docker_image_ref
+from .toolchain import ToolchainLoadError, load_toolchain_lock
 
 
 class ToolchainProvenanceError(RuntimeError):
@@ -43,6 +46,7 @@ class ToolchainProvenance:
         kicad_cli_version: Full kicad-cli version output (e.g., "9.0.7").
         docker_image_ref: Full Docker image reference with digest (e.g., "kicad/kicad:9.0.7@sha256:...").
         generator_git_sha: Git SHA of the generator codebase.
+        lock_file_toolchain_hash: SHA256 hash from the toolchain lock file (for traceability).
     """
 
     mode: KicadCliMode
@@ -50,12 +54,14 @@ class ToolchainProvenance:
     kicad_cli_version: str
     docker_image_ref: str | None
     generator_git_sha: str
+    lock_file_toolchain_hash: str | None = None
 
     def to_metadata(self) -> dict[str, Any]:
         """Convert to toolchain metadata dict for manifest.
 
         Returns:
-            Dictionary with kicad, docker, mode, and generator_git_sha keys.
+            Dictionary with kicad, docker, mode, generator_git_sha, and
+            lock_file_toolchain_hash keys.
         """
         result: dict[str, Any] = {
             "kicad": {
@@ -67,6 +73,8 @@ class ToolchainProvenance:
         }
         if self.docker_image_ref:
             result["docker"] = {"image_ref": self.docker_image_ref}
+        if self.lock_file_toolchain_hash:
+            result["lock_file_toolchain_hash"] = self.lock_file_toolchain_hash
         return result
 
 
@@ -136,13 +144,25 @@ def _capture_docker_provenance(
     """Capture provenance for docker mode.
 
     Runs kicad-cli --version inside the container and loads the full image ref.
+    Also loads the toolchain_hash from the lock file for traceability (CP-5.1).
 
     Raises:
         ToolchainProvenanceError: If kicad-cli version cannot be determined.
     """
-    # Load full docker image reference with digest
+    # Load full docker image reference with digest and toolchain_hash from lock file
+    lock_file_toolchain_hash: str | None = None
     try:
-        docker_image_ref = load_docker_image_ref(lock_file)
+        toolchain_config = load_toolchain_lock(lock_path=lock_file)
+        docker_image_ref = toolchain_config.pinned_image_ref
+        lock_file_toolchain_hash = toolchain_config.toolchain_hash
+    except ToolchainLoadError:
+        # Fall back to provided image if lock file not found/invalid
+        if docker_image:
+            docker_image_ref = docker_image
+        else:
+            raise ToolchainProvenanceError(
+                "Docker mode requires toolchain lock file or docker_image parameter"
+            )
     except FileNotFoundError:
         # Fall back to provided image if lock file not found
         if docker_image:
@@ -173,6 +193,7 @@ def _capture_docker_provenance(
         kicad_cli_version=kicad_cli_version,
         docker_image_ref=docker_image_ref,
         generator_git_sha=generator_git_sha,
+        lock_file_toolchain_hash=lock_file_toolchain_hash,
     )
 
 
