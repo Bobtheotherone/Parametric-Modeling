@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from formula_foundry.coupongen.resolve import design_hash, resolve
+from formula_foundry.coupongen.resolve import design_hash, resolve, resolved_design_canonical_json
 from formula_foundry.coupongen.spec import CouponSpec
+from formula_foundry.substrate import sha256_bytes
 
 
 def _example_spec_data() -> dict[str, object]:
@@ -107,6 +108,32 @@ def _example_spec_data() -> dict[str, object]:
     }
 
 
+def _example_spec_data_reordered() -> dict[str, object]:
+    original = _example_spec_data()
+    connectors = original["connectors"]
+    discontinuity = original["discontinuity"]
+    return {
+        "coupon_family": original["coupon_family"],
+        "schema_version": original["schema_version"],
+        "units": original["units"],
+        "constraints": original["constraints"],
+        "export": original["export"],
+        "board": original["board"],
+        "stackup": original["stackup"],
+        "toolchain": original["toolchain"],
+        "fab_profile": original["fab_profile"],
+        "transmission_line": original["transmission_line"],
+        "connectors": {"right": connectors["right"], "left": connectors["left"]},
+        "discontinuity": {
+            "return_vias": discontinuity["return_vias"],
+            "signal_via": discontinuity["signal_via"],
+            "plane_cutouts": discontinuity["plane_cutouts"],
+            "antipads": discontinuity["antipads"],
+            "type": discontinuity["type"],
+        },
+    }
+
+
 def test_resolve_emits_integer_nm_and_groups() -> None:
     spec = CouponSpec.model_validate(_example_spec_data())
     resolved = resolve(spec)
@@ -128,3 +155,21 @@ def test_design_hash_is_stable() -> None:
     resolved_b = resolve(spec)
 
     assert design_hash(resolved_a) == design_hash(resolved_b)
+
+
+def test_resolved_design_canonical_json_is_stable() -> None:
+    spec_a = CouponSpec.model_validate(_example_spec_data())
+    spec_b = CouponSpec.model_validate(_example_spec_data_reordered())
+    resolved_a = resolve(spec_a)
+    resolved_b = resolve(spec_b)
+
+    assert resolved_design_canonical_json(resolved_a) == resolved_design_canonical_json(resolved_b)
+
+
+def test_design_hash_matches_canonical_json_sha256() -> None:
+    spec = CouponSpec.model_validate(_example_spec_data())
+    resolved = resolve(spec)
+
+    canonical = resolved_design_canonical_json(resolved)
+    expected = sha256_bytes(canonical.encode("utf-8"))
+    assert design_hash(resolved) == expected
