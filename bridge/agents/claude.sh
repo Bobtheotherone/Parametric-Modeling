@@ -99,6 +99,14 @@ fi
 if supports_flag "--permission-mode"; then
   COMMON_ARGS+=(--permission-mode dontAsk)
 fi
+# Prefer newer/stronger flags that skip permission prompts entirely (when supported).
+if supports_flag "--dangerously-skip-permissions"; then
+  COMMON_ARGS+=(--dangerously-skip-permissions)
+elif supports_flag "--skip-permissions"; then
+  COMMON_ARGS+=(--skip-permissions)
+elif supports_flag "--skip-permission-prompts"; then
+  COMMON_ARGS+=(--skip-permission-prompts)
+fi
 if [[ -n "$CLAUDE_TOOLS" ]] && supports_flag "--tools"; then
   COMMON_ARGS+=(--tools "$CLAUDE_TOOLS")
 fi
@@ -274,6 +282,107 @@ def read_json(path: str):
         return None
     return jload(raw) if raw else None
 
+
+def parse_json_sequence(path: str) -> list:
+    """Parse a file containing one or more JSON values (sequence/stream).
+
+    Handles:
+    - Multiple concatenated JSON values (with or without whitespace)
+    - Pretty-printed multi-line JSON arrays/objects
+    - JSON Lines (one per line)
+    - Single minified JSON array
+
+    Uses json.JSONDecoder().raw_decode() to robustly parse any valid JSON sequence.
+    """
+    try:
+        raw = open(path, "r", encoding="utf-8").read()
+    except Exception:
+        return []
+
+    objects = []
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(raw)
+
+    while idx < n:
+        # Skip whitespace
+        while idx < n and raw[idx] in " \t\n\r":
+            idx += 1
+        if idx >= n:
+            break
+
+        try:
+            obj, end = decoder.raw_decode(raw, idx)
+            # Flatten top-level arrays (Claude outputs arrays of events)
+            if isinstance(obj, list):
+                objects.extend(obj)
+            else:
+                objects.append(obj)
+            idx = end
+        except json.JSONDecodeError:
+            # Skip one character and try again (handles trailing garbage)
+            idx += 1
+
+    return objects
+
+
+def extract_turn_from_claude_jsonlines(path: str):
+    """
+    Extract the turn JSON from Claude CLI JSON stream output.
+
+    Claude CLI outputs JSON events that can be:
+    - Multiple concatenated JSON values
+    - Pretty-printed multi-line JSON arrays/objects
+    - JSON Lines (one per line)
+
+    Priority order for extraction:
+    1. Last event with type=="result" AND has a string field "result" → parse that string
+    2. Else last event with type=="assistant" and message.content[*].type=="text" → concatenate text
+    3. Else fail
+    """
+    objects = parse_json_sequence(path)
+
+    if not objects:
+        return None
+
+    # Priority 1: Look for type=="result" events with a "result" string field
+    result_events = [
+        obj for obj in objects
+        if isinstance(obj, dict) and obj.get("type") == "result"
+    ]
+
+    for evt in reversed(result_events):
+        result_str = evt.get("result")
+        if isinstance(result_str, str) and result_str.strip():
+            turn = parse_turn_from_text(result_str)
+            if turn is not None:
+                return turn
+
+    # Priority 2: Look for type=="assistant" events with message.content[*].text
+    assistant_messages = [
+        obj for obj in objects
+        if isinstance(obj, dict) and obj.get("type") == "assistant" and "message" in obj
+    ]
+
+    if not assistant_messages:
+        return None
+
+    last_msg = assistant_messages[-1]
+    message = last_msg.get("message", {})
+    content = message.get("content", [])
+
+    # Extract text from content blocks
+    text_content = ""
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text_content += block.get("text", "")
+
+    if not text_content:
+        return None
+
+    # Try to parse the text as a turn JSON
+    return parse_turn_from_text(text_content)
+
 def read_text(path: str) -> str:
     try:
         return open(path, "r", encoding="utf-8").read()
@@ -325,7 +434,7 @@ def extract_balanced_object(s: str) -> str | None:
     return None
 
 def extract_stats_ids(text: str) -> list[str]:
-    return sorted(set(re.findall(r"\b(?:CX|GM|CL)-\d+\b", text)))
+    return sorted(set(re.findall(r"\b(?:CX|CL)-\d+\b", text)))
 
 def choose_stats_ref(ids: list[str]) -> list[str]:
     if not ids:
@@ -431,31 +540,37 @@ def parse_turn_from_text(model_text: str):
             return t2
     return None
 
-# Choose best wrapper: prefer schema wrapper if not error and parseable.
-ws = read_json(wrap_schema)
-wp = read_json(wrap_plain)
-
-candidates = []
-if isinstance(ws, dict):
-    candidates.append(ws)
-if isinstance(wp, dict):
-    candidates.append(wp)
+# Try to extract turn from Claude CLI JSON Lines output.
+# Claude CLI outputs JSON Lines with init events and assistant messages.
+# The turn JSON is in message.content[0].text of the last assistant message.
 
 best_turn = None
 best_model_text = ""
-best_is_error = True
 
-for w in candidates:
-    is_error, mt = wrapper_to_model_text(w)
-    if not mt:
-        continue
-    t = parse_turn_from_text(mt)
-    if t is not None:
-        # Prefer non-error; otherwise first parseable.
-        if best_turn is None or (best_is_error and not is_error):
-            best_turn = t
-            best_model_text = mt
-            best_is_error = is_error
+# Try schema wrapper first (more likely to have structured output)
+for wrapper_path in [wrap_schema, wrap_plain]:
+    turn = extract_turn_from_claude_jsonlines(wrapper_path)
+    if turn is not None:
+        best_turn = turn
+        # Read raw content for diagnostics
+        try:
+            best_model_text = open(wrapper_path, "r", encoding="utf-8").read()[:8000]
+        except Exception:
+            best_model_text = ""
+        break
+
+# Fallback: try legacy wrapper format (single JSON object with result/response keys)
+if best_turn is None:
+    for wrapper_path in [wrap_schema, wrap_plain]:
+        ws = read_json(wrapper_path)
+        if isinstance(ws, dict):
+            is_error, mt = wrapper_to_model_text(ws)
+            if mt:
+                t = parse_turn_from_text(mt)
+                if t is not None:
+                    best_turn = t
+                    best_model_text = mt
+                    break
 
 stats_ids = extract_stats_ids(prompt_text)
 milestone_id = extract_milestone_id(prompt_text)
@@ -488,9 +603,31 @@ def synthesize(reason: str, model_text: str) -> dict:
     }
 
 if best_turn is None:
-    out = synthesize("Claude did not emit a parseable JSON turn; synthesized.", best_model_text)
-    print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
-    raise SystemExit(0)
+    # Save raw output to debug file for diagnostics
+    import pathlib
+    out_path = pathlib.Path(sys.argv[1])  # wrap_schema path
+    debug_path = out_path.parent / f"{out_path.stem}_claude_raw_stream.txt"
+    try:
+        raw_content = ""
+        for p in [wrap_schema, wrap_plain]:
+            try:
+                raw_content += f"\\n=== {p} ===\\n"
+                raw_content += open(p, "r", encoding="utf-8").read()
+            except Exception:
+                raw_content += "(could not read)\\n"
+        debug_path.write_text(raw_content, encoding="utf-8")
+    except Exception:
+        pass
+
+    # Write error to stderr
+    reason = "Claude did not emit a parseable JSON turn."
+    diag = f"Raw output saved to: {debug_path}\\n"
+    diag += f"wrap_schema: {wrap_schema}\\n"
+    diag += f"wrap_plain: {wrap_plain}\\n"
+    sys.stderr.write(f"ERROR: {reason}\\n{diag}\\n")
+
+    # Exit with non-zero to signal failure to orchestrator
+    raise SystemExit(1)
 
 # Normalize parsed turn to strict schema
 t = best_turn
@@ -509,7 +646,7 @@ out["gates_passed"] = to_str_list(t.get("gates_passed", []))
 out["requirement_progress"] = normalize_requirement_progress(t.get("requirement_progress"))
 
 na = t.get("next_agent")
-out["next_agent"] = na if na in ("codex", "gemini", "claude") else "codex"
+out["next_agent"] = na if na in ("codex", "claude") else "codex"
 out["next_prompt"] = to_str(t.get("next_prompt"), "")
 out["delegate_rationale"] = to_str(t.get("delegate_rationale"), "")
 
@@ -527,47 +664,47 @@ else:
 
 # Emit only required keys
 out = {k: out.get(k) for k in REQUIRED_KEYS}
+
+# Validate against schema
+try:
+    import jsonschema
+    jsonschema.validate(instance=out, schema=schema)
+except ImportError:
+    # jsonschema not available; skip validation (tests will catch schema issues)
+    pass
+except jsonschema.ValidationError as e:
+    import pathlib
+    out_path = pathlib.Path(sys.argv[1])
+    debug_path = out_path.parent / f"{out_path.stem}_claude_raw_stream.txt"
+    try:
+        raw_content = ""
+        for p in [wrap_schema, wrap_plain]:
+            try:
+                raw_content += f"\\n=== {p} ===\\n"
+                raw_content += open(p, "r", encoding="utf-8").read()
+            except Exception:
+                raw_content += "(could not read)\\n"
+        debug_path.write_text(raw_content, encoding="utf-8")
+    except Exception:
+        pass
+
+    sys.stderr.write(f"ERROR: Normalized turn failed schema validation: {e.message}\\n")
+    sys.stderr.write(f"Raw output saved to: {debug_path}\\n")
+    raise SystemExit(1)
+
 print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 PY
 
-# If normalization failed for some unexpected reason, emit a minimal valid JSON turn.
+# If normalization failed for some unexpected reason, exit with error instead of synthesizing.
 if [[ ! -s "$OUT_FILE" ]]; then
-  python3 - <<'PY' "$OUT_FILE"
-import json
-import os
-import sys
-
-auth_mode = "api_key" if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_API_KEY") else "subscription"
-warning = ""
-if auth_mode == "api_key":
-    warning = "WARNING: ANTHROPIC_API_KEY/CLAUDE_API_KEY set; Claude Code will use API billing instead of Pro/Max subscription."
-
-summary = "Claude wrapper produced empty output; synthesized."
-if warning:
-    summary = summary + "\\n" + warning
-summary = summary + f"\\nwrapper_status=error auth_mode={auth_mode}"
-
-payload = {
-    "agent": "claude",
-    "milestone_id": "M0",
-    "phase": "plan",
-    "work_completed": False,
-    "project_complete": False,
-    "summary": summary,
-    "gates_passed": [],
-    "requirement_progress": {"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []},
-    "next_agent": "codex",
-    "next_prompt": "Continue using tools.verify output; fix remaining gates and commit.",
-    "delegate_rationale": "(empty)",
-    "stats_refs": ["CL-1"],
-    "needs_write_access": True,
-    "artifacts": [],
-}
-
-with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-PY
+  echo "ERROR: Claude wrapper produced empty output. Raw files:" >&2
+  echo "  schema: $WRAP_SCHEMA" >&2
+  echo "  plain: $WRAP_PLAIN" >&2
+  echo "  stderr_schema: $ERR_SCHEMA" >&2
+  echo "  stderr_plain: $ERR_PLAIN" >&2
+  exit 1
 fi
 
 cat "$OUT_FILE"
 exit 0
+
