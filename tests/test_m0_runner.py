@@ -103,10 +103,7 @@ def test_runner_thread_pool_cap() -> None:
     hardware = runner.HardwareConfig(cpu_cores=4, ram_gb=32.0, vram_gb=0.0)
     local_runner = runner.LocalJobRunner(hardware)
 
-    tasks = [
-        runner.TaskSpec(f"task-{i}", runner.ResourceRequest(1, 0.1, 0.0), fn=lambda: "ok")
-        for i in range(200)
-    ]
+    tasks = [runner.TaskSpec(f"task-{i}", runner.ResourceRequest(1, 0.1, 0.0), fn=lambda: "ok") for i in range(200)]
 
     with mock.patch(
         "formula_foundry.substrate.runner.concurrent.futures.ThreadPoolExecutor",
@@ -118,7 +115,6 @@ def test_runner_thread_pool_cap() -> None:
     actual_cap = captured_max_workers[0]
     expected_cap = max(4, hardware.cpu_cores)
     assert actual_cap == expected_cap, (
-        f"ThreadPoolExecutor max_workers={actual_cap}, expected {expected_cap} "
-        f"(capped by max(4, cpu_cores={hardware.cpu_cores}))"
+        f"ThreadPoolExecutor max_workers={actual_cap}, expected {expected_cap} (capped by max(4, cpu_cores={hardware.cpu_cores}))"
     )
     assert actual_cap < 200, "max_workers must NOT equal len(tasks) for large task lists"

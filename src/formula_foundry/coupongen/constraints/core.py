@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .resolve import ResolvedDesign, resolve
-from .spec import CouponSpec
+from ..fab_profiles import FabCapabilityProfile, get_fab_limits, load_fab_profile
+from ..resolve import ResolvedDesign, resolve
+from ..spec import CouponSpec
 
 ConstraintTier = Literal["T0", "T1", "T2", "T3", "T4"]
 
@@ -202,13 +203,53 @@ def _compute_repair_distance(repair_map: dict[str, dict[str, int]]) -> float:
 
 
 def resolve_fab_limits(spec: CouponSpec) -> dict[str, int]:
+    """Resolve fab limits from profile ID and any overrides.
+
+    Attempts to load the fab profile by ID. If the profile exists, uses its
+    constraints as the base and applies any overrides from the spec.
+    If the profile doesn't exist, falls back to conservative defaults.
+
+    Args:
+        spec: CouponSpec with fab_profile.id and optional overrides
+
+    Returns:
+        Dictionary of constraint limits in nanometers
+    """
     overrides = spec.fab_profile.overrides or {}
-    return {
-        "min_trace_width_nm": int(overrides.get("min_trace_width_nm", 100_000)),
-        "min_gap_nm": int(overrides.get("min_gap_nm", 100_000)),
-        "min_drill_nm": int(overrides.get("min_drill_nm", 100_000)),
-        "min_annular_ring_nm": int(overrides.get("min_annular_ring_nm", 100_000)),
-    }
+
+    # Try to load the profile by ID
+    try:
+        profile = load_fab_profile(spec.fab_profile.id)
+        base_limits = get_fab_limits(profile)
+    except FileNotFoundError:
+        # Fall back to conservative defaults if profile not found
+        base_limits = {
+            "min_trace_width_nm": 100_000,
+            "min_gap_nm": 100_000,
+            "min_drill_nm": 100_000,
+            "min_annular_ring_nm": 100_000,
+            "min_via_diameter_nm": 300_000,
+            "min_edge_clearance_nm": 200_000,
+            "min_soldermask_expansion_nm": 50_000,
+            "min_soldermask_web_nm": 100_000,
+            "min_silkscreen_width_nm": 150_000,
+            "min_silkscreen_clearance_nm": 125_000,
+        }
+
+    # Apply overrides
+    return {key: int(overrides.get(key, base_limits.get(key, 100_000))) for key in base_limits}
+
+
+def resolve_fab_limits_from_profile(profile: FabCapabilityProfile) -> dict[str, int]:
+    """Resolve fab limits directly from a loaded FabCapabilityProfile.
+
+    Args:
+        profile: A loaded FabCapabilityProfile instance
+
+    Returns:
+        Dictionary of constraint limits in nanometers
+    """
+    return get_fab_limits(profile)
 
 
 def _min_constraint(

@@ -1,0 +1,12 @@
+# Ignore files not needed in Docker build context
+*.md
+!README.md
+*.pyc
+__pycache__
+.git
+.gitignore
+*.log
+*.tmp
+.env
+.env.*
+docker-compose*.yml

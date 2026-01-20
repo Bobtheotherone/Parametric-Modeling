@@ -9,6 +9,7 @@ from formula_foundry.coupongen.spec import CouponSpec
 
 
 def _example_spec_data() -> dict[str, object]:
+    """Create example F1 spec data with valid discontinuity block."""
     return {
         "schema_version": 1,
         "coupon_family": "F1_SINGLE_ENDED_VIA",
@@ -59,7 +60,27 @@ def _example_spec_data() -> dict[str, object]:
             "length_right_nm": 25000000,
             "ground_via_fence": None,
         },
-        "discontinuity": None,
+        "discontinuity": {
+            "type": "VIA_TRANSITION",
+            "signal_via": {
+                "drill_nm": 300000,
+                "diameter_nm": 650000,
+                "pad_diameter_nm": 900000,
+            },
+            "antipads": {
+                "In1.Cu": {
+                    "shape": "CIRCLE",
+                    "r_nm": 1100000,
+                },
+            },
+            "return_vias": {
+                "pattern": "RING",
+                "count": 4,
+                "radius_nm": 1700000,
+                "via": {"drill_nm": 300000, "diameter_nm": 650000},
+            },
+            "plane_cutouts": {},
+        },
         "constraints": {
             "mode": "REJECT",
             "drc": {"must_pass": True, "severity": "all"},

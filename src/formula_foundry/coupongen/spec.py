@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .units import LengthNM
+
+_SCHEMA_DIR = Path(__file__).parent.parent.parent.parent / "coupongen" / "schemas"
+COUPONSPEC_SCHEMA_PATH = _SCHEMA_DIR / "coupon_spec.schema.json"
 
 
 class _SpecBase(BaseModel):
@@ -177,4 +182,69 @@ COUPONSPEC_SCHEMA = CouponSpec.model_json_schema()
 
 
 def load_couponspec(data: dict[str, Any]) -> CouponSpec:
+    """Validate and load a CouponSpec from a dictionary.
+
+    Args:
+        data: Dictionary containing the CouponSpec data.
+
+    Returns:
+        Validated CouponSpec instance with all lengths normalized to integer nm.
+
+    Raises:
+        pydantic.ValidationError: If the data fails validation.
+    """
     return CouponSpec.model_validate(data)
+
+
+def load_couponspec_from_file(path: Path | str) -> CouponSpec:
+    """Load and validate a CouponSpec from a YAML or JSON file.
+
+    Args:
+        path: Path to the YAML (.yaml, .yml) or JSON (.json) file.
+
+    Returns:
+        Validated CouponSpec instance with all lengths normalized to integer nm.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file extension is not supported.
+        pydantic.ValidationError: If the data fails validation.
+        yaml.YAMLError: If YAML parsing fails.
+        json.JSONDecodeError: If JSON parsing fails.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"CouponSpec file not found: {path}")
+
+    suffix = path.suffix.lower()
+    text = path.read_text(encoding="utf-8")
+
+    if suffix in (".yaml", ".yml"):
+        try:
+            import yaml
+        except ImportError as exc:
+            raise ImportError("pyyaml is required for YAML support: pip install pyyaml") from exc
+        data = yaml.safe_load(text)
+    elif suffix == ".json":
+        data = json.loads(text)
+    else:
+        raise ValueError(f"Unsupported file extension: {suffix}. Use .yaml, .yml, or .json")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"CouponSpec file must contain a mapping, got {type(data).__name__}")
+
+    return load_couponspec(data)
+
+
+def get_json_schema() -> dict[str, Any]:
+    """Return the JSON Schema for CouponSpec.
+
+    Loads from the canonical schema file if available, otherwise
+    returns the Pydantic-generated schema.
+
+    Returns:
+        JSON Schema dictionary.
+    """
+    if COUPONSPEC_SCHEMA_PATH.exists():
+        return json.loads(COUPONSPEC_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return COUPONSPEC_SCHEMA

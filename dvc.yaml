@@ -1,0 +1,155 @@
+# DVC Pipeline Configuration for Formula Foundry
+# M3: Data Provenance and Artifact Management
+#
+# This defines the core stages of the parametric coupon generation and
+# EM simulation pipeline. Stages use file-based dependencies and outputs
+# for deterministic caching and reproducibility.
+
+# =============================================================================
+# STAGES
+# =============================================================================
+
+stages:
+  # ---------------------------------------------------------------------------
+  # Stage: Generate coupon geometry from DSL spec
+  # ---------------------------------------------------------------------------
+  generate_coupon:
+    cmd: >-
+      python -m coupongen.cli
+      --spec ${spec_file}
+      --output-dir ${coupon_output_dir}
+    deps:
+      - coupongen/
+      - ${spec_file}
+    params:
+      - params.yaml:
+          - coupon.family
+          - coupon.stackup
+    outs:
+      - ${coupon_output_dir}/coupon.kicad_pcb
+      - ${coupon_output_dir}/manifest.json
+    metrics:
+      - ${coupon_output_dir}/metrics.json:
+          cache: false
+
+  # ---------------------------------------------------------------------------
+  # Stage: Run KiCad DRC on generated coupon
+  # ---------------------------------------------------------------------------
+  run_drc:
+    cmd: >-
+      kicad-cli pcb drc
+      --output ${coupon_output_dir}/drc_report.json
+      --format json
+      --severity-all
+      ${coupon_output_dir}/coupon.kicad_pcb
+    deps:
+      - ${coupon_output_dir}/coupon.kicad_pcb
+    outs:
+      - ${coupon_output_dir}/drc_report.json:
+          cache: false
+    metrics:
+      - ${coupon_output_dir}/drc_summary.json:
+          cache: false
+
+  # ---------------------------------------------------------------------------
+  # Stage: Export Gerbers and drill files
+  # ---------------------------------------------------------------------------
+  export_gerbers:
+    cmd: >-
+      kicad-cli pcb export gerbers
+      --output ${coupon_output_dir}/gerbers/
+      ${coupon_output_dir}/coupon.kicad_pcb
+      &&
+      kicad-cli pcb export drill
+      --output ${coupon_output_dir}/gerbers/
+      ${coupon_output_dir}/coupon.kicad_pcb
+    deps:
+      - ${coupon_output_dir}/coupon.kicad_pcb
+      - ${coupon_output_dir}/drc_report.json
+    outs:
+      - ${coupon_output_dir}/gerbers/
+
+  # ---------------------------------------------------------------------------
+  # Stage: Generate EM simulation mesh (M2 placeholder)
+  # ---------------------------------------------------------------------------
+  generate_em_mesh:
+    cmd: >-
+      python -m formula_foundry.openems.mesh_generator
+      --coupon-dir ${coupon_output_dir}
+      --output-dir ${sim_output_dir}
+    deps:
+      - src/formula_foundry/openems/
+      - ${coupon_output_dir}/manifest.json
+      - ${coupon_output_dir}/coupon.kicad_pcb
+    outs:
+      - ${sim_output_dir}/mesh.xml
+      - ${sim_output_dir}/simulation_config.json
+
+  # ---------------------------------------------------------------------------
+  # Stage: Run OpenEMS simulation (M2 placeholder)
+  # ---------------------------------------------------------------------------
+  run_simulation:
+    cmd: >-
+      python -m formula_foundry.openems.runner
+      --config ${sim_output_dir}/simulation_config.json
+      --output-dir ${sim_output_dir}
+    deps:
+      - src/formula_foundry/openems/
+      - ${sim_output_dir}/mesh.xml
+      - ${sim_output_dir}/simulation_config.json
+    outs:
+      - ${sim_output_dir}/s_parameters.s2p
+      - ${sim_output_dir}/fields/
+    metrics:
+      - ${sim_output_dir}/sim_metrics.json:
+          cache: false
+
+  # ---------------------------------------------------------------------------
+  # Stage: Create dataset snapshot
+  # ---------------------------------------------------------------------------
+  create_dataset:
+    cmd: >-
+      python -m formula_foundry.m3.dataset_builder
+      --input-dirs ${dataset_input_dirs}
+      --output ${dataset_output}
+      --schema-version 1
+    deps:
+      - src/formula_foundry/m3/
+    outs:
+      - ${dataset_output}:
+          persist: true
+    metrics:
+      - ${dataset_output}/dataset_stats.json:
+          cache: false
+
+# =============================================================================
+# PARAMETERS (defaults - override via params.yaml or CLI)
+# =============================================================================
+
+vars:
+  - params.yaml
+
+# =============================================================================
+# ARTIFACTS (curated outputs for external consumption)
+# =============================================================================
+
+artifacts:
+  em_dataset_v1:
+    path: data/datasets/em_v1/
+    type: dataset
+    desc: "First validated EM simulation dataset for symbolic regression"
+    labels:
+      - validated
+      - em_simulation
+    meta:
+      schema_version: "1"
+
+# =============================================================================
+# PLOTS (visualization definitions)
+# =============================================================================
+
+plots:
+  - sim_convergence:
+      x: step
+      y: residual
+      template: linear

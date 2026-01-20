@@ -1,49 +1,55 @@
 {
-  "version": 2,
-  "limits": {
-    "max_calls_per_agent": 15,
-    "quota_retry_attempts": 5,
-    "max_total_calls": 150,
-    "max_json_correction_attempts": 3
+  "agents": {
+    "claude": {
+      "quota_error_patterns": [
+        "rate limit",
+        "429",
+        "quota"
+      ],
+      "role": "reviewer",
+      "script": "bridge/agents/claude.sh",
+      "supports_write_access": true
+    },
+    "codex": {
+      "quota_error_patterns": [
+        "rate limit",
+        "429",
+        "quota"
+      ],
+      "role": "implementer",
+      "script": "bridge/agents/codex.sh",
+      "supports_write_access": true
+    }
   },
+  "allow_os_write": true,
+  "enable_agents": [
+    "codex",
+    "claude"
+  ],
   "fallback_order": [
     "codex",
-    "claude",
-    "gemini"
+    "claude"
   ],
-  "agents": {
-    "codex": {
-      "script": "bridge/agents/codex.sh",
-      "model": "gpt-5.2-codex",
-      "role": "implementer",
-      "supports_write_access": true,
-      "quota_error_patterns": [
-        "insufficient_quota",
-        "exceeded your current quota",
-        "rate limit"
-      ]
-    },
-    "gemini": {
-      "script": "bridge/agents/gemini.sh",
-      "model": "gemini-3-pro-preview",
-      "role": "spec_engineer",
-      "supports_write_access": true,
-      "quota_error_patterns": [
-        "TerminalQuotaError",
-        "exhausted your capacity",
-        "quota"
-      ]
-    },
-    "claude": {
-      "script": "bridge/agents/claude.sh",
-      "model": "claude-opus-4-5",
-      "role": "verifier",
-      "supports_write_access": true,
-      "quota_error_patterns": [
-        "rate_limit",
-        "insufficient_quota",
-        "overloaded"
-      ]
-    }
+  "limits": {
+    "max_calls_per_agent": 15,
+    "max_json_correction_attempts": 3,
+    "max_total_calls": 150,
+    "quota_retry_attempts": 5
+  },
+  "parallel": {
+    "consecutive_samples": 3,
+    "cpu_intensive_threshold_pct": 40.0,
+    "disable_gpu_by_default": true,
+    "kill_grace_s": 8.0,
+    "max_workers_default": 8,
+    "mem_intensive_threshold_pct": 40.0,
+    "sample_interval_s": 1.0,
+    "terminal_max_bytes_per_worker": 40000,
+    "terminal_max_line_length": 600
+  },
+  "version": 2,
+  "weights": {
+    "claude": 1.0,
+    "codex": 1.0
   }
 }

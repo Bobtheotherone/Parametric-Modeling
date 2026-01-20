@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_id": "coupon_F1_001_board_v1",
+  "artifact_type": "kicad_board",
+  "content_hash": {
+    "algorithm": "sha256",
+    "digest": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+  },
+  "byte_size": 524288,
+  "created_utc": "2026-01-20T09:15:00Z",
+  "provenance": {
+    "generator": "coupongen",
+    "generator_version": "0.1.0",
+    "hostname": "build-server-01",
+    "username": "ci-runner",
+    "toolchain": [
+      {
+        "name": "kicad-cli",
+        "version": "9.0.7",
+        "docker_image": "kicad/kicad:9.0.7@sha256:abc123"
+      },
+      {
+        "name": "python",
+        "version": "3.11.5"
+      }
+    ],
+    "command": "python -m coupongen generate --spec coupon_F1_001.yaml"
+  },
+  "roles": ["geometry", "final_output"],
+  "lineage": {
+    "run_id": "run_20260120_091500_abc123",
+    "stage_name": "board_generation",
+    "inputs": [
+      {
+        "artifact_id": "coupon_F1_001_spec_v1",
+        "content_hash": {
+          "algorithm": "sha256",
+          "digest": "0000111122223333444455556666777788889999aaaabbbbccccddddeeeefffff"
+        },
+        "relation": "config_from"
+      }
+    ]
+  },
+  "storage_path": "artifacts/boards/coupon_F1_001_board_v1.kicad_pcb",
+  "media_type": "application/x-kicad-pcb",
+  "tags": {
+    "coupon_family": "F1",
+    "fab_profile": "oshpark_4layer"
+  }
+}

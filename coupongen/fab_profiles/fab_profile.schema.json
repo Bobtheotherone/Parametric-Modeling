@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry/schemas/fab_profile.v1.json",
+  "title": "FabCapabilityProfile",
+  "description": "Fabrication capability profile defining DFM constraints for PCB manufacturing. All dimensions are in nanometers (integer nm).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "vendor",
+    "trace",
+    "drill",
+    "via",
+    "soldermask",
+    "silkscreen",
+    "board"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version for fab profile format"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Unique identifier for the fab profile (lowercase, underscores allowed)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name for the fab profile"
+    },
+    "vendor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "PCB fabrication vendor name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the fab profile and its intended use"
+    },
+    "layer_counts": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1,
+      "description": "Supported copper layer counts for this fab profile"
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "min_width_nm",
+        "min_spacing_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_width_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum trace width in nanometers"
+        },
+        "min_spacing_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum trace-to-trace spacing (gap) in nanometers"
+        },
+        "min_width_outer_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum trace width on outer layers if different from inner (optional)"
+        },
+        "min_width_inner_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum trace width on inner layers if different from outer (optional)"
+        }
+      },
+      "description": "Trace (copper track) constraints"
+    },
+    "drill": {
+      "type": "object",
+      "required": [
+        "min_diameter_nm",
+        "min_pth_diameter_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_diameter_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum drill diameter for any hole in nanometers"
+        },
+        "min_pth_diameter_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum plated through-hole drill diameter in nanometers"
+        },
+        "min_npth_diameter_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum non-plated through-hole drill diameter in nanometers (optional)"
+        },
+        "min_via_drill_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum via drill diameter in nanometers (optional, defaults to min_pth_diameter_nm)"
+        },
+        "min_hole_to_hole_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum hole-to-hole spacing in nanometers (optional)"
+        },
+        "aspect_ratio_max": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Maximum aspect ratio (board thickness / drill diameter) for PTH holes"
+        }
+      },
+      "description": "Drill and hole constraints"
+    },
+    "via": {
+      "type": "object",
+      "required": [
+        "min_annular_ring_nm",
+        "min_diameter_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_annular_ring_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum annular ring width in nanometers (pad radius - drill radius)"
+        },
+        "min_diameter_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum via pad diameter in nanometers"
+        },
+        "min_via_to_via_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum via-to-via pad spacing in nanometers (optional)"
+        },
+        "min_via_to_trace_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum via-to-trace spacing in nanometers (optional)"
+        }
+      },
+      "description": "Via constraints"
+    },
+    "soldermask": {
+      "type": "object",
+      "required": [
+        "min_expansion_nm",
+        "min_web_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_expansion_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum soldermask expansion (clearance from pad edge) in nanometers"
+        },
+        "max_expansion_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum soldermask expansion in nanometers (optional)"
+        },
+        "min_web_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum soldermask web (dam) width between openings in nanometers"
+        },
+        "min_opening_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum soldermask opening size in nanometers (optional)"
+        }
+      },
+      "description": "Soldermask constraints"
+    },
+    "silkscreen": {
+      "type": "object",
+      "required": [
+        "min_width_nm",
+        "min_height_nm",
+        "min_clearance_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_width_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum silkscreen line width in nanometers"
+        },
+        "min_height_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum silkscreen text height in nanometers"
+        },
+        "min_clearance_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum silkscreen-to-pad clearance in nanometers"
+        }
+      },
+      "description": "Silkscreen constraints"
+    },
+    "board": {
+      "type": "object",
+      "required": [
+        "min_edge_clearance_nm"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min_edge_clearance_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum copper-to-board-edge clearance in nanometers"
+        },
+        "min_board_width_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum board width in nanometers (optional)"
+        },
+        "min_board_length_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum board length in nanometers (optional)"
+        },
+        "max_board_width_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum board width in nanometers (optional)"
+        },
+        "max_board_length_nm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum board length in nanometers (optional)"
+        }
+      },
+      "description": "Board outline and edge constraints"
+    }
+  }
+}

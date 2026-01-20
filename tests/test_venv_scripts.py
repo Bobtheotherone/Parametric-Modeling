@@ -29,17 +29,14 @@ def test_script_prefers_venv_interpreter(script_name: str) -> None:
     content = script_path.read_text(encoding="utf-8")
 
     # Must check for venv python
-    assert ".venv/bin/python" in content, (
-        f"{script_name} must contain '.venv/bin/python' check for venv-first logic"
-    )
+    assert ".venv/bin/python" in content, f"{script_name} must contain '.venv/bin/python' check for venv-first logic"
 
     # Must NOT directly call bare python3 as the primary interpreter
     # (OK if python3 is used as fallback after venv check)
     lines = content.splitlines()
     non_comment_lines = [line for line in lines if not line.strip().startswith("#")]
     direct_python3_calls = [
-        line for line in non_comment_lines
-        if "python3 -u bridge/loop.py" in line or "python3 bridge/loop.py" in line
+        line for line in non_comment_lines if "python3 -u bridge/loop.py" in line or "python3 bridge/loop.py" in line
     ]
     assert not direct_python3_calls, (
         f"{script_name} should not directly call 'python3 bridge/loop.py'; "

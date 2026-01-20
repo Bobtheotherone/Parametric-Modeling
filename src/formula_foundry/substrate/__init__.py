@@ -1,6 +1,14 @@
 """Substrate utilities for deterministic, GPU-first execution."""
 
-from . import backends, manifest, runner
+from . import artifact_store, backends, manifest, runner
+from .artifact_store import (
+    ArtifactEntry,
+    ArtifactManifest,
+    ArtifactManifestError,
+    ArtifactStore,
+    ArtifactStoreError,
+    ArtifactTransaction,
+)
 from .backends import (
     Backend,
     BackendName,
@@ -58,7 +66,14 @@ __all__ = [
     "VALID_CUBLAS_WORKSPACE_CONFIGS",
     "DeterminismConfig",
     "DeterminismMode",
+    "ArtifactEntry",
+    "ArtifactManifest",
+    "ArtifactManifestError",
+    "ArtifactStore",
+    "ArtifactStoreError",
+    "ArtifactTransaction",
     "apply_determinism",
+    "artifact_store",
     "backends",
     "build_environment_fingerprint",
     "build_environment_payload",

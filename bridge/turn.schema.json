@@ -1,44 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Formula Foundry tri-agent turn schema",
+  "title": "AgentTurn",
   "type": "object",
   "additionalProperties": false,
-  "properties": {
-    "agent": {"type": "string", "enum": ["codex", "gemini", "claude"]},
-    "milestone_id": {"type": "string", "pattern": "^M[0-9]+$"},
-    "phase": {"type": "string", "enum": ["plan", "implement", "verify", "finalize"]},
-    "work_completed": {"type": "boolean"},
-    "project_complete": {"type": "boolean"},
-    "summary": {"type": "string"},
-    "gates_passed": {"type": "array", "items": {"type": "string"}},
-    "requirement_progress": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "covered_req_ids": {"type": "array", "items": {"type": "string"}},
-        "tests_added_or_modified": {"type": "array", "items": {"type": "string"}},
-        "commands_run": {"type": "array", "items": {"type": "string"}}
-      },
-      "required": ["covered_req_ids", "tests_added_or_modified", "commands_run"]
-    },
-    "next_agent": {"type": "string", "enum": ["codex", "gemini", "claude"]},
-    "next_prompt": {"type": "string"},
-    "delegate_rationale": {"type": "string"},
-    "stats_refs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-    "needs_write_access": {"type": "boolean"},
-    "artifacts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "path": {"type": "string"},
-          "description": {"type": "string"}
-        },
-        "required": ["path", "description"]
-      }
-    }
-  },
   "required": [
     "agent",
     "milestone_id",
@@ -54,5 +18,81 @@
     "stats_refs",
     "needs_write_access",
     "artifacts"
-  ]
+  ],
+  "properties": {
+    "agent": {
+      "type": "string",
+      "enum": ["codex", "claude"]
+    },
+    "milestone_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["plan", "implement", "verify", "finalize"]
+    },
+    "work_completed": {
+      "type": "boolean"
+    },
+    "project_complete": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "gates_passed": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "requirement_progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["covered_req_ids", "tests_added_or_modified", "commands_run"],
+      "properties": {
+        "covered_req_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "tests_added_or_modified": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "commands_run": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "next_agent": {
+      "type": "string",
+      "enum": ["codex", "claude"]
+    },
+    "next_prompt": {
+      "type": "string"
+    },
+    "delegate_rationale": {
+      "type": "string"
+    },
+    "stats_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "needs_write_access": {
+      "type": "boolean"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "description"],
+        "properties": {
+          "path": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      }
+    }
+  }
 }

@@ -1,10 +1,10 @@
 {
   "agents": {
-    "gemini": [
+    "codex": [
       {
         "type": "ok",
         "response": {
-          "agent": "gemini",
+          "agent": "codex",
           "milestone_id": "M0",
           "phase": "finalize",
           "work_completed": true,
@@ -16,16 +16,15 @@
             "tests_added_or_modified": [],
             "commands_run": []
           },
-          "next_agent": "codex",
+          "next_agent": "claude",
           "next_prompt": "(mock run done)",
           "delegate_rationale": "No next step; this is a deterministic mock run.",
-          "stats_refs": ["GM-4"],
+          "stats_refs": ["CX-4"],
           "needs_write_access": false,
           "artifacts": []
         }
       }
     ],
-    "codex": [],
     "claude": []
   }
 }

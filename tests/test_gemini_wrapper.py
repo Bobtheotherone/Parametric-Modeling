@@ -1,50 +1,28 @@
+"""Test asserting Gemini has been removed from the codebase.
+
+We previously had a Gemini wrapper but have since removed it.
+This test ensures Gemini artifacts do not re-appear.
+"""
+
 from __future__ import annotations
 
-import json
-import os
-import stat
-import subprocess
 from pathlib import Path
-from typing import Any
-
-import jsonschema  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_PATH = ROOT / "bridge" / "turn.schema.json"
-GEMINI_WRAPPER = ROOT / "bridge" / "agents" / "gemini.sh"
 
 
-def _write_executable(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
-    mode = path.stat().st_mode
-    path.chmod(mode | stat.S_IXUSR)
+def test_gemini_wrapper_does_not_exist() -> None:
+    """Gemini wrapper script should not exist."""
+    gemini_path = ROOT / "bridge" / "agents" / "gemini.sh"
+    assert not gemini_path.exists(), f"Gemini wrapper should be removed but found at {gemini_path}"
 
 
-def _validate_turn(payload: dict[str, Any]) -> None:
-    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    jsonschema.validate(instance=payload, schema=schema)
+def test_config_has_no_gemini_agent() -> None:
+    """Config should not contain gemini agent."""
+    import json
 
-
-def test_gemini_wrapper_emits_schema_valid_json_on_error(tmp_path: Path) -> None:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    gemini_stub = bin_dir / "gemini"
-    _write_executable(gemini_stub, "#!/usr/bin/env bash\necho 'not-json'\n")
-
-    prompt_path = tmp_path / "prompt.txt"
-    prompt_path.write_text("**Milestone:** M0\nGM-1\n", encoding="utf-8")
-    out_path = tmp_path / "out.json"
-
-    env = os.environ.copy()
-    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
-
-    subprocess.run(
-        [str(GEMINI_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
-        check=True,
-        env=env,
-        text=True,
-    )
-
-    payload = json.loads(out_path.read_text(encoding="utf-8"))
-    _validate_turn(payload)
-    assert payload["agent"] == "gemini"
+    config_path = ROOT / "bridge" / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "gemini" not in config.get("agents", {}), "Config should not contain gemini agent"
+    assert "gemini" not in config.get("enable_agents", []), "enable_agents should not include gemini"
+    assert "gemini" not in config.get("fallback_order", []), "fallback_order should not include gemini"

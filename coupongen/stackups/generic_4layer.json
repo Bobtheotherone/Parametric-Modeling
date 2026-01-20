@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "generic_4layer",
+  "name": "Generic 4-Layer FR4",
+  "description": "Generic 4-layer stackup with standard FR4 substrate. 1.6mm total, 1oz outer copper, 0.5oz inner copper.",
+  "vendor": "Generic",
+  "copper_layers": 4,
+  "total_thickness_nm": 1600000,
+  "dielectric_defaults": {
+    "er": 4.5,
+    "loss_tangent": 0.02,
+    "material": "FR4"
+  },
+  "layers": [
+    {
+      "name": "F.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    },
+    {
+      "name": "prepreg_1",
+      "type": "dielectric",
+      "thickness_nm": 200000,
+      "dielectric": {
+        "er": 4.5,
+        "loss_tangent": 0.02,
+        "material": "FR4 Prepreg"
+      }
+    },
+    {
+      "name": "In1.Cu",
+      "type": "copper",
+      "thickness_nm": 17500,
+      "copper_weight_oz": 0.5
+    },
+    {
+      "name": "core",
+      "type": "dielectric",
+      "thickness_nm": 1090000,
+      "dielectric": {
+        "er": 4.5,
+        "loss_tangent": 0.02,
+        "material": "FR4 Core"
+      }
+    },
+    {
+      "name": "In2.Cu",
+      "type": "copper",
+      "thickness_nm": 17500,
+      "copper_weight_oz": 0.5
+    },
+    {
+      "name": "prepreg_2",
+      "type": "dielectric",
+      "thickness_nm": 200000,
+      "dielectric": {
+        "er": 4.5,
+        "loss_tangent": 0.02,
+        "material": "FR4 Prepreg"
+      }
+    },
+    {
+      "name": "B.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    }
+  ]
+}

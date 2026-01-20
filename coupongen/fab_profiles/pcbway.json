@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "id": "pcbway",
+  "name": "PCBWay Standard",
+  "vendor": "PCBWay",
+  "description": "DFM constraints for PCBWay standard PCB service. Based on PCBWay design rules: 3.5 mil trace/space (standard), 0.2mm drill, 3 mil annular ring.",
+  "layer_counts": [1, 2, 4, 6, 8, 10, 12, 14],
+  "trace": {
+    "min_width_nm": 88900,
+    "min_spacing_nm": 88900,
+    "min_width_outer_nm": 88900,
+    "min_width_inner_nm": 88900
+  },
+  "drill": {
+    "min_diameter_nm": 200000,
+    "min_pth_diameter_nm": 200000,
+    "min_npth_diameter_nm": 200000,
+    "min_via_drill_nm": 200000,
+    "min_hole_to_hole_nm": 200000,
+    "aspect_ratio_max": 10.0
+  },
+  "via": {
+    "min_annular_ring_nm": 76200,
+    "min_diameter_nm": 352400,
+    "min_via_to_via_nm": 127000,
+    "min_via_to_trace_nm": 88900
+  },
+  "soldermask": {
+    "min_expansion_nm": 50800,
+    "max_expansion_nm": 101600,
+    "min_web_nm": 76200,
+    "min_opening_nm": 101600
+  },
+  "silkscreen": {
+    "min_width_nm": 152400,
+    "min_height_nm": 762000,
+    "min_clearance_nm": 127000
+  },
+  "board": {
+    "min_edge_clearance_nm": 254000,
+    "min_board_width_nm": 5000000,
+    "min_board_length_nm": 5000000,
+    "max_board_width_nm": 500000000,
+    "max_board_length_nm": 600000000
+  }
+}

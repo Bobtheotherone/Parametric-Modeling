@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deterministic run: uses bridge/mock_scenarios/milestone_demo.json, no LLM calls.
+# Sequential orchestrator runner (mock mode)
+#
+# Usage:
+#   ./run_mock.sh                    # Default: starts with codex
+#   ./run_mock.sh --only-claude      # ONLY use Claude for ALL operations
+#   ./run_mock.sh --only-codex       # ONLY use Codex for ALL operations
+#   ./run_mock.sh --start-agent claude  # Start with Claude (but allow alternation)
 
-# Prefer venv interpreter for reproducibility; fall back to system python3.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -x "$SCRIPT_DIR/.venv/bin/python3" ]; then
-  PYTHON="$SCRIPT_DIR/.venv/bin/python3"
-elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
-  PYTHON="$SCRIPT_DIR/.venv/bin/python"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check for venv python interpreter (.venv/bin/python or .venv/bin/python3)
+if [ -x "${ROOT}/.venv/bin/python" ]; then
+  PY="${ROOT}/.venv/bin/python"
+elif [ -x "${ROOT}/.venv/bin/python3" ]; then
+  PY="${ROOT}/.venv/bin/python3"
 else
-  PYTHON="python3"
+  PY="$(command -v python3)"
 fi
-echo "[run_mock.sh] Using interpreter: $PYTHON"
 
-"$PYTHON" -u bridge/loop.py --mode mock --start-agent gemini "$@"
+echo "[run_mock.sh] Using interpreter: ${PY}"
+
+# Pass through all CLI arguments to loop.py
+exec "${PY}" -u "${ROOT}/bridge/loop.py" \
+  --mode mock \
+  --config "${ROOT}/bridge/config.json" \
+  --start-agent codex \
+  "$@"

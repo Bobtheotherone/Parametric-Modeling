@@ -35,6 +35,7 @@ def test_golden_specs_present() -> None:
 
 
 def test_golden_hashes_match() -> None:
+    """REQ-M1-024: CI must prove deterministic resolve hashing against committed golden hashes."""
     specs = _golden_specs()
     expected = json.loads(GOLDEN_HASHES_PATH.read_text(encoding="utf-8"))
     mapping = expected.get("spec_hashes", {})

@@ -358,7 +358,7 @@ def _run_repro_pass(
     run = manifest.init_run_dir(run_root, run_id)
     log_event(run.logs_path, "repro.start", data={"run_id": run_id})
     artifacts: dict[str, str] = {}
-    
+
     safe_mode = cast(Literal["strict", "fast"], mode)
     with determinism.determinism_context(safe_mode, seed) as config:
         payload = _build_repro_payload(payload_bytes)
@@ -687,9 +687,7 @@ def _nvidia_smi_summary() -> dict[str, Any]:
     driver, cuda = _parse_nvidia_smi_versions(out)
     summary["driver_version"] = driver
     summary["cuda_version"] = cuda
-    q_rc, q_out, q_err = _run_nvidia_smi(
-        ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"]
-    )
+    q_rc, q_out, q_err = _run_nvidia_smi(["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"])
     summary["query_exit_code"] = q_rc
     if q_rc == 0:
         summary["gpus"] = _parse_nvidia_smi_query(q_out)
@@ -784,6 +782,7 @@ def _torch_compile_check(report: dict[str, Any], torch_module: Any | None, torch
         _set_check(report, "torch_compile", "skipped", "torch.compile unavailable")
         return
     try:
+
         def _fn(x: Any) -> Any:
             return x + 1
 
@@ -847,11 +846,7 @@ def _dlpack_check(
             pointer["roundtrip_equal"] = roundtrip_ptr == cupy_ptr
         report["dlpack_guard_triggered"] = False
         report["dlpack_write_through_ok"] = bool(write_through_device)
-        zero_copy_ok = bool(
-            pointer["equal"]
-            and pointer["roundtrip_equal"]
-            and report["dlpack_write_through_ok"]
-        )
+        zero_copy_ok = bool(pointer["equal"] and pointer["roundtrip_equal"] and report["dlpack_write_through_ok"])
         report["dlpack_zero_copy_ok"] = zero_copy_ok
         if zero_copy_ok:
             _set_check(report, "dlpack_roundtrip", "ok")
