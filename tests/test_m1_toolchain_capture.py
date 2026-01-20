@@ -1,7 +1,10 @@
-"""Unit tests for toolchain provenance capture (CP-5.3).
+"""Unit tests for toolchain provenance capture (CP-5.1/CP-5.3).
 
 These tests verify that toolchain provenance is always captured correctly,
 especially for docker builds where 'unknown' values are not allowed.
+
+CP-5.1: Ensure toolchain provenance always captured, including lock_file_toolchain_hash.
+CP-5.3: Eliminate 'unknown' values for CLI version in docker builds.
 """
 
 from __future__ import annotations
@@ -58,6 +61,37 @@ class TestToolchainProvenance:
         assert meta["docker"]["image_ref"] == "kicad/kicad:9.0.7@sha256:abc123"
         assert meta["generator_git_sha"] == "def456" + "0" * 34
 
+    def test_to_metadata_with_lock_file_hash(self) -> None:
+        """Test metadata conversion includes lock_file_toolchain_hash (CP-5.1)."""
+        provenance = ToolchainProvenance(
+            mode="docker",
+            kicad_version="9.0.7",
+            kicad_cli_version="9.0.7",
+            docker_image_ref="kicad/kicad:9.0.7@sha256:abc123",
+            generator_git_sha="def456" + "0" * 34,
+            lock_file_toolchain_hash="abc123" + "0" * 58,
+        )
+
+        meta = provenance.to_metadata()
+
+        assert "lock_file_toolchain_hash" in meta
+        assert meta["lock_file_toolchain_hash"] == "abc123" + "0" * 58
+
+    def test_to_metadata_without_lock_file_hash(self) -> None:
+        """Test metadata conversion omits lock_file_toolchain_hash when None."""
+        provenance = ToolchainProvenance(
+            mode="docker",
+            kicad_version="9.0.7",
+            kicad_cli_version="9.0.7",
+            docker_image_ref="kicad/kicad:9.0.7@sha256:abc123",
+            generator_git_sha="def456" + "0" * 34,
+            lock_file_toolchain_hash=None,
+        )
+
+        meta = provenance.to_metadata()
+
+        assert "lock_file_toolchain_hash" not in meta
+
 
 class TestCaptureToolchainProvenanceLocal:
     """Tests for capture_toolchain_provenance in local mode."""
@@ -105,18 +139,22 @@ class TestCaptureToolchainProvenanceDocker:
     """Tests for capture_toolchain_provenance in docker mode."""
 
     @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
-    @patch("formula_foundry.coupongen.toolchain_capture.load_docker_image_ref")
+    @patch("formula_foundry.coupongen.toolchain_capture.load_toolchain_lock")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
     def test_docker_mode_success(
         self,
         mock_git_sha: MagicMock,
-        mock_load_ref: MagicMock,
+        mock_load_lock: MagicMock,
         mock_runner_class: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Test successful docker mode provenance capture."""
         mock_git_sha.return_value = "abc123" + "0" * 34
-        mock_load_ref.return_value = "kicad/kicad:9.0.7@sha256:abc123"
+        # Mock ToolchainConfig object
+        mock_config = MagicMock()
+        mock_config.pinned_image_ref = "kicad/kicad:9.0.7@sha256:abc123"
+        mock_config.toolchain_hash = "def456" + "0" * 58
+        mock_load_lock.return_value = mock_config
 
         mock_runner = MagicMock()
         mock_runner.kicad_cli_version.return_value = "9.0.7"
@@ -134,20 +172,26 @@ class TestCaptureToolchainProvenanceDocker:
         assert provenance.kicad_cli_version == "9.0.7"
         assert provenance.docker_image_ref == "kicad/kicad:9.0.7@sha256:abc123"
         assert provenance.generator_git_sha == "abc123" + "0" * 34
+        # Verify lock_file_toolchain_hash is captured (CP-5.1)
+        assert provenance.lock_file_toolchain_hash == "def456" + "0" * 58
 
     @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
-    @patch("formula_foundry.coupongen.toolchain_capture.load_docker_image_ref")
+    @patch("formula_foundry.coupongen.toolchain_capture.load_toolchain_lock")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
     def test_docker_mode_rejects_unknown(
         self,
         mock_git_sha: MagicMock,
-        mock_load_ref: MagicMock,
+        mock_load_lock: MagicMock,
         mock_runner_class: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Test that docker mode rejects 'unknown' kicad-cli version (CP-5.3)."""
         mock_git_sha.return_value = "abc123" + "0" * 34
-        mock_load_ref.return_value = "kicad/kicad:9.0.7@sha256:abc123"
+        # Mock ToolchainConfig object
+        mock_config = MagicMock()
+        mock_config.pinned_image_ref = "kicad/kicad:9.0.7@sha256:abc123"
+        mock_config.toolchain_hash = "def456" + "0" * 58
+        mock_load_lock.return_value = mock_config
 
         mock_runner = MagicMock()
         mock_runner.kicad_cli_version.return_value = "unknown"
@@ -165,18 +209,22 @@ class TestCaptureToolchainProvenanceDocker:
             )
 
     @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
-    @patch("formula_foundry.coupongen.toolchain_capture.load_docker_image_ref")
+    @patch("formula_foundry.coupongen.toolchain_capture.load_toolchain_lock")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
     def test_docker_mode_rejects_empty_version(
         self,
         mock_git_sha: MagicMock,
-        mock_load_ref: MagicMock,
+        mock_load_lock: MagicMock,
         mock_runner_class: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Test that docker mode rejects empty kicad-cli version."""
         mock_git_sha.return_value = "abc123" + "0" * 34
-        mock_load_ref.return_value = "kicad/kicad:9.0.7@sha256:abc123"
+        # Mock ToolchainConfig object
+        mock_config = MagicMock()
+        mock_config.pinned_image_ref = "kicad/kicad:9.0.7@sha256:abc123"
+        mock_config.toolchain_hash = "def456" + "0" * 58
+        mock_load_lock.return_value = mock_config
 
         mock_runner = MagicMock()
         mock_runner.kicad_cli_version.return_value = ""
@@ -194,18 +242,22 @@ class TestCaptureToolchainProvenanceDocker:
             )
 
     @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
-    @patch("formula_foundry.coupongen.toolchain_capture.load_docker_image_ref")
+    @patch("formula_foundry.coupongen.toolchain_capture.load_toolchain_lock")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
     def test_docker_mode_handles_runner_failure(
         self,
         mock_git_sha: MagicMock,
-        mock_load_ref: MagicMock,
+        mock_load_lock: MagicMock,
         mock_runner_class: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Test that docker mode raises error on runner failure."""
         mock_git_sha.return_value = "abc123" + "0" * 34
-        mock_load_ref.return_value = "kicad/kicad:9.0.7@sha256:abc123"
+        # Mock ToolchainConfig object
+        mock_config = MagicMock()
+        mock_config.pinned_image_ref = "kicad/kicad:9.0.7@sha256:abc123"
+        mock_config.toolchain_hash = "def456" + "0" * 58
+        mock_load_lock.return_value = mock_config
 
         mock_runner = MagicMock()
         mock_runner.kicad_cli_version.side_effect = RuntimeError("Docker not found")
@@ -292,6 +344,7 @@ class TestCaptureWithLockFile:
         lock_file.write_text(
             json.dumps(
                 {
+                    "kicad_version": "9.0.7",
                     "docker_image": "kicad/kicad:9.0.7",
                     "docker_digest": "sha256:abc123def456",
                 }
@@ -310,6 +363,82 @@ class TestCaptureWithLockFile:
         )
 
         assert provenance.docker_image_ref == "kicad/kicad:9.0.7@sha256:abc123def456"
+
+    @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
+    @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
+    def test_loads_lock_file_toolchain_hash(
+        self,
+        mock_git_sha: MagicMock,
+        mock_runner_class: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test that lock_file_toolchain_hash is captured from lock file (CP-5.1)."""
+        mock_git_sha.return_value = "abc123" + "0" * 34
+
+        # Create lock file with all required fields
+        lock_file = tmp_path / "kicad.lock.json"
+        lock_file.write_text(
+            json.dumps(
+                {
+                    "kicad_version": "9.0.7",
+                    "docker_image": "kicad/kicad:9.0.7",
+                    "docker_digest": "sha256:abc123def456",
+                }
+            )
+        )
+
+        mock_runner = MagicMock()
+        mock_runner.kicad_cli_version.return_value = "9.0.7"
+        mock_runner_class.return_value = mock_runner
+
+        provenance = capture_toolchain_provenance(
+            mode="docker",
+            kicad_version="9.0.7",
+            workdir=tmp_path,
+            lock_file=lock_file,
+        )
+
+        # Verify that lock_file_toolchain_hash is captured
+        assert provenance.lock_file_toolchain_hash is not None
+        assert len(provenance.lock_file_toolchain_hash) == 64  # SHA256 hex length
+
+        # Verify it's included in metadata
+        meta = provenance.to_metadata()
+        assert "lock_file_toolchain_hash" in meta
+        assert meta["lock_file_toolchain_hash"] == provenance.lock_file_toolchain_hash
+
+    @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
+    @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
+    def test_fallback_no_lock_file_hash(
+        self,
+        mock_git_sha: MagicMock,
+        mock_runner_class: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Test that lock_file_toolchain_hash is None when lock file not found."""
+        mock_git_sha.return_value = "abc123" + "0" * 34
+
+        mock_runner = MagicMock()
+        mock_runner.kicad_cli_version.return_value = "9.0.7"
+        mock_runner_class.return_value = mock_runner
+
+        # Create a non-existent lock file path
+        fake_lock = tmp_path / "nonexistent.json"
+
+        provenance = capture_toolchain_provenance(
+            mode="docker",
+            kicad_version="9.0.7",
+            docker_image="kicad/kicad:9.0.7",  # Fallback image
+            workdir=tmp_path,
+            lock_file=fake_lock,
+        )
+
+        # lock_file_toolchain_hash should be None when lock file not found
+        assert provenance.lock_file_toolchain_hash is None
+
+        # Verify it's not included in metadata
+        meta = provenance.to_metadata()
+        assert "lock_file_toolchain_hash" not in meta
 
 
 class TestToolchainMetadataFormat:

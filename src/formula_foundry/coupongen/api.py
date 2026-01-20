@@ -316,10 +316,20 @@ def build_coupon(
     output_dir = out_root / f"{coupon_id}-{design_hash_value}"
     manifest_path = output_dir / "manifest.json"
 
-    # Capture toolchain provenance (CP-5.3: always run kicad-cli version inside container for docker builds)
+    # Capture toolchain provenance (CP-5.1/5.3: always capture complete provenance including lock file hash)
     if kicad_cli_version is not None:
         # Pre-captured version provided (for testing)
-        toolchain_meta = {
+        # Still try to load lock_file_toolchain_hash from lock file (CP-5.1)
+        lock_file_hash: str | None = None
+        if lock_file is not None:
+            try:
+                from .toolchain import load_toolchain_lock
+
+                tc_config = load_toolchain_lock(lock_path=lock_file)
+                lock_file_hash = tc_config.toolchain_hash
+            except Exception:
+                pass  # lock file hash is optional for testing paths
+        toolchain_meta: dict[str, Any] = {
             "kicad": {
                 "version": evaluation.spec.toolchain.kicad.version,
                 "cli_version_output": kicad_cli_version,
@@ -330,6 +340,8 @@ def build_coupon(
             "mode": mode,
             "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
         }
+        if lock_file_hash:
+            toolchain_meta["lock_file_toolchain_hash"] = lock_file_hash
     else:
         # Capture provenance dynamically
         provenance = capture_toolchain_provenance(
@@ -477,10 +489,20 @@ def build_coupon_with_engine(
     output_dir = out_root / f"{coupon_id}-{design_hash_value}"
     manifest_path = output_dir / "manifest.json"
 
-    # Capture toolchain provenance (CP-5.3: always capture complete provenance)
+    # Capture toolchain provenance (CP-5.1/5.3: always capture complete provenance including lock file hash)
     if kicad_cli_version is not None:
         # Pre-captured version provided (for testing)
-        toolchain_meta = {
+        # Still try to load lock_file_toolchain_hash from lock file (CP-5.1)
+        lock_file_hash: str | None = None
+        if lock_file is not None:
+            try:
+                from .toolchain import load_toolchain_lock
+
+                tc_config = load_toolchain_lock(lock_path=lock_file)
+                lock_file_hash = tc_config.toolchain_hash
+            except Exception:
+                pass  # lock file hash is optional for testing paths
+        toolchain_meta: dict[str, Any] = {
             "kicad": {
                 "version": spec.toolchain.kicad.version,
                 "cli_version_output": kicad_cli_version,
@@ -491,8 +513,10 @@ def build_coupon_with_engine(
             "mode": kicad_mode,
             "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
         }
+        if lock_file_hash:
+            toolchain_meta["lock_file_toolchain_hash"] = lock_file_hash
     else:
-        # Capture provenance dynamically (CP-5.3: no 'unknown' values for docker builds)
+        # Capture provenance dynamically (CP-5.1/5.3: no 'unknown' values for docker builds)
         provenance = capture_toolchain_provenance(
             mode=kicad_mode,
             kicad_version=spec.toolchain.kicad.version,
