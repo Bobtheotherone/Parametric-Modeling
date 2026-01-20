@@ -1063,7 +1063,7 @@ class ParallelTask:
     solo: bool = False
 
     # runtime
-    status: str = "pending"  # pending|running|done|failed|manual|skipped
+    status: str = "pending"  # pending|running|done|failed|manual|skipped|pending_rerun
     worker_id: Optional[int] = None
     branch: Optional[str] = None
     base_sha: Optional[str] = None
@@ -1076,6 +1076,10 @@ class ParallelTask:
     error: Optional[str] = None
     max_cpu_pct_total: float = 0.0
     max_mem_pct_total: float = 0.0
+    # Turn output tracking
+    work_completed: Optional[bool] = None
+    commit_sha: Optional[str] = None
+    turn_summary: Optional[str] = None
 
 
 def _sanitize_branch_fragment(text: str) -> str:
@@ -1309,6 +1313,138 @@ If you prefer rerunning through the orchestrator (single-worker):
     return path
 
 
+def _generate_run_summary(
+    *,
+    tasks: List[ParallelTask],
+    runs_dir: Path,
+    verify_exit_code: int,
+) -> Dict[str, Any]:
+    """Generate a structured summary of the parallel run."""
+    root_failures = []
+    blocked_tasks = []
+    completed_tasks = []
+    pending_rerun_tasks = []
+
+    for t in tasks:
+        task_info = {
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "agent": t.agent,
+            "work_completed": t.work_completed,
+            "commit_sha": t.commit_sha,
+            "error": t.error,
+            "manual_path": str(t.manual_path) if t.manual_path else None,
+            "raw_log_path": str(t.raw_log_path) if t.raw_log_path else None,
+            "turn_summary": t.turn_summary,
+        }
+
+        if t.status == "done":
+            completed_tasks.append(task_info)
+        elif t.status == "pending_rerun":
+            pending_rerun_tasks.append(task_info)
+            root_failures.append(task_info)
+        elif t.status in ("failed", "manual"):
+            root_failures.append(task_info)
+        elif t.status == "skipped":
+            blocked_tasks.append(task_info)
+
+    summary = {
+        "run_dir": str(runs_dir),
+        "total_tasks": len(tasks),
+        "completed": len(completed_tasks),
+        "failed": len([t for t in tasks if t.status in ("failed", "manual")]),
+        "pending_rerun": len(pending_rerun_tasks),
+        "blocked": len(blocked_tasks),
+        "verify_exit_code": verify_exit_code,
+        "success": verify_exit_code == 0 and len(root_failures) == 0,
+        "completed_tasks": completed_tasks,
+        "root_failures": root_failures,
+        "blocked_tasks": blocked_tasks,
+    }
+
+    return summary
+
+
+def _generate_continuation_prompt(
+    *,
+    summary: Dict[str, Any],
+    tasks: List[ParallelTask],
+    design_doc_text: str,
+    runs_dir: Path,
+) -> str:
+    """Generate a continuation prompt for the next run based on failures."""
+    lines = [
+        "# Continuation Run - Fix Failures and Complete Remaining Work",
+        "",
+        "The previous parallel run did not complete all tasks successfully.",
+        "",
+        "## Previous Run Summary",
+        f"- Completed: {summary['completed']}/{summary['total_tasks']}",
+        f"- Failed: {summary['failed']}",
+        f"- Pending Rerun (planning-only): {summary['pending_rerun']}",
+        f"- Blocked: {summary['blocked']}",
+        f"- Verify exit code: {summary['verify_exit_code']}",
+        "",
+    ]
+
+    if summary["root_failures"]:
+        lines.append("## Root Failures (must be fixed)")
+        lines.append("")
+        for t in summary["root_failures"]:
+            lines.append(f"### {t['id']}: {t['title']}")
+            lines.append(f"- Status: {t['status']}")
+            lines.append(f"- Agent: {t['agent']}")
+            if t['error']:
+                lines.append(f"- Error: {t['error']}")
+            if t['turn_summary']:
+                lines.append(f"- Last summary: {t['turn_summary'][:300]}")
+            if t['manual_path']:
+                lines.append(f"- Manual file: {t['manual_path']}")
+            if t['raw_log_path']:
+                # Include tail of log
+                try:
+                    log_path = Path(t['raw_log_path'])
+                    if log_path.exists():
+                        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+                        tail = log_text[-2000:] if len(log_text) > 2000 else log_text
+                        lines.append(f"- Log tail:\n```\n{tail}\n```")
+                except Exception:
+                    pass
+            lines.append("")
+
+    if summary["blocked_tasks"]:
+        lines.append("## Blocked Tasks (will unblock once failures are fixed)")
+        lines.append("")
+        for t in summary["blocked_tasks"]:
+            lines.append(f"- {t['id']}: {t['error'] or 'blocked by prerequisites'}")
+        lines.append("")
+
+    if summary["completed_tasks"]:
+        lines.append("## Completed Tasks (DO NOT re-implement)")
+        lines.append("")
+        for t in summary["completed_tasks"]:
+            lines.append(f"- {t['id']}: {t['title']}")
+        lines.append("")
+
+    lines.extend([
+        "## Instructions for This Run",
+        "",
+        "1. **Focus ONLY on root failures** - do not re-implement completed tasks",
+        "2. For tasks marked 'pending_rerun', the agent only produced a plan - now IMPLEMENT the actual code",
+        "3. For failed tasks, analyze the error and fix the issue",
+        "4. After fixing root failures, blocked tasks will automatically become runnable",
+        "5. Produce a new task plan that includes ONLY:",
+        "   - Tasks from root_failures that need to be fixed/implemented",
+        "   - Any blocked tasks that will become runnable",
+        "",
+        "IMPORTANT: Do NOT include completed tasks in the new plan.",
+        "",
+    ])
+
+    return "\n".join(lines)
+
+
 def _run_parallel_task(
     *,
     task: ParallelTask,
@@ -1462,43 +1598,105 @@ def _run_parallel_task(
         )
         return
 
-    # Validate JSON (best-effort)
-    if out_path.exists():
-        turn_obj = _try_parse_json(out_path.read_text(encoding="utf-8"))
-        if turn_obj is not None:
-            ok, msg = _validate_turn(
-                turn_obj,
-                expected_agent=agent,
-                expected_milestone_id=milestone_id,
-                stats_id_set=stats_id_set,
-            )
-            if not ok:
-                task.status = "failed"
-                task.error = f"Invalid JSON output: {msg}"
-                task.manual_path = _write_manual_task_file(
-                    manual_dir=manual_dir,
-                    task=task,
-                    reason=task.error,
-                    agent_cmd=cmd,
-                    schema_path=schema_path,
-                    prompt_path=prompt_path,
-                    out_path=out_path,
-                    raw_log_path=raw_log_path,
-                )
-                return
+    # Validate JSON output (STRICT - unparseable or missing output is FAILED)
+    if not out_path.exists():
+        task.status = "failed"
+        task.error = "Agent did not produce output file"
+        task.manual_path = _write_manual_task_file(
+            manual_dir=manual_dir,
+            task=task,
+            reason=task.error,
+            agent_cmd=cmd,
+            schema_path=schema_path,
+            prompt_path=prompt_path,
+            out_path=out_path,
+            raw_log_path=raw_log_path,
+        )
+        return
+
+    turn_text = out_path.read_text(encoding="utf-8")
+    turn_obj = _try_parse_json(turn_text)
+    if turn_obj is None:
+        task.status = "failed"
+        task.error = f"Agent output is not valid JSON: {turn_text[:500]}"
+        task.manual_path = _write_manual_task_file(
+            manual_dir=manual_dir,
+            task=task,
+            reason=task.error,
+            agent_cmd=cmd,
+            schema_path=schema_path,
+            prompt_path=prompt_path,
+            out_path=out_path,
+            raw_log_path=raw_log_path,
+        )
+        return
+
+    ok, msg = _validate_turn(
+        turn_obj,
+        expected_agent=agent,
+        expected_milestone_id=milestone_id,
+        stats_id_set=stats_id_set,
+    )
+    if not ok:
+        task.status = "failed"
+        task.error = f"Invalid JSON output: {msg}"
+        task.manual_path = _write_manual_task_file(
+            manual_dir=manual_dir,
+            task=task,
+            reason=task.error,
+            agent_cmd=cmd,
+            schema_path=schema_path,
+            prompt_path=prompt_path,
+            out_path=out_path,
+            raw_log_path=raw_log_path,
+        )
+        return
+
+    # Track turn output metadata
+    task.work_completed = bool(turn_obj.get("work_completed", False))
+    task.turn_summary = str(turn_obj.get("summary", ""))[:500]
 
     # Ensure a commit exists (auto-commit any uncommitted changes)
     rc, porcelain, err = _run_cmd(["git", "status", "--porcelain=v1"], cwd=task.worktree_path, env=os.environ.copy())
-    if rc == 0 and porcelain.strip():
+    has_changes = rc == 0 and bool(porcelain.strip())
+    if has_changes:
         _run_cmd(["git", "add", "-A"], cwd=task.worktree_path, env=os.environ.copy())
         _run_cmd(
             ["git", "commit", "-m", f"task({task.id}): auto commit"],
             cwd=task.worktree_path,
             env=os.environ.copy(),
         )
+        # Get commit SHA
+        rc_sha, sha_out, _ = _run_cmd(["git", "rev-parse", "HEAD"], cwd=task.worktree_path, env=os.environ.copy())
+        if rc_sha == 0:
+            task.commit_sha = sha_out.strip()
 
-    task.status = "done"
-    task.error = None
+    # CRITICAL: Task is only "done" if work_completed==true
+    # If work_completed==false (planning-only turn), mark for rerun with implementation prompt
+    if not task.work_completed:
+        # Check if there were actual code changes committed
+        if task.commit_sha and task.commit_sha != task.base_sha:
+            # Agent made changes but claimed work_completed=false - trust the commit, mark done
+            print(f"[orchestrator] NOTE: {task.id} has work_completed=false but made commits; marking done")
+            task.status = "done"
+            task.error = None
+        else:
+            # Planning-only turn with no implementation - needs rerun
+            task.status = "pending_rerun"
+            task.error = "Agent returned work_completed=false (planning-only); needs implementation run"
+            task.manual_path = _write_manual_task_file(
+                manual_dir=manual_dir,
+                task=task,
+                reason=f"{task.error}. Summary: {task.turn_summary}",
+                agent_cmd=cmd,
+                schema_path=schema_path,
+                prompt_path=prompt_path,
+                out_path=out_path,
+                raw_log_path=raw_log_path,
+            )
+    else:
+        task.status = "done"
+        task.error = None
 
 
 def _run_selftest_task(
@@ -1876,7 +2074,7 @@ def run_parallel(
         while True:
             # Calculate stats
             done_count = sum(1 for t in tasks if t.status in ("done", "skipped"))
-            failed_count = sum(1 for t in tasks if t.status in ("failed", "manual"))
+            failed_count = sum(1 for t in tasks if t.status in ("failed", "manual", "pending_rerun"))
             running_count = len(running)
             pending_count = sum(1 for t in tasks if t.status == "pending")
             ready_tasks = get_ready_tasks()
@@ -1887,23 +2085,54 @@ def run_parallel(
                 print(f"[orchestrator] parallel: progress done={done_count} running={running_count} queued={pending_count} ready={len(ready_tasks)}")
                 last_heartbeat = now
 
-            # Check completion
-            all_finished = all(t.status in ("done", "failed", "manual", "skipped") for t in tasks)
+            # Check completion - include pending_rerun as a terminal state for this run
+            all_finished = all(t.status in ("done", "failed", "manual", "skipped", "pending_rerun") for t in tasks)
             if all_finished:
                 break
 
-            # Detect deadlock/cycle: no tasks running, no tasks ready, but tasks remain pending
+            # Detect stuck state: no tasks running, no tasks ready, but tasks remain pending
             if not running and not ready_tasks and pending_count > 0:
-                print(f"[orchestrator] ERROR: dependency cycle detected! {pending_count} task(s) stuck with unmet dependencies:")
+                # Classify stuck tasks: distinguish root failures from blocked tasks
+                root_failures = [t for t in tasks if t.status in ("failed", "manual", "pending_rerun")]
+                blocked_tasks = [t for t in tasks if t.status == "pending"]
+
+                # Check if this is a true dependency cycle or just blocked by failures
+                failed_ids = {t.id for t in tasks if t.status in ("failed", "manual", "pending_rerun")}
+
+                print(f"\n[orchestrator] STUCK: {pending_count} task(s) cannot proceed")
+
+                if root_failures:
+                    print(f"\n  ROOT FAILURES ({len(root_failures)}):")
+                    for t in root_failures:
+                        reason = t.error or t.status
+                        manual_hint = f" -> {t.manual_path}" if t.manual_path else ""
+                        print(f"    - {t.id}: {reason}{manual_hint}")
+
+                if blocked_tasks:
+                    print(f"\n  BLOCKED TASKS ({len(blocked_tasks)}):")
+                    for t in blocked_tasks:
+                        unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status not in ("done", "skipped")]
+                        failed_deps = [d for d in unmet if d in failed_ids]
+                        pending_deps = [d for d in unmet if d not in failed_ids]
+                        if failed_deps:
+                            print(f"    - {t.id}: blocked by failed deps: {failed_deps}")
+                        elif pending_deps:
+                            print(f"    - {t.id}: waiting on: {pending_deps} (possible cycle)")
+                        else:
+                            print(f"    - {t.id}: blocked (unknown reason)")
+
+                # Mark stuck tasks appropriately
                 for t in tasks:
                     if t.status == "pending":
                         unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status not in ("done", "skipped")]
-                        print(f"  - {t.id}: waiting on {unmet}")
-                # Mark stuck tasks as failed
-                for t in tasks:
-                    if t.status == "pending":
-                        t.status = "failed"
-                        t.error = "Dependency cycle detected"
+                        failed_deps = [d for d in unmet if d in failed_ids]
+                        if failed_deps:
+                            t.status = "skipped"
+                            t.error = f"Skipped: blocked by failed prerequisites: {failed_deps}"
+                        else:
+                            # True cycle or unknown blocking
+                            t.status = "failed"
+                            t.error = f"Dependency cycle or deadlock: waiting on {unmet}"
                 break
 
             # Start ready tasks up to capacity
@@ -1922,7 +2151,9 @@ def run_parallel(
                 for lk in t.locks:
                     held_locks.add(str(lk))
 
-                print(f"[orchestrator] parallel: starting {t.id} on worker {worker_id}")
+                # Log agent selection explicitly
+                agent_script = config.agent_scripts.get(t.agent, "(unknown)")
+                print(f"[orchestrator] parallel: starting {t.id} on worker {worker_id} (agent={t.agent}, script={agent_script})")
                 future = executor.submit(execute_task, t, worker_id)
                 running[t.id] = future
                 started_any = True
@@ -1990,17 +2221,23 @@ def run_parallel(
     print("\n[orchestrator] parallel summary")
     done_count = 0
     failed_count = 0
+    pending_rerun_count = 0
+    skipped_count = 0
     for t in tasks:
         extra = ""
-        if t.status in ("failed", "manual") and t.manual_path:
+        if t.status in ("failed", "manual", "pending_rerun") and t.manual_path:
             extra = f" (see {t.manual_path})"
-        elif t.status in ("failed", "manual") and t.error:
+        elif t.status in ("failed", "manual", "pending_rerun") and t.error:
             extra = f" ({t.error})"
         print(f"- {t.id}: {t.status}{extra}")
         if t.status == "done":
             done_count += 1
         elif t.status in ("failed", "manual"):
             failed_count += 1
+        elif t.status == "pending_rerun":
+            pending_rerun_count += 1
+        elif t.status == "skipped":
+            skipped_count += 1
 
     if selftest_mode:
         if done_count == len(tasks):
@@ -2010,7 +2247,203 @@ def run_parallel(
             print(f"\n[orchestrator] SELFTEST FAILED: {failed_count} task(s) failed")
             return 1
 
-    return 0 if rc_v == 0 else 1
+    # Generate structured summary.json
+    summary = _generate_run_summary(
+        tasks=tasks,
+        runs_dir=state.runs_dir,
+        verify_exit_code=rc_v,
+    )
+    summary_path = state.runs_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    print(f"\n[orchestrator] Summary written to: {summary_path}")
+
+    # Generate continuation_prompt.txt if there are failures
+    needs_continuation = (failed_count + pending_rerun_count + skipped_count) > 0 or rc_v != 0
+    if needs_continuation:
+        continuation_prompt = _generate_continuation_prompt(
+            summary=summary,
+            tasks=tasks,
+            design_doc_text=design_doc_text,
+            runs_dir=state.runs_dir,
+        )
+        continuation_path = state.runs_dir / "continuation_prompt.txt"
+        continuation_path.write_text(continuation_prompt, encoding="utf-8")
+        print(f"[orchestrator] Continuation prompt written to: {continuation_path}")
+
+        print(f"\n[orchestrator] RUN INCOMPLETE:")
+        print(f"  - Completed: {done_count}")
+        print(f"  - Failed: {failed_count}")
+        print(f"  - Pending Rerun: {pending_rerun_count}")
+        print(f"  - Blocked/Skipped: {skipped_count}")
+        print(f"  - Verify: {'PASS' if rc_v == 0 else 'FAIL'}")
+        print(f"\n[orchestrator] To continue, run:")
+        print(f"  ./run_parallel.sh --continuation {continuation_path}")
+    else:
+        print(f"\n[orchestrator] RUN COMPLETE: all {done_count} tasks succeeded, verify passed")
+
+    return 0 if rc_v == 0 and not needs_continuation else 1
+
+# -----------------------------
+# Auto-continue loop
+# -----------------------------
+
+
+def _run_parallel_with_auto_continue(
+    *,
+    args: argparse.Namespace,
+    config: RunConfig,
+    project_root: Path,
+    schema_path: Path,
+    system_prompt_path: Path,
+    stats_ids: List[str],
+    stats_id_set: set,
+    system_prompt: str,
+) -> int:
+    """Run the parallel runner with auto-continue until success or max runs."""
+    max_runs = max(1, args.max_continuation_runs)
+    run_count = 0
+    last_summary: Optional[Dict[str, Any]] = None
+    prev_root_failure_ids: set = set()
+    stalled_count = 0
+    max_stalled = 3  # Stop if same failures for N consecutive runs
+
+    print(f"[orchestrator] AUTO-CONTINUE MODE: max_runs={max_runs}")
+
+    while run_count < max_runs:
+        run_count += 1
+        print(f"\n{'='*80}")
+        print(f"[orchestrator] AUTO-CONTINUE: Starting run {run_count}/{max_runs}")
+        print(f"{'='*80}\n")
+
+        # Create new run state for this iteration
+        run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        runs_dir = project_root / "runs" / run_id
+        _ensure_dir(runs_dir)
+
+        # Handle continuation from previous run
+        design_doc_path = (project_root / args.design_doc).resolve()
+        if run_count > 1 and last_summary:
+            # Use continuation prompt from previous run
+            prev_runs_dir = Path(last_summary.get("run_dir", ""))
+            continuation_path = prev_runs_dir / "continuation_prompt.txt"
+            if continuation_path.exists():
+                # Append continuation context to design doc
+                continuation_text = continuation_path.read_text(encoding="utf-8")
+                design_doc_text = design_doc_path.read_text(encoding="utf-8") if design_doc_path.exists() else ""
+                augmented_doc = design_doc_text + "\n\n---\n\n" + continuation_text
+                augmented_path = runs_dir / "augmented_design_doc.md"
+                augmented_path.write_text(augmented_doc, encoding="utf-8")
+                # Temporarily override design doc path
+                original_design_doc = args.design_doc
+                args.design_doc = str(augmented_path.relative_to(project_root))
+
+        _git_init_if_needed(project_root)
+        if not args.no_agent_branch:
+            _checkout_agent_branch(project_root, run_id)
+
+        state = RunState(
+            run_id=run_id,
+            project_root=project_root,
+            runs_dir=runs_dir,
+            schema_path=schema_path,
+            system_prompt_path=system_prompt_path,
+            design_doc_path=(project_root / args.design_doc).resolve(),
+        )
+
+        # Run parallel
+        rc = run_parallel(
+            args=args,
+            config=config,
+            state=state,
+            stats_ids=stats_ids,
+            stats_id_set=stats_id_set,
+            system_prompt=system_prompt,
+        )
+
+        # Restore design doc path if we modified it
+        if run_count > 1 and 'original_design_doc' in dir():
+            args.design_doc = original_design_doc
+
+        # Check result
+        summary_path = runs_dir / "summary.json"
+        if summary_path.exists():
+            last_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        else:
+            last_summary = None
+
+        if rc == 0:
+            print(f"\n[orchestrator] AUTO-CONTINUE: SUCCESS after {run_count} run(s)")
+            return 0
+
+        # Check for progress - compare root failures
+        if last_summary:
+            current_root_failure_ids = {t["id"] for t in last_summary.get("root_failures", [])}
+
+            if current_root_failure_ids == prev_root_failure_ids:
+                stalled_count += 1
+                print(f"[orchestrator] AUTO-CONTINUE: No progress (same failures). Stalled count: {stalled_count}/{max_stalled}")
+                if stalled_count >= max_stalled:
+                    print(f"\n[orchestrator] AUTO-CONTINUE: GIVING UP - no progress for {stalled_count} consecutive runs")
+                    print(f"[orchestrator] Root failures that cannot be resolved automatically:")
+                    for t in last_summary.get("root_failures", []):
+                        print(f"  - {t['id']}: {t.get('error', 'unknown')}")
+                    _write_escalation_file(runs_dir, last_summary)
+                    return 1
+            else:
+                stalled_count = 0
+                print(f"[orchestrator] AUTO-CONTINUE: Progress detected (different failures)")
+
+            prev_root_failure_ids = current_root_failure_ids
+        else:
+            stalled_count += 1
+
+        print(f"[orchestrator] AUTO-CONTINUE: Run {run_count} incomplete, continuing...")
+
+    print(f"\n[orchestrator] AUTO-CONTINUE: GIVING UP - max runs ({max_runs}) reached")
+    if last_summary:
+        _write_escalation_file(project_root / "runs" / "escalation", last_summary)
+    return 1
+
+
+def _write_escalation_file(runs_dir: Path, summary: Dict[str, Any]) -> None:
+    """Write an escalation file explaining what's stuck and how to proceed."""
+    _ensure_dir(runs_dir)
+    escalation_path = runs_dir / "ESCALATION_REQUIRED.md"
+
+    lines = [
+        "# Manual Escalation Required",
+        "",
+        "The auto-continue loop could not resolve the following failures:",
+        "",
+    ]
+
+    for t in summary.get("root_failures", []):
+        lines.append(f"## {t['id']}: {t.get('title', 'Unknown')}")
+        lines.append(f"- Status: {t['status']}")
+        lines.append(f"- Agent: {t['agent']}")
+        if t.get('error'):
+            lines.append(f"- Error: {t['error']}")
+        if t.get('manual_path'):
+            lines.append(f"- Manual file: {t['manual_path']}")
+        lines.append("")
+        lines.append("### To run this task manually:")
+        lines.append("```bash")
+        lines.append(f"./run_parallel.sh --only-task {t['id']} --max-workers 1 --allow-resource-intensive")
+        lines.append("```")
+        lines.append("")
+
+    lines.extend([
+        "## Next Steps",
+        "",
+        "1. Review the manual files in runs/*/manual/",
+        "2. Run failing tasks individually with --only-task",
+        "3. Once fixed, re-run the full parallel run",
+        "",
+    ])
+
+    escalation_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"[orchestrator] Escalation file written to: {escalation_path}")
+
 
 # -----------------------------
 # Main
@@ -2041,6 +2474,13 @@ def main() -> int:
     ap.add_argument("--no-agent-branch", action="store_true")
     ap.add_argument("--selftest-parallel", action="store_true",
                     help="Run selftest mode: synthetic tasks with trivial commands to verify scheduler")
+    # Auto-continue support
+    ap.add_argument("--auto-continue", action="store_true",
+                    help="Automatically continue with new runs until all tasks complete or max runs reached")
+    ap.add_argument("--max-continuation-runs", type=int, default=5,
+                    help="Maximum number of continuation runs before giving up (default: 5)")
+    ap.add_argument("--continuation", type=str, default="",
+                    help="Path to continuation_prompt.txt from a previous run (use instead of design doc)")
 
     args = ap.parse_args()
 
@@ -2079,7 +2519,21 @@ def main() -> int:
         if not args.selftest_parallel and args.mode != "live":
             print("[orchestrator] ERROR: parallel runner supports --mode live only.")
             return 2
-        return run_parallel(args=args, config=config, state=state, stats_ids=stats_ids, stats_id_set=stats_id_set, system_prompt=system_prompt)
+
+        # Auto-continue loop
+        if args.auto_continue:
+            return _run_parallel_with_auto_continue(
+                args=args,
+                config=config,
+                project_root=project_root,
+                schema_path=schema_path,
+                system_prompt_path=system_prompt_path,
+                stats_ids=stats_ids,
+                stats_id_set=stats_id_set,
+                system_prompt=system_prompt,
+            )
+        else:
+            return run_parallel(args=args, config=config, state=state, stats_ids=stats_ids, stats_id_set=stats_id_set, system_prompt=system_prompt)
 
     # Mock scenario support.
     scenario: Dict[str, Any] = {}

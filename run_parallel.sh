@@ -12,8 +12,10 @@ fi
 
 echo "[run_parallel.sh] Using interpreter: ${PY}"
 
+# Pass through all CLI arguments to loop.py
 exec "${PY}" -u "${ROOT}/bridge/loop.py" \
   --mode live \
   --runner parallel \
   --config "${ROOT}/bridge/config.json" \
-  --start-agent codex
+  --start-agent codex \
+  "$@"
