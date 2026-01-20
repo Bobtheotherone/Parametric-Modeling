@@ -12,6 +12,16 @@ from .api import (
     run_drc,
     validate_spec,
 )
+from .export import (
+    CacheKey,
+    ExportPipeline,
+    ExportResult,
+    PipelineProgress,
+    PipelineStage,
+    compute_cache_key,
+    is_cache_valid,
+    run_export_pipeline,
+)
 from .constraints import (
     ConstraintEvaluation,
     ConstraintProof,
@@ -83,10 +93,15 @@ __all__ = [
     "STACKUPS_DIR",
     # Spec types
     "BuildResult",
+    "CacheKey",
     "CouponSpec",
     "DrcReport",
+    "ExportPipeline",
+    "ExportResult",
     "KiCadProjectPaths",
     "ManifestPaths",
+    "PipelineProgress",
+    "PipelineStage",
     "ResolvedDesign",
     # Constraint types
     "ConstraintEvaluation",
@@ -162,4 +177,8 @@ __all__ = [
     "list_available_stackups",
     "load_stackup",
     "load_stackup_from_dict",
+    # Export pipeline functions
+    "compute_cache_key",
+    "is_cache_valid",
+    "run_export_pipeline",
 ]
