@@ -3,5 +3,5 @@
   "kicad_version": "9.0.7",
   "docker_image": "kicad/kicad:9.0.7",
   "docker_digest": "sha256:PLACEHOLDER",
-  "toolchain_hash": null
+  "toolchain_hash": "2d14c82399e2f6d9a088120057b73b6b86f0def09979faa294be6adfb5568299"
 }
