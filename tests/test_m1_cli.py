@@ -83,7 +83,8 @@ def test_cli_build_returns_design_hash_keyed_output(tmp_path: Path) -> None:
     ):
         spec_path = tmp_path / "spec.yaml"
         spec_path.write_text("schema_version: 1")
-        exit_code = cli_main.main(["build", str(spec_path), "--out", str(tmp_path)])
+        # Use --legacy flag to use the legacy build_coupon function (CP-3.5)
+        exit_code = cli_main.main(["build", str(spec_path), "--out", str(tmp_path), "--legacy"])
 
     assert exit_code == 0
     mock_build.assert_called_once()
@@ -113,7 +114,8 @@ def test_cli_build_exit_code_success() -> None:
         patch("formula_foundry.coupongen.cli_main.build_coupon", return_value=mock_build_result),
         patch("sys.stdout.write"),
     ):
-        exit_code = cli_main.main(["build", "/tmp/spec.yaml", "--out", "/tmp"])
+        # Use --legacy flag to use the legacy build_coupon function (CP-3.5)
+        exit_code = cli_main.main(["build", "/tmp/spec.yaml", "--out", "/tmp", "--legacy"])
 
     assert exit_code == 0
 
