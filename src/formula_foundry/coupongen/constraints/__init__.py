@@ -106,6 +106,15 @@ from .connectivity import (
     check_layout_connectivity,
 )
 
+# Export unified ConstraintEngine (CP-3.1, Section 13.3)
+from .engine import (
+    ConstraintEngine,
+    ConstraintEngineResult,
+    ConstraintMode,
+    SpecOrResolved,
+    create_constraint_engine,
+)
+
 __all__ = [
     # Core constraint types (backward compatible)
     "ConstraintEvaluation",
@@ -170,4 +179,10 @@ __all__ = [
     "UnionFind",
     "build_oracle_from_layout",
     "check_layout_connectivity",
+    # Unified ConstraintEngine (CP-3.1, Section 13.3)
+    "ConstraintEngine",
+    "ConstraintEngineResult",
+    "ConstraintMode",
+    "SpecOrResolved",
+    "create_constraint_engine",
 ]
