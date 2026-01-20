@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "jlcpcb_2layer",
+  "name": "JLCPCB 2-Layer Standard",
+  "description": "JLCPCB standard 2-layer stackup. 1.6mm total, 1oz copper, FR4 TG130-140.",
+  "vendor": "JLCPCB",
+  "copper_layers": 2,
+  "total_thickness_nm": 1600000,
+  "dielectric_defaults": {
+    "er": 4.4,
+    "loss_tangent": 0.02,
+    "material": "FR4 TG130-140"
+  },
+  "layers": [
+    {
+      "name": "F.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    },
+    {
+      "name": "core",
+      "type": "dielectric",
+      "thickness_nm": 1530000,
+      "dielectric": {
+        "er": 4.4,
+        "loss_tangent": 0.02,
+        "material": "FR4 TG130-140 Core"
+      }
+    },
+    {
+      "name": "B.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    }
+  ]
+}
