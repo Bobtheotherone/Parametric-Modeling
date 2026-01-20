@@ -34,7 +34,6 @@ from formula_foundry.openems import (
     SimulationRunner,
     validate_m2_manifest,
 )
-from formula_foundry.openems.runner import OpenEMSRunner
 from formula_foundry.openems.batch_runner import (
     BatchProgress,
     write_batch_result,
@@ -54,6 +53,7 @@ from formula_foundry.openems.geometry import (
     StackupSpec,
     TransmissionLineSpec,
 )
+from formula_foundry.openems.runner import OpenEMSRunner
 from formula_foundry.openems.spec import (
     ExcitationSpec,
     FrequencySpec,
