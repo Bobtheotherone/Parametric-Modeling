@@ -309,11 +309,17 @@ class TestToolchainLockFile:
 
 
 class TestDrcReportCanonicalization:
-    """Tests for DRC report canonicalization per DETERMINISM_POLICY.md Section 2.4."""
+    """Tests for DRC report canonicalization per DETERMINISM_POLICY.md Section 2.4.
+
+    Note: Canonicalization is handled by the authoritative implementation in
+    kicad/canonicalize.py (per Section 13.5.2). Comprehensive tests for this
+    implementation are in test_m1_canonicalize.py.
+    """
 
     def test_drc_timestamps_removed(self) -> None:
         """DRC report canonicalization should remove timestamps."""
-        from formula_foundry.coupongen.manifest import _canonicalize_drc_object
+        import json
+        from formula_foundry.coupongen.kicad.canonicalize import canonicalize_drc_json
 
         drc_report = {
             "date": "2026-01-20",
@@ -322,16 +328,18 @@ class TestDrcReportCanonicalization:
             "kicad_version": "9.0.7",
         }
 
-        canonical = _canonicalize_drc_object(drc_report)
+        canonical = json.loads(canonicalize_drc_json(drc_report))
 
+        # Per Section 13.5.2, date, time, and kicad_version are removed
         assert "date" not in canonical
         assert "time" not in canonical
+        assert "kicad_version" not in canonical  # Also a nondeterministic key
         assert "violations" in canonical
-        assert "kicad_version" in canonical
 
     def test_drc_paths_removed(self) -> None:
         """DRC report canonicalization should remove absolute paths."""
-        from formula_foundry.coupongen.manifest import _canonicalize_drc_object
+        import json
+        from formula_foundry.coupongen.kicad.canonicalize import canonicalize_drc_json
 
         drc_report = {
             "source": "/home/user/project/board.kicad_pcb",
@@ -339,8 +347,10 @@ class TestDrcReportCanonicalization:
             "violations": [],
         }
 
-        canonical = _canonicalize_drc_object(drc_report)
+        canonical = json.loads(canonicalize_drc_json(drc_report))
 
+        # Per Section 13.5.2, source is removed, path/file keys are normalized to filenames
         assert "source" not in canonical
-        assert "filename" not in canonical
+        # filename is normalized to just the filename (drc_report.json)
+        assert canonical.get("filename") == "drc_report.json"
         assert "violations" in canonical

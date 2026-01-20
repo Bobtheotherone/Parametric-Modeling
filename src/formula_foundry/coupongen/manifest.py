@@ -26,6 +26,9 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
         - drc (returncode, report_path, summary, canonical_hash)
         - layer_set (per Section 13.5.3) - validation of expected layers
     - lineage (git sha, UTC timestamp - explicitly excluded from design_hash)
+
+DRC canonicalization is delegated to kicad/canonicalize.py per Section 13.5.2,
+which is the authoritative source for all artifact canonicalization algorithms.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from typing import Any, cast
 from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_bytes
 
 from .constraints import ConstraintProof, resolve_fab_limits
+from .kicad.canonicalize import canonical_hash_drc_json
 from .layer_validation import LayerValidationResult, layer_validation_payload
 from .resolve import ResolvedDesign
 from .spec import CouponSpec
@@ -164,11 +168,13 @@ def parse_drc_summary(drc_report_path: Path) -> dict[str, int]:
 def canonicalize_drc_report(drc_report_path: Path) -> str:
     """Canonicalize a DRC report and return its hash.
 
-    Per Section 13.5.2, canonicalization removes/normalizes:
-    - timestamps
-    - absolute paths
-    - tool invocation environment
-    And ensures stable key ordering.
+    This function delegates to the authoritative canonicalization algorithm
+    in kicad/canonicalize.py (per Section 13.5.2), which handles:
+    - Removing timestamps (date, time, timestamp, generated_at)
+    - Removing environment keys (kicad_version, host, source, schema_version)
+    - Normalizing paths to filenames only
+    - Sorting all object keys alphabetically
+    - Preserving list ordering (semantically significant)
 
     Args:
         drc_report_path: Path to the DRC JSON report file.
@@ -184,30 +190,8 @@ def canonicalize_drc_report(drc_report_path: Path) -> str:
     except (json.JSONDecodeError, OSError):
         return sha256_bytes(b"")
 
-    canonical_report = _canonicalize_drc_object(report)
-    canonical_text = canonical_json_dumps(canonical_report)
-    return sha256_bytes(canonical_text.encode("utf-8"))
-
-
-def _canonicalize_drc_object(obj: Any) -> Any:
-    """Recursively canonicalize a DRC report object.
-
-    Removes timestamps, absolute paths, and environment-specific keys.
-    """
-    if isinstance(obj, dict):
-        result = {}
-        for key in sorted(obj.keys()):
-            if key in {"date", "time", "timestamp", "source", "filename"}:
-                continue
-            value = obj[key]
-            if isinstance(value, str) and "/" in value and len(value) > 20:
-                continue
-            result[key] = _canonicalize_drc_object(value)
-        return result
-    elif isinstance(obj, list):
-        return [_canonicalize_drc_object(item) for item in obj]
-    else:
-        return obj
+    # Delegate to the authoritative canonicalization implementation
+    return canonical_hash_drc_json(report)
 
 
 def write_manifest(path: Path, manifest: Mapping[str, Any]) -> None:
