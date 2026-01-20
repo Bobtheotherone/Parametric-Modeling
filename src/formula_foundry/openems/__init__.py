@@ -1,5 +1,22 @@
 from .cli_main import build_parser
 from .convert import build_simulation_spec, simulation_canonical_json, write_simulation_spec
+from .csx_primitives import (
+    BoundingBox3D,
+    CSXBox,
+    CSXCylinder,
+    CSXGeometry,
+    CSXMaterial,
+    CSXMaterialType,
+    CSXPolygon,
+    CSXPrimitive,
+    CSXPrimitiveType,
+    CSXViaPad,
+    NM_TO_M,
+    Point3D,
+    air_material,
+    copper_material,
+    substrate_material,
+)
 from .geometry import (
     BoardOutlineSpec,
     DiscontinuitySpec,
@@ -11,6 +28,14 @@ from .geometry import (
     geometry_canonical_json,
     layer_positions_nm,
     write_geometry_spec,
+)
+from .geometry_adapter import (
+    DEFAULT_COPPER_THICKNESS_NM,
+    GeometryAdapter,
+    LayerZInfo,
+    StackupZMap,
+    build_csx_geometry,
+    build_csx_geometry_from_resolved,
 )
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
 from .sim_runner import SimulationResult, SimulationRunner, SimulationSolverMode
@@ -57,12 +82,12 @@ __all__ = [
     "layer_positions_nm",
     "load_openems_toolchain",
     "parse_openems_version_output",
-    # Units (new)
+    # Units
     "FrequencyHz",
     "TimePS",
     "parse_frequency_hz",
     "parse_time_ps",
-    # Simulation spec models (new)
+    # Simulation spec models
     "BoundarySpec",
     "ConductorMaterialSpec",
     "DielectricMaterialSpec",
@@ -90,4 +115,27 @@ __all__ = [
     "simulation_canonical_json",
     "write_geometry_spec",
     "write_simulation_spec",
+    # CSX primitives
+    "BoundingBox3D",
+    "CSXBox",
+    "CSXCylinder",
+    "CSXGeometry",
+    "CSXMaterial",
+    "CSXMaterialType",
+    "CSXPolygon",
+    "CSXPrimitive",
+    "CSXPrimitiveType",
+    "CSXViaPad",
+    "NM_TO_M",
+    "Point3D",
+    "air_material",
+    "copper_material",
+    "substrate_material",
+    # Geometry adapter
+    "DEFAULT_COPPER_THICKNESS_NM",
+    "GeometryAdapter",
+    "LayerZInfo",
+    "StackupZMap",
+    "build_csx_geometry",
+    "build_csx_geometry_from_resolved",
 ]
