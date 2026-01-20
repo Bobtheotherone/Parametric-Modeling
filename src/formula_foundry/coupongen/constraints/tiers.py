@@ -488,7 +488,6 @@ class Tier1Checker(TierChecker):
 
         # Trace length constraints
         trace_left = int(spec.transmission_line.length_left_nm)
-        trace_right = int(spec.transmission_line.length_right_nm)
 
         results.append(
             _min_constraint(
@@ -500,15 +499,41 @@ class Tier1Checker(TierChecker):
             )
         )
 
-        results.append(
-            _min_constraint(
-                "T1_TRACE_RIGHT_POSITIVE",
-                "Right trace length must be positive",
-                tier="T1",
-                value=trace_right,
-                limit=1,
+        # For F1 coupons, length_right_nm is deprecated and derived from continuity.
+        # If specified, validate it matches the derived value (CP-2.2).
+        # For F0 coupons, length_right_nm is required.
+        if spec.transmission_line.length_right_nm is not None:
+            trace_right = int(spec.transmission_line.length_right_nm)
+            results.append(
+                _min_constraint(
+                    "T1_TRACE_RIGHT_POSITIVE",
+                    "Right trace length must be positive",
+                    tier="T1",
+                    value=trace_right,
+                    limit=1,
+                )
             )
-        )
+
+            # CP-2.2: For F1 coupons, validate continuity (length_right must match derived value)
+            if spec.coupon_family == "F1_SINGLE_ENDED_VIA":
+                # Derive expected right length from continuity formula
+                left_x = int(spec.connectors.left.position_nm[0])
+                right_x = int(spec.connectors.right.position_nm[0])
+                x_disc = left_x + trace_left  # discontinuity position
+                derived_right = right_x - x_disc
+
+                # Continuity error must be zero
+                continuity_error = abs(trace_right - derived_right)
+
+                results.append(
+                    _bool_constraint(
+                        "T1_F1_CONTINUITY_LENGTH_ERROR",
+                        "F1 continuity: specified length_right_nm must equal derived value",
+                        tier="T1",
+                        condition=continuity_error == 0,
+                        reason=f"continuity_length_error_nm={continuity_error} (specified={trace_right}, derived={derived_right})",
+                    )
+                )
 
         # Board aspect ratio (sanity check - not too extreme)
         board_width = int(spec.board.outline.width_nm)
@@ -674,10 +699,17 @@ class Tier2Checker(TierChecker):
 
         # Total trace length must fit within board
         trace_left = int(spec.transmission_line.length_left_nm)
-        trace_right = int(spec.transmission_line.length_right_nm)
         left_x = int(left_pos[0])
         right_x = int(right_pos[0])
         available_length = right_x - left_x
+
+        # For F1 coupons, derive right length if not specified (CP-2.2)
+        if spec.transmission_line.length_right_nm is not None:
+            trace_right = int(spec.transmission_line.length_right_nm)
+        else:
+            # Derive from continuity formula for F1
+            x_disc = left_x + trace_left
+            trace_right = right_x - x_disc
 
         results.append(
             _bool_constraint(
@@ -842,7 +874,16 @@ class Tier3Checker(TierChecker):
         if spec.constraints.symmetry.enforce:
             # Check that left and right trace lengths are equal
             trace_left = int(spec.transmission_line.length_left_nm)
-            trace_right = int(spec.transmission_line.length_right_nm)
+
+            # For F1 coupons, derive right length if not specified (CP-2.2)
+            if spec.transmission_line.length_right_nm is not None:
+                trace_right = int(spec.transmission_line.length_right_nm)
+            else:
+                # Derive from continuity formula for F1
+                left_x = int(spec.connectors.left.position_nm[0])
+                right_x = int(spec.connectors.right.position_nm[0])
+                x_disc = left_x + trace_left
+                trace_right = right_x - x_disc
 
             results.append(
                 _bool_constraint(
