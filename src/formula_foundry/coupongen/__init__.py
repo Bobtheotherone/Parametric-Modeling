@@ -79,6 +79,11 @@ from .stackups import (
     load_stackup,
     load_stackup_from_dict,
 )
+from .toolchain_capture import (
+    ToolchainProvenance,
+    ToolchainProvenanceError,
+    capture_toolchain_provenance,
+)
 from .units import LengthNM, parse_length_nm
 
 __all__ = [
@@ -181,4 +186,8 @@ __all__ = [
     "compute_cache_key",
     "is_cache_valid",
     "run_export_pipeline",
+    # Toolchain capture (CP-5.3)
+    "ToolchainProvenance",
+    "ToolchainProvenanceError",
+    "capture_toolchain_provenance",
 ]
