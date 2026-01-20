@@ -61,6 +61,16 @@ from .spec import (
     ToolchainSpec,
     load_simulationspec,
 )
+from .mesh_generator import (
+    MeshLineGenerator,
+    RefinementZone,
+    detect_antipad_refinement_zones,
+    detect_trace_refinement_zones,
+    detect_via_refinement_zones,
+    generate_adaptive_mesh_lines,
+    generate_z_mesh_lines,
+    mesh_line_summary,
+)
 from .toolchain import DEFAULT_OPENEMS_TOOLCHAIN_PATH, OpenEMSToolchain, load_openems_toolchain
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 
@@ -138,4 +148,13 @@ __all__ = [
     "StackupZMap",
     "build_csx_geometry",
     "build_csx_geometry_from_resolved",
+    # Mesh generator
+    "MeshLineGenerator",
+    "RefinementZone",
+    "detect_antipad_refinement_zones",
+    "detect_trace_refinement_zones",
+    "detect_via_refinement_zones",
+    "generate_adaptive_mesh_lines",
+    "generate_z_mesh_lines",
+    "mesh_line_summary",
 ]
