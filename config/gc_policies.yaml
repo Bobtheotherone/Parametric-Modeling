@@ -1,0 +1,102 @@
+# Garbage Collection Retention Policies for Formula Foundry M3
+#
+# This configuration defines retention policies for artifact garbage collection.
+# Policies control which artifacts to keep and which to delete.
+#
+# Design doc reference: Section 14 - GC with configurable retention policies
+#
+# Built-in policies (always available):
+#   - laptop_default: Conservative policy for laptop development
+#   - ci_aggressive: Aggressive cleanup for CI environments
+#   - archive: Long-term archival policy
+#   - dev_minimal: Minimal retention for fast iteration
+#
+# Custom policies defined here will override built-in policies with the same name.
+
+policies:
+  # Example custom policy - uncomment and modify as needed
+  #
+  # - name: my_custom_policy
+  #   description: "Custom retention policy for my workflow"
+  #   keep_min_age_days: 7
+  #   keep_min_count: 3
+  #   keep_pinned: true
+  #   keep_with_descendants: true
+  #   keep_artifact_types:
+  #     - dataset_snapshot
+  #     - formula_candidate
+  #   keep_roles:
+  #     - final_output
+  #   space_budget_bytes: 20000000000  # 20 GB
+  #   dvc_gc_flags:
+  #     - "--all-branches"
+
+  # Production-safe policy with generous retention
+  - name: production
+    description: "Production-safe policy with generous retention"
+    keep_min_age_days: 60
+    keep_min_count: 10
+    keep_pinned: true
+    keep_with_descendants: true
+    keep_artifact_types:
+      - dataset_snapshot
+      - formula_candidate
+      - model_checkpoint
+      - validation_report
+      - touchstone
+    keep_roles:
+      - final_output
+      - checkpoint
+      - validation
+      - root_input
+    space_budget_bytes: 100000000000  # 100 GB
+    dvc_gc_flags:
+      - "--all-branches"
+      - "--all-tags"
+
+  # Weekly cleanup policy for development
+  - name: weekly_cleanup
+    description: "Weekly cleanup policy for development machines"
+    keep_min_age_days: 7
+    keep_min_count: 3
+    keep_pinned: true
+    keep_with_descendants: true
+    keep_artifact_types:
+      - dataset_snapshot
+      - formula_candidate
+    keep_roles:
+      - final_output
+    space_budget_bytes: 30000000000  # 30 GB
+
+  # Pre-release cleanup - aggressive but safe
+  - name: pre_release
+    description: "Pre-release cleanup to reduce deployment size"
+    keep_min_age_days: 14
+    keep_min_count: 2
+    keep_pinned: true
+    keep_with_descendants: true
+    keep_artifact_types:
+      - dataset_snapshot
+      - formula_candidate
+      - validation_report
+    keep_roles:
+      - final_output
+      - validation
+    space_budget_bytes: 10000000000  # 10 GB
+    dvc_gc_flags:
+      - "--workspace"
+
+# Global settings
+settings:
+  # Default policy to use when none is specified
+  default_policy: laptop_default
+
+  # Whether to run dvc gc by default
+  run_dvc_gc_default: true
+
+  # Warn if total storage exceeds this threshold (bytes)
+  warn_threshold_bytes: 40000000000  # 40 GB
+
+  # Critical threshold - refuse to add more artifacts (bytes)
+  # Set to null to disable
+  critical_threshold_bytes: null
