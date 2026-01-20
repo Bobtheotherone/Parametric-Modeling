@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "generic_2layer",
+  "name": "Generic 2-Layer FR4",
+  "description": "Standard 2-layer FR4 stackup. 1.6mm total, 1oz copper both sides.",
+  "vendor": "Generic",
+  "copper_layers": 2,
+  "total_thickness_nm": 1600000,
+  "dielectric_defaults": {
+    "er": 4.5,
+    "loss_tangent": 0.02,
+    "material": "FR4"
+  },
+  "layers": [
+    {
+      "name": "F.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    },
+    {
+      "name": "core",
+      "type": "dielectric",
+      "thickness_nm": 1530000,
+      "dielectric": {
+        "er": 4.5,
+        "loss_tangent": 0.02,
+        "material": "FR4 Core"
+      }
+    },
+    {
+      "name": "B.Cu",
+      "type": "copper",
+      "thickness_nm": 35000,
+      "copper_weight_oz": 1.0
+    }
+  ]
+}
