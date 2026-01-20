@@ -32,6 +32,8 @@ extract_from_claude_stream = extract_module.extract_from_claude_stream
 validate_against_schema = extract_module.validate_against_schema
 find_all_json_objects = extract_module.find_all_json_objects
 strip_fences = extract_module.strip_fences
+normalize_task_plan = extract_module.normalize_task_plan
+is_task_plan_schema = extract_module.is_task_plan_schema
 
 
 # -----------------------------
@@ -422,6 +424,289 @@ class TestOrchSchemaKindBehavior:
 
         # This should FAIL task_plan validation (additional properties not allowed)
         assert not validate_against_schema(turn_normalized, task_plan_schema)
+
+
+# -----------------------------
+# Task Plan Normalization tests
+# -----------------------------
+
+class TestTaskPlanNormalization:
+    """Test task plan normalization for common model drift issues."""
+
+    def test_is_task_plan_schema_by_title(self) -> None:
+        """Detect task plan schema by title."""
+        schema = {"title": "ParallelTaskPlan", "required": []}
+        assert is_task_plan_schema(schema)
+
+    def test_is_task_plan_schema_by_required_keys(self) -> None:
+        """Detect task plan schema by required keys."""
+        schema = {"required": ["milestone_id", "max_parallel_tasks", "tasks", "rationale"]}
+        assert is_task_plan_schema(schema)
+
+    def test_normalize_intensity_to_estimated_intensity(self) -> None:
+        """Normalize 'intensity' to 'estimated_intensity'."""
+        plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "preferred_agent": "codex",
+                    "intensity": "low",  # Wrong key
+                    "locks": [],
+                    "solo": False
+                    # Note: depends_on is missing
+                }
+            ]
+        }
+        normalized = normalize_task_plan(plan)
+        task = normalized["tasks"][0]
+        assert "estimated_intensity" in task
+        assert task["estimated_intensity"] == "low"
+        assert "intensity" not in task
+
+    def test_normalize_dependencies_to_depends_on(self) -> None:
+        """Normalize 'dependencies' to 'depends_on'."""
+        plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "preferred_agent": "codex",
+                    "estimated_intensity": "medium",
+                    "locks": [],
+                    "dependencies": ["T0"],  # Wrong key
+                    "solo": False
+                }
+            ]
+        }
+        normalized = normalize_task_plan(plan)
+        task = normalized["tasks"][0]
+        assert "depends_on" in task
+        assert task["depends_on"] == ["T0"]
+        assert "dependencies" not in task
+
+    def test_normalize_agent_to_preferred_agent(self) -> None:
+        """Normalize 'agent' to 'preferred_agent'."""
+        plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "agent": "claude",  # Wrong key
+                    "estimated_intensity": "high",
+                    "locks": [],
+                    "depends_on": [],
+                    "solo": True
+                }
+            ]
+        }
+        normalized = normalize_task_plan(plan)
+        task = normalized["tasks"][0]
+        assert "preferred_agent" in task
+        assert task["preferred_agent"] == "claude"
+        assert "agent" not in task
+
+    def test_normalize_adds_missing_defaults(self) -> None:
+        """Add default values for missing required fields."""
+        plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "preferred_agent": "codex",
+                    "estimated_intensity": "low"
+                    # Missing: locks, depends_on, solo
+                }
+            ]
+        }
+        normalized = normalize_task_plan(plan)
+        task = normalized["tasks"][0]
+        assert task["locks"] == []
+        assert task["depends_on"] == []
+        assert task["solo"] is False
+
+    def test_normalize_removes_unknown_keys(self) -> None:
+        """Remove keys not allowed by schema (additionalProperties=false)."""
+        plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "extra_top_key": "should be removed",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "preferred_agent": "codex",
+                    "estimated_intensity": "low",
+                    "locks": [],
+                    "depends_on": [],
+                    "solo": False,
+                    "extra_task_key": "should be removed"
+                }
+            ]
+        }
+        normalized = normalize_task_plan(plan)
+        assert "extra_top_key" not in normalized
+        assert "extra_task_key" not in normalized["tasks"][0]
+
+    def test_normalize_unwraps_task_plan_wrapper(self) -> None:
+        """Unwrap {"task_plan": {...}} wrapper."""
+        inner_plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test",
+            "tasks": [
+                {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "preferred_agent": "codex",
+                    "estimated_intensity": "low",
+                    "locks": [],
+                    "depends_on": [],
+                    "solo": False
+                }
+            ]
+        }
+        wrapped = {"task_plan": inner_plan}
+        normalized = normalize_task_plan(wrapped)
+        assert "task_plan" not in normalized
+        assert normalized["milestone_id"] == "M1"
+
+    def test_extraction_normalizes_drifted_plan(
+        self, task_plan_schema: Dict[str, Any]
+    ) -> None:
+        """Full extraction test: plan with wrong keys gets normalized and validates."""
+        # This simulates what Claude might output with model drift
+        drifted_plan = {
+            "milestone_id": "M2",
+            "max_parallel_tasks": 4,
+            "rationale": "Breaking down the work",
+            "tasks": [
+                {
+                    "id": "M2-TASK-1",
+                    "title": "Implement feature",
+                    "description": "Add feature to system",
+                    "agent": "codex",  # Wrong: should be preferred_agent
+                    "intensity": "medium",  # Wrong: should be estimated_intensity
+                    "locks": ["M2-core"],
+                    # Missing: depends_on, solo
+                }
+            ]
+        }
+
+        # The raw plan should NOT validate
+        assert not validate_against_schema(drifted_plan, task_plan_schema)
+
+        # But extraction should normalize it and return a valid plan
+        stream = json.dumps(drifted_plan)
+        result = extract_from_claude_stream(stream, task_plan_schema)
+
+        assert result is not None
+        assert result["milestone_id"] == "M2"
+
+        # Check normalized task
+        task = result["tasks"][0]
+        assert task["preferred_agent"] == "codex"
+        assert task["estimated_intensity"] == "medium"
+        assert task["depends_on"] == []
+        assert task["solo"] is False
+        assert "agent" not in task
+        assert "intensity" not in task
+
+        # Final result should validate
+        assert validate_against_schema(result, task_plan_schema)
+
+    def test_extraction_normalizes_wrapped_plan(
+        self, task_plan_schema: Dict[str, Any]
+    ) -> None:
+        """Extraction handles {"task_plan": {...}} wrapper."""
+        inner_plan = {
+            "milestone_id": "M3",
+            "max_parallel_tasks": 2,
+            "rationale": "Wrapped plan test",
+            "tasks": [
+                {
+                    "id": "M3-T1",
+                    "title": "Task",
+                    "description": "Description",
+                    "preferred_agent": "claude",
+                    "intensity": "high",  # Wrong key
+                    "locks": []
+                    # Missing depends_on, solo
+                }
+            ]
+        }
+        wrapped = {"task_plan": inner_plan}
+
+        stream = json.dumps(wrapped)
+        result = extract_from_claude_stream(stream, task_plan_schema)
+
+        assert result is not None
+        assert result["milestone_id"] == "M3"
+        assert validate_against_schema(result, task_plan_schema)
+
+    def test_extraction_from_claude_assistant_message_normalizes(
+        self, task_plan_schema: Dict[str, Any]
+    ) -> None:
+        """Test normalization works for plan embedded in Claude assistant message."""
+        drifted_plan = {
+            "milestone_id": "M1",
+            "max_parallel_tasks": 4,
+            "rationale": "Test from assistant message",
+            "tasks": [
+                {
+                    "id": "M1-T1",
+                    "title": "Task 1",
+                    "description": "Desc",
+                    "agent": "either",  # Wrong key
+                    "intensity": "low",  # Wrong key
+                    "dependencies": [],  # Wrong key
+                    "locks": [],
+                    "solo": False
+                }
+            ]
+        }
+
+        # Wrap in Claude CLI assistant message format
+        assistant_event = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(drifted_plan)
+                    }
+                ]
+            }
+        }
+
+        stream = json.dumps(assistant_event)
+        result = extract_from_claude_stream(stream, task_plan_schema)
+
+        assert result is not None
+        assert validate_against_schema(result, task_plan_schema)
+        task = result["tasks"][0]
+        assert task["preferred_agent"] == "either"
+        assert task["estimated_intensity"] == "low"
+        assert task["depends_on"] == []
 
 
 if __name__ == "__main__":

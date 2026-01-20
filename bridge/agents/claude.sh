@@ -41,7 +41,16 @@ if [[ "$ORCH_SCHEMA_KIND" == "task_plan" ]]; then
 REMINDER (NON-NEGOTIABLE):
 - Tools are DISABLED. Do NOT output <task>, <read>, <edit>, <bash> blocks.
 - Output EXACTLY ONE JSON object matching ${SCHEMA_BASENAME}.
-- Required keys: milestone_id, max_parallel_tasks, rationale, tasks (array).
+- Top-level required keys: milestone_id, max_parallel_tasks, rationale, tasks (array).
+- Each task in tasks array MUST have these exact keys:
+  id, title, description, preferred_agent, estimated_intensity, locks, depends_on, solo
+- IMPORTANT KEY NAMES:
+  * Use \"estimated_intensity\" (NOT \"intensity\")
+  * Use \"depends_on\" (NOT \"dependencies\")
+  * Use \"preferred_agent\" (NOT \"agent\")
+  * Include \"depends_on\" even if empty (use [])
+  * Include \"locks\" even if empty (use [])
+- No extra keys allowed on task objects.
 - No markdown. No code fences. No extra text before/after the JSON."
 else
   prompt="${prompt}

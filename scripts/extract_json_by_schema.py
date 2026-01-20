@@ -14,6 +14,7 @@ Returns:
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -25,6 +26,107 @@ try:
     HAS_JSONSCHEMA = True
 except ImportError:
     HAS_JSONSCHEMA = False
+
+
+# -----------------------------
+# Task Plan Normalization
+# -----------------------------
+
+# Valid keys for task items per task_plan.schema.json
+TASK_ITEM_VALID_KEYS = {"id", "title", "description", "preferred_agent", "estimated_intensity", "locks", "depends_on", "solo"}
+
+# Valid top-level keys for task plan
+TASK_PLAN_VALID_KEYS = {"milestone_id", "max_parallel_tasks", "rationale", "tasks"}
+
+
+def is_task_plan_schema(schema: dict) -> bool:
+    """Detect if schema is for ParallelTaskPlan."""
+    # Check by title
+    if schema.get("title") == "ParallelTaskPlan":
+        return True
+    # Check by required keys
+    required = set(schema.get("required", []))
+    task_plan_required = {"milestone_id", "max_parallel_tasks", "tasks", "rationale"}
+    return task_plan_required.issubset(required)
+
+
+def normalize_task_plan(obj: Any) -> Any:
+    """Normalize a task plan object to match expected schema.
+
+    Handles common model drift issues:
+    - "intensity" -> "estimated_intensity"
+    - "dependencies" -> "depends_on"
+    - "agent" -> "preferred_agent"
+    - Missing depends_on, locks, solo fields
+    - Wrapped in {"task_plan": {...}}
+    - Extra unknown keys (which fail additionalProperties=false)
+
+    Returns the normalized object (modified in place).
+    """
+    if not isinstance(obj, dict):
+        return obj
+
+    # Unwrap if nested in {"task_plan": {...}}
+    if "task_plan" in obj and isinstance(obj["task_plan"], dict):
+        inner = obj["task_plan"]
+        # Check if inner looks like a task plan
+        if "tasks" in inner or "milestone_id" in inner:
+            obj = inner
+
+    # Normalize tasks array
+    tasks = obj.get("tasks", [])
+    if isinstance(tasks, list):
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+
+            # Key renames
+            if "intensity" in task and "estimated_intensity" not in task:
+                task["estimated_intensity"] = task.pop("intensity")
+
+            if "dependencies" in task and "depends_on" not in task:
+                task["depends_on"] = task.pop("dependencies")
+
+            if "agent" in task and "preferred_agent" not in task:
+                task["preferred_agent"] = task.pop("agent")
+
+            # Default values for missing required keys
+            if "depends_on" not in task:
+                task["depends_on"] = []
+
+            if "locks" not in task:
+                task["locks"] = []
+
+            if "solo" not in task:
+                task["solo"] = False
+
+            # Ensure arrays are actually arrays
+            if not isinstance(task.get("depends_on"), list):
+                task["depends_on"] = []
+            if not isinstance(task.get("locks"), list):
+                task["locks"] = []
+
+            # Remove unknown keys (additionalProperties=false)
+            unknown_keys = set(task.keys()) - TASK_ITEM_VALID_KEYS
+            for key in unknown_keys:
+                del task[key]
+
+    # Ensure top-level required fields exist
+    if "milestone_id" not in obj:
+        obj["milestone_id"] = "M0"
+    if "max_parallel_tasks" not in obj:
+        obj["max_parallel_tasks"] = 4
+    if "rationale" not in obj:
+        obj["rationale"] = ""
+    if "tasks" not in obj:
+        obj["tasks"] = []
+
+    # Remove unknown top-level keys (additionalProperties=false)
+    unknown_top_keys = set(obj.keys()) - TASK_PLAN_VALID_KEYS
+    for key in unknown_top_keys:
+        del obj[key]
+
+    return obj
 
 
 def strip_fences(s: str) -> str:
@@ -117,6 +219,29 @@ def validate_against_schema(obj: Any, schema: dict) -> bool:
         return False
 
 
+def _try_validate_with_normalization(obj: Any, schema: dict, is_task_plan: bool) -> Optional[dict]:
+    """Try to validate an object, normalizing task plans if needed.
+
+    Returns the (possibly normalized) object if valid, None otherwise.
+    """
+    if not isinstance(obj, dict):
+        return None
+
+    # First try direct validation
+    if validate_against_schema(obj, schema):
+        return obj
+
+    # If it's a task plan schema, try normalization
+    if is_task_plan:
+        # Make a copy to avoid mutating original during exploration
+        normalized = copy.deepcopy(obj)
+        normalized = normalize_task_plan(normalized)
+        if validate_against_schema(normalized, schema):
+            return normalized
+
+    return None
+
+
 def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
     """Extract a valid JSON object from Claude CLI stream output.
 
@@ -130,8 +255,14 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
     1. Direct objects that validate against schema (prefer last one)
     2. Result events with embedded JSON in "result" field
     3. Assistant messages with JSON in text content
+
+    For task plan schemas, normalization is applied to handle common model drift:
+    - "intensity" -> "estimated_intensity"
+    - "dependencies" -> "depends_on"
+    - Missing fields get defaults
     """
     candidates: List[dict] = []
+    is_task_plan = is_task_plan_schema(schema)
 
     # First, try to parse the entire text as JSON sequence
     decoder = json.JSONDecoder()
@@ -166,9 +297,10 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
         if not isinstance(obj, dict):
             continue
 
-        # Check if this object directly validates against schema
-        if validate_against_schema(obj, schema):
-            candidates.append(obj)
+        # Check if this object directly validates (with normalization for task plans)
+        validated = _try_validate_with_normalization(obj, schema, is_task_plan)
+        if validated is not None:
+            candidates.append(validated)
             continue
 
         # Check if it's a Claude CLI event with embedded JSON
@@ -179,8 +311,10 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
             result_str = obj.get("result")
             if isinstance(result_str, str) and result_str.strip():
                 inner = try_parse_json(strip_fences(result_str))
-                if isinstance(inner, dict) and validate_against_schema(inner, schema):
-                    candidates.append(inner)
+                if isinstance(inner, dict):
+                    validated = _try_validate_with_normalization(inner, schema, is_task_plan)
+                    if validated is not None:
+                        candidates.append(validated)
 
         # type="assistant" with message.content[*].text
         elif obj_type == "assistant":
@@ -191,16 +325,20 @@ def extract_from_claude_stream(text: str, schema: dict) -> Optional[dict]:
                     text_content = block.get("text", "")
                     if text_content:
                         inner = try_parse_json(strip_fences(text_content))
-                        if isinstance(inner, dict) and validate_against_schema(inner, schema):
-                            candidates.append(inner)
+                        if isinstance(inner, dict):
+                            validated = _try_validate_with_normalization(inner, schema, is_task_plan)
+                            if validated is not None:
+                                candidates.append(validated)
 
     # If no candidates found from parsed objects, try extracting balanced JSON
     if not candidates:
         all_objects = find_all_json_objects(text)
         for obj_str in all_objects:
             obj = try_parse_json(obj_str)
-            if isinstance(obj, dict) and validate_against_schema(obj, schema):
-                candidates.append(obj)
+            if isinstance(obj, dict):
+                validated = _try_validate_with_normalization(obj, schema, is_task_plan)
+                if validated is not None:
+                    candidates.append(validated)
 
     # Return the last valid candidate (most likely to be the final answer)
     return candidates[-1] if candidates else None

@@ -2753,6 +2753,20 @@ def _run_parallel_with_auto_continue(
             print(f"\n[orchestrator] AUTO-CONTINUE: SUCCESS after {run_count} run(s)")
             return 0
 
+        # Check for planning failure (rc == 2) - stop immediately to avoid burning credits
+        if rc == 2:
+            print(f"\n[orchestrator] AUTO-CONTINUE: STOPPING - Planning step failed (rc=2)")
+            print(f"[orchestrator] This is a structural failure that auto-continue cannot fix.")
+            # Print debug file locations for the user
+            plan_debug = runs_dir / "task_plan.extract_debug.txt"
+            raw_stream = runs_dir / "task_plan.json.wrapper_schema_claude_raw_stream.txt"
+            if plan_debug.exists():
+                print(f"[orchestrator] Debug file: {plan_debug}")
+            if raw_stream.exists():
+                print(f"[orchestrator] Raw stream: {raw_stream}")
+            print(f"[orchestrator] Check the files above to diagnose the planning failure.")
+            return 2
+
         # Check for progress - compare root failures
         if last_summary:
             current_root_failure_ids = {t["id"] for t in last_summary.get("root_failures", [])}
