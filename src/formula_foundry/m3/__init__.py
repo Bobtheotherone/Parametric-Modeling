@@ -16,6 +16,19 @@ from formula_foundry.m3.artifact_store import (
     Provenance,
     compute_spec_id,
 )
+from formula_foundry.m3.dataset_snapshot import (
+    DatasetMember,
+    DatasetNotFoundError,
+    DatasetProvenance,
+    DatasetSnapshot,
+    DatasetSnapshotError,
+    DatasetSnapshotReader,
+    DatasetSnapshotWriter,
+    DatasetStatistics,
+    ParquetNotAvailableError,
+    SplitDefinition,
+    compute_manifest_hash,
+)
 from formula_foundry.m3.registry import ArtifactRegistry
 
 __all__ = [
@@ -26,8 +39,19 @@ __all__ = [
     "ArtifactStore",
     "ArtifactStoreError",
     "ContentHash",
+    "DatasetMember",
+    "DatasetNotFoundError",
+    "DatasetProvenance",
+    "DatasetSnapshot",
+    "DatasetSnapshotError",
+    "DatasetSnapshotReader",
+    "DatasetSnapshotWriter",
+    "DatasetStatistics",
     "Lineage",
     "LineageReference",
+    "ParquetNotAvailableError",
     "Provenance",
+    "SplitDefinition",
+    "compute_manifest_hash",
     "compute_spec_id",
 ]
