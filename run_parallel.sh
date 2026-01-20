@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Parallel orchestrator runner
+#
+# Usage:
+#   ./run_parallel.sh                    # Single run
+#   ./run_parallel.sh --auto-continue    # Loop until success or max runs
+#   ORCH_AUTO_CONTINUE=1 ./run_parallel.sh  # Same as --auto-continue
+#   ./run_parallel.sh --no-auto-continue # Disable auto-continue even if env var set
+#
+# To run only specific tasks:
+#   ./run_parallel.sh --only-task M1-DSL-SCHEMA --only-task M2-OPENEMS-SCHEMA
+#
+# To allow resource-intensive tasks:
+#   ./run_parallel.sh --allow-resource-intensive
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="${ROOT}/.venv"
 
