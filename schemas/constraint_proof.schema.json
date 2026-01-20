@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://formula-foundry.dev/schemas/constraint_proof.v1.json",
   "title": "ConstraintProof",
-  "description": "Constraint proof schema version 1 - Documents constraint evaluation results with signed margins and repair info",
+  "description": "Constraint proof schema version 1 - Documents constraint evaluation results with signed margins, M1-compliant gating, and repair info (CP-3.2)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -52,6 +52,27 @@
       "type": "array",
       "description": "Full per-constraint evaluation details",
       "items": {"$ref": "#/$defs/ConstraintEvaluation"}
+    },
+    "min_margin_by_category": {
+      "type": "object",
+      "description": "Minimum margin (in nm) per constraint category - enables quick identification of tightest constraints (CP-3.2)",
+      "additionalProperties": false,
+      "properties": {
+        "FABRICATION": {"$ref": "#/$defs/CategoryMarginSummary"},
+        "GEOMETRY": {"$ref": "#/$defs/CategoryMarginSummary"},
+        "TOPOLOGY": {"$ref": "#/$defs/CategoryMarginSummary"},
+        "SPACING": {"$ref": "#/$defs/CategoryMarginSummary"},
+        "MATERIAL": {"$ref": "#/$defs/CategoryMarginSummary"},
+        "ELECTRICAL": {"$ref": "#/$defs/CategoryMarginSummary"}
+      }
+    },
+    "failing_constraints_summary": {
+      "$ref": "#/$defs/FailingConstraintsSummary",
+      "description": "Summary of all failing constraints with IDs, categories, and failure details (CP-3.2)"
+    },
+    "repair_summary": {
+      "$ref": "#/$defs/RepairSummary",
+      "description": "Summary of repairs applied when REPAIR mode was used (CP-3.2)"
     },
     "repair_applied": {
       "type": "boolean",
@@ -115,6 +136,18 @@
         "category": {
           "$ref": "#/$defs/ConstraintCategory"
         },
+        "expression": {
+          "type": "string",
+          "description": "Constraint expression/formula in human-readable form (e.g., 'trace_width >= min_trace_width') (CP-3.2 M1)"
+        },
+        "inputs": {
+          "$ref": "#/$defs/ConstraintInputs",
+          "description": "Input parameters used in constraint evaluation (CP-3.2 M1)"
+        },
+        "evaluated_values": {
+          "$ref": "#/$defs/EvaluatedValues",
+          "description": "Computed values from constraint evaluation including intermediate results (CP-3.2 M1)"
+        },
         "value": {
           "type": "number",
           "description": "Actual value being checked"
@@ -127,6 +160,10 @@
           "type": "number",
           "description": "Signed margin: positive means passing, negative means failing"
         },
+        "margin_nm": {
+          "type": "integer",
+          "description": "Signed margin in nanometers for dimensional constraints (CP-3.2 M1)"
+        },
         "passed": {
           "type": "boolean",
           "description": "Whether the constraint was satisfied"
@@ -136,7 +173,8 @@
         },
         "must_pass": {
           "type": "boolean",
-          "description": "Whether this constraint must pass for validity"
+          "default": true,
+          "description": "Whether this constraint must pass for design validity - gating constraint (CP-3.2 M1)"
         },
         "reason": {
           "type": "string",
@@ -279,6 +317,235 @@
               "description": "Sum of normalized distances across all repaired parameters"
             }
           }
+        }
+      }
+    },
+    "ConstraintInputs": {
+      "title": "ConstraintInputs",
+      "type": "object",
+      "description": "Input parameters used in constraint evaluation (CP-3.2 M1)",
+      "additionalProperties": false,
+      "properties": {
+        "parameter_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Dotted paths to input parameters (e.g., ['transmission_line.w_nm', 'fab_profile.min_trace_width_nm'])"
+        },
+        "values": {
+          "type": "object",
+          "description": "Mapping from parameter paths to their values",
+          "additionalProperties": {
+            "anyOf": [
+              {"type": "number"},
+              {"type": "integer"},
+              {"type": "string"},
+              {"type": "boolean"}
+            ]
+          }
+        },
+        "units": {
+          "type": "object",
+          "description": "Mapping from parameter paths to their units (e.g., 'nm', 'ratio', 'bool')",
+          "additionalProperties": {"type": "string"}
+        }
+      }
+    },
+    "EvaluatedValues": {
+      "title": "EvaluatedValues",
+      "type": "object",
+      "description": "Computed values from constraint evaluation including intermediate results (CP-3.2 M1)",
+      "additionalProperties": false,
+      "properties": {
+        "computed": {
+          "type": "object",
+          "description": "Intermediate computed values (e.g., annular_ring, aspect_ratio)",
+          "additionalProperties": {
+            "anyOf": [
+              {"type": "number"},
+              {"type": "integer"}
+            ]
+          }
+        },
+        "actual_value": {
+          "anyOf": [
+            {"type": "number"},
+            {"type": "integer"}
+          ],
+          "description": "The actual value being checked against the limit"
+        },
+        "limit_value": {
+          "anyOf": [
+            {"type": "number"},
+            {"type": "integer"}
+          ],
+          "description": "The limit value used for comparison"
+        },
+        "comparison_type": {
+          "type": "string",
+          "enum": ["MIN", "MAX", "EQUAL", "RANGE", "BOOL"],
+          "description": "Type of comparison performed (MIN=value >= limit, MAX=value <= limit, etc.)"
+        }
+      }
+    },
+    "CategoryMarginSummary": {
+      "title": "CategoryMarginSummary",
+      "type": "object",
+      "description": "Summary of margin statistics for a constraint category (CP-3.2)",
+      "additionalProperties": false,
+      "properties": {
+        "min_margin_nm": {
+          "type": "integer",
+          "description": "Minimum margin in nanometers across all constraints in this category"
+        },
+        "min_margin_constraint_id": {
+          "type": "string",
+          "description": "ID of the constraint with the minimum margin"
+        },
+        "constraint_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of constraints in this category"
+        },
+        "failed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of failed constraints in this category"
+        },
+        "passed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of passed constraints in this category"
+        },
+        "average_margin_nm": {
+          "type": "number",
+          "description": "Average margin in nanometers across all constraints in this category"
+        }
+      }
+    },
+    "FailingConstraintsSummary": {
+      "title": "FailingConstraintsSummary",
+      "type": "object",
+      "description": "Summary of all failing constraints (CP-3.2)",
+      "additionalProperties": false,
+      "required": ["total_failures", "failures_by_tier", "failures_by_category", "constraint_ids"],
+      "properties": {
+        "total_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of failing constraints"
+        },
+        "must_pass_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of failing constraints where must_pass=true (blocking failures)"
+        },
+        "failures_by_tier": {
+          "type": "object",
+          "description": "Count of failures grouped by tier",
+          "additionalProperties": {"type": "integer"}
+        },
+        "failures_by_category": {
+          "type": "object",
+          "description": "Count of failures grouped by category",
+          "additionalProperties": {"type": "integer"}
+        },
+        "constraint_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of all failing constraint IDs"
+        },
+        "failure_details": {
+          "type": "array",
+          "description": "Detailed information for each failing constraint",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "tier", "margin_nm", "must_pass"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Constraint ID"
+              },
+              "tier": {
+                "$ref": "#/$defs/ConstraintTier"
+              },
+              "category": {
+                "$ref": "#/$defs/ConstraintCategory"
+              },
+              "margin_nm": {
+                "type": "integer",
+                "description": "Signed margin in nm (negative for failures)"
+              },
+              "severity": {
+                "$ref": "#/$defs/ConstraintSeverity"
+              },
+              "must_pass": {
+                "type": "boolean",
+                "description": "Whether this is a gating constraint"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Human-readable failure reason"
+              }
+            }
+          }
+        }
+      }
+    },
+    "RepairSummary": {
+      "title": "RepairSummary",
+      "type": "object",
+      "description": "Summary of repairs applied when REPAIR mode was used (CP-3.2)",
+      "additionalProperties": false,
+      "properties": {
+        "repair_applied": {
+          "type": "boolean",
+          "description": "Whether any repairs were applied"
+        },
+        "total_repairs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of parameter repairs made"
+        },
+        "repairs_by_tier": {
+          "type": "object",
+          "description": "Count of repairs triggered by constraints in each tier",
+          "additionalProperties": {"type": "integer"}
+        },
+        "repaired_parameter_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of all parameter paths that were repaired"
+        },
+        "total_distance_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Sum of absolute repair distances in nanometers"
+        },
+        "max_single_repair_nm": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Largest single repair distance in nanometers"
+        },
+        "normalized_repair_distance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Normalized repair distance (L2 norm in normalized parameter space)"
+        },
+        "original_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of constraint failures before repair"
+        },
+        "remaining_failures": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of constraint failures after repair (should be 0 for successful repair)"
+        },
+        "projection_policy_order": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Order in which projection policies were applied (e.g., ['T0', 'T1', 'T2', 'F1_CONTINUITY'])"
         }
       }
     }
