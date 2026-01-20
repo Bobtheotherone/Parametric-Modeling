@@ -1,3 +1,24 @@
+"""Manifest generation for coupon builds.
+
+This module generates manifest.json files for every coupon build with complete
+provenance information and export hashes.
+
+Satisfies:
+    - REQ-M1-018: The repo must emit a manifest.json for every build containing
+                  required provenance fields and export hashes.
+
+Required manifest fields (per DESIGN_DOCUMENT.md Section 9.3):
+    - schema_version, coupon_family
+    - design_hash, coupon_id
+    - resolved_design
+    - derived_features + dimensionless_groups
+    - fab_profile_id + resolved limits
+    - stackup
+    - toolchain (KiCad version, docker image tag/digest, kicad-cli --version output)
+    - exports list with canonical hashes
+    - verification (DRC summary + constraint_proof summary)
+    - lineage (git commit hash, UTC timestamp)
+"""
 from __future__ import annotations
 
 import json
@@ -40,6 +61,28 @@ def build_manifest(
     git_sha: str | None = None,
     timestamp_utc: str | None = None,
 ) -> dict[str, Any]:
+    """Build a manifest dictionary with all required provenance fields.
+
+    Satisfies REQ-M1-018: The repo must emit a manifest.json for every build
+    containing required provenance fields and export hashes.
+
+    Args:
+        spec: The original coupon specification.
+        resolved: The resolved design with concrete integer-nm values.
+        proof: The constraint proof from validation.
+        design_hash: SHA256 hash of the canonical resolved design.
+        coupon_id: Human-readable identifier derived from design_hash.
+        toolchain: Toolchain metadata (kicad_version, docker_image, mode, kicad_cli_version).
+        toolchain_hash_value: SHA256 hash of the toolchain metadata.
+        export_hashes: Mapping of relative export paths to their canonical hashes.
+        drc_report_path: Path to the DRC JSON report.
+        drc_returncode: Return code from the DRC check.
+        git_sha: Optional explicit git SHA (defaults to HEAD of cwd).
+        timestamp_utc: Optional explicit UTC timestamp (defaults to now).
+
+    Returns:
+        Dictionary with all required manifest fields ready for JSON serialization.
+    """
     resolved_git_sha = _resolve_git_sha(git_sha)
     timestamp = timestamp_utc or _utc_timestamp()
     exports = [
