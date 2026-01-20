@@ -98,6 +98,139 @@ class RunState:
 
 
 # -----------------------------
+# AgentPolicy: Centralized agent selection enforcement
+# -----------------------------
+
+
+class AgentPolicyViolation(Exception):
+    """Raised when code attempts to use an agent that violates the policy."""
+    pass
+
+
+@dataclasses.dataclass
+class AgentPolicy:
+    """Centralized agent selection policy.
+
+    When forced_agent is set (via --only-codex or --only-claude), ALL agent
+    selections must go through this policy and will be overridden to use
+    only the forced agent.
+    """
+    forced_agent: Optional[str] = None  # Set by --only-* flags
+    allowed_agents: Tuple[str, ...] = AGENTS
+    runs_dir: Optional[Path] = None  # For writing violation artifacts
+
+    def enforce(self, requested_agent: str, context: str = "") -> str:
+        """Enforce the agent policy, returning the agent to use.
+
+        Args:
+            requested_agent: The agent that was requested
+            context: Description of where this request originated (for error messages)
+
+        Returns:
+            The agent to actually use (forced_agent if set, otherwise requested)
+
+        Raises:
+            AgentPolicyViolation: If forced mode is active and code tries to use wrong agent
+        """
+        if self.forced_agent:
+            if requested_agent != self.forced_agent and requested_agent in AGENTS:
+                # Log the override
+                print(f"[AgentPolicy] OVERRIDE: {requested_agent} -> {self.forced_agent} ({context})")
+            return self.forced_agent
+
+        # No forced agent - verify requested is allowed
+        if requested_agent not in self.allowed_agents:
+            if self.allowed_agents:
+                return self.allowed_agents[0]
+            return AGENTS[0]
+
+        return requested_agent
+
+    def enforce_strict(self, requested_agent: str, context: str = "") -> str:
+        """Strict enforcement - raises exception if wrong agent is requested.
+
+        Use this for code paths that should NEVER attempt to use the wrong agent
+        (e.g., fallback logic that might try to switch agents).
+        """
+        if self.forced_agent and requested_agent != self.forced_agent:
+            msg = (
+                f"AGENT POLICY VIOLATION: Attempted to use '{requested_agent}' "
+                f"when --only-{self.forced_agent} is active. Context: {context}"
+            )
+            self._write_violation_artifact(msg, requested_agent, context)
+            raise AgentPolicyViolation(msg)
+        return self.enforce(requested_agent, context)
+
+    def _write_violation_artifact(self, msg: str, requested: str, context: str) -> None:
+        """Write an artifact explaining the policy violation."""
+        if not self.runs_dir:
+            return
+        artifact_path = self.runs_dir / "agent_policy_violation.txt"
+        content = f"""AGENT POLICY VIOLATION
+======================
+
+Timestamp: {dt.datetime.utcnow().isoformat()}Z
+Forced Agent: {self.forced_agent}
+Requested Agent: {requested}
+Context: {context}
+
+Message:
+{msg}
+
+This file was created because code attempted to invoke an agent that
+violates the --only-{self.forced_agent} flag. This indicates a bug in
+the orchestrator's agent selection logic.
+"""
+        try:
+            artifact_path.write_text(content, encoding="utf-8")
+            print(f"[AgentPolicy] Violation artifact written to: {artifact_path}")
+        except Exception as e:
+            print(f"[AgentPolicy] Failed to write violation artifact: {e}")
+
+    def is_forced_mode(self) -> bool:
+        """Return True if a forced agent mode is active."""
+        return self.forced_agent is not None
+
+    def get_prompt_header(self) -> str:
+        """Get a header to inject into prompts when in forced mode.
+
+        This tells the agent it's the only one and must implement, not just review.
+        """
+        if not self.forced_agent:
+            return ""
+
+        return f"""## AGENT POLICY OVERRIDE
+
+**IMPORTANT**: You are running in `--only-{self.forced_agent}` mode.
+
+- You are the ONLY agent allowed in this session.
+- You MUST implement all changes yourself. Do NOT suggest handing off to another agent.
+- You MUST verify your own changes. Do NOT assume another agent will review.
+- Set `next_agent` to `"{self.forced_agent}"` in your response (it will be enforced anyway).
+- Focus on both implementation AND verification - you are responsible for the full cycle.
+
+"""
+
+
+# Global policy instance (set during main() based on CLI flags)
+_agent_policy: Optional[AgentPolicy] = None
+
+
+def get_agent_policy() -> AgentPolicy:
+    """Get the global agent policy. Returns a default policy if not set."""
+    global _agent_policy
+    if _agent_policy is None:
+        _agent_policy = AgentPolicy()
+    return _agent_policy
+
+
+def set_agent_policy(policy: AgentPolicy) -> None:
+    """Set the global agent policy."""
+    global _agent_policy
+    _agent_policy = policy
+
+
+# -----------------------------
 # Small helpers
 # -----------------------------
 
@@ -724,8 +857,19 @@ def build_prompt(
         sort_keys=True,
     )
 
+    # Get agent policy header if in forced mode
+    policy_header = get_agent_policy().get_prompt_header()
+
     parts: List[str] = [
         system_prompt.strip(),
+    ]
+
+    # Inject policy header right after system prompt if in forced mode
+    if policy_header:
+        parts.append("\n\n")
+        parts.append(policy_header.strip())
+
+    parts.extend([
         "\n\n---\n\n# Orchestrator State (read-only)\n",
         state_blob,
         "\n\n---\n\n# Milestone Spec (DESIGN_DOCUMENT.md)\n",
@@ -735,7 +879,7 @@ def build_prompt(
         "\n\n---\n\n# Repo Snapshot\n",
         _truncate(repo_info.strip(), 20000),
         "\n\n---\n\n",
-    ]
+    ])
 
     if last_summaries.strip():
         parts += ["# Recent Turn Summaries\n", _truncate(last_summaries.strip(), 5000), "\n\n---\n\n"]
@@ -889,6 +1033,12 @@ def _is_quota_error(agent: str, text: str, config: RunConfig) -> bool:
 
 
 def _pick_fallback(config: RunConfig, state: RunState, current_agent: Optional[str]) -> str:
+    policy = get_agent_policy()
+
+    # In forced mode, always return the forced agent (no fallback to other agent)
+    if policy.forced_agent:
+        return policy.enforce_strict(policy.forced_agent, "fallback selection")
+
     enabled = [
         a
         for a in config.enable_agents
@@ -916,6 +1066,15 @@ def _other_agent(agent: str) -> Optional[str]:
 
 
 def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> Tuple[str, Optional[str]]:
+    policy = get_agent_policy()
+
+    # In forced mode, always return the forced agent
+    if policy.forced_agent:
+        forced = policy.enforce(requested, "next_agent override")
+        if forced != requested:
+            return forced, f"agent policy (--only-{policy.forced_agent})"
+        return forced, None
+
     enabled = [
         a
         for a in config.enable_agents
@@ -1021,6 +1180,8 @@ def _run_agent_live(
     # Support both names (some wrappers read WRITE_ACCESS, older versions used ORCH_WRITE_ACCESS).
     env["WRITE_ACCESS"] = "1" if state.grant_write_access else "0"
     env["ORCH_WRITE_ACCESS"] = env["WRITE_ACCESS"]
+    # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
+    env["ORCH_SCHEMA_KIND"] = "turn"
 
     return _run_cmd(cmd, cwd=state.project_root, env=env, stream=True)
 
@@ -1144,9 +1305,31 @@ For each milestone in the document, identify and create the necessary tasks."""
     else:
         milestone_instruction = f"Use milestone_id exactly: {milestone_id}"
 
+    # Check agent policy for forced mode
+    policy = get_agent_policy()
+    if policy.forced_agent:
+        planner_role = policy.forced_agent.upper()
+        agent_assignment_instruction = f"""
+        Agent assignment (POLICY OVERRIDE ACTIVE):
+        - **--only-{policy.forced_agent}** flag is active.
+        - You MUST assign preferred_agent as "{policy.forced_agent}" for ALL tasks.
+        - Do NOT assign any tasks to the other agent - they will be overridden anyway.
+"""
+    else:
+        planner_role = "CODEX"
+        agent_assignment_instruction = """
+        Agent assignment (CRITICAL):
+        - You MUST assign preferred_agent as ONLY "codex" or "claude". NEVER use "either".
+        - At least 30-40% of tasks MUST be assigned to "claude".
+        - Recommended assignment heuristics:
+          * Claude is better for: schemas, documentation, code review, edge-case analysis, test writing, refactoring, API design
+          * Codex is better for: heavy implementation, low-level code, CLI tools, integration work, file I/O, build systems
+        - If unsure, prefer Claude for design/spec tasks and Codex for implementation tasks.
+"""
+
     header = textwrap.dedent(
         f"""
-        You are CODEX acting as a **task planner** for a parallel agent runner.
+        You are {planner_role} acting as a **task planner** for a parallel agent runner.
 
         Your job:
         - Read the design document below.
@@ -1165,15 +1348,7 @@ For each milestone in the document, identify and create the necessary tasks."""
         Concurrency:
         - Choose `max_parallel_tasks` <= {max_workers_limit}.
         - Prefer fewer parallel tasks if you believe tasks are likely to conflict or require heavy commands.
-
-        Agent assignment (CRITICAL):
-        - You MUST assign preferred_agent as ONLY "codex" or "claude". NEVER use "either".
-        - At least 30-40% of tasks MUST be assigned to "claude".
-        - Recommended assignment heuristics:
-          * Claude is better for: schemas, documentation, code review, edge-case analysis, test writing, refactoring, API design
-          * Codex is better for: heavy implementation, low-level code, CLI tools, integration work, file I/O, build systems
-        - If unsure, prefer Claude for design/spec tasks and Codex for implementation tasks.
-
+{agent_assignment_instruction}
         {milestone_instruction}
         """
     ).strip()
@@ -1236,16 +1411,24 @@ def _build_parallel_task_prompt(
         """
     ).strip()
 
-    return "\n\n".join(
-        [
-            system_prompt.strip(),
-            "---\n\n# Orchestrator State\n" + json.dumps(state_blob, indent=2),
-            "---\n\n# Task\n" + task.description.strip(),
-            "---\n\n# Repo Snapshot\n" + repo_snapshot.strip(),
-            "---\n\n# Design Doc (truncated)\n" + design_excerpt.strip(),
-            "---\n\n" + instructions,
-        ]
-    )
+    # Get agent policy header if in forced mode
+    policy_header = get_agent_policy().get_prompt_header()
+
+    parts = [system_prompt.strip()]
+
+    # Inject policy header right after system prompt if in forced mode
+    if policy_header:
+        parts.append(policy_header.strip())
+
+    parts.extend([
+        "---\n\n# Orchestrator State\n" + json.dumps(state_blob, indent=2),
+        "---\n\n# Task\n" + task.description.strip(),
+        "---\n\n# Repo Snapshot\n" + repo_snapshot.strip(),
+        "---\n\n# Design Doc (truncated)\n" + design_excerpt.strip(),
+        "---\n\n" + instructions,
+    ])
+
+    return "\n\n".join(parts)
 
 
 def _select_only_tasks(all_tasks: List[ParallelTask], only_ids: List[str]) -> List[ParallelTask]:
@@ -1622,6 +1805,8 @@ def _run_parallel_task(
     env["WRITE_ACCESS"] = "1"
     env["ORCH_WRITE_ACCESS"] = "1"
     env["FF_WORKER_ID"] = str(worker_id)
+    # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
+    env["ORCH_SCHEMA_KIND"] = "turn"
 
     # Disable GPU by default in parallel mode unless explicitly allowed.
     if config.parallel.disable_gpu_by_default and env.get("FF_ALLOW_GPU") != "1":
@@ -1976,15 +2161,21 @@ def run_parallel(
         )
         plan_prompt_path.write_text(plan_prompt, encoding="utf-8")
 
-        planner_script = state.project_root / config.agent_scripts.get("codex", "")
+        # Select planner agent through policy (default: codex, but --only-* overrides)
+        policy = get_agent_policy()
+        planner_agent = policy.enforce("codex", "planner agent selection")
+        planner_script = state.project_root / config.agent_scripts.get(planner_agent, "")
         if not planner_script.exists():
             print(f"[orchestrator] ERROR: planner script not found: {planner_script}")
             return 2
 
-        print(f"[orchestrator] parallel: planning tasks via codex (schema={plan_schema_path})")
+        print(f"[orchestrator] parallel: planning tasks via {planner_agent} (schema={plan_schema_path})")
         env = os.environ.copy()
         env["WRITE_ACCESS"] = "0"
         env["ORCH_WRITE_ACCESS"] = "0"
+        # Signal to the agent wrapper that this is a task_plan schema (not turn schema)
+        # This prevents turn normalization from corrupting the planner output
+        env["ORCH_SCHEMA_KIND"] = "task_plan"
 
         rc, _, err = _run_cmd(
             [str(planner_script), str(plan_prompt_path), str(plan_schema_path), str(plan_out_path)],
@@ -2010,7 +2201,11 @@ def run_parallel(
         agent_round_robin_counter = [0]  # mutable for closure
 
         def _select_agent_for_task(preferred: str, task_title: str, task_desc: str) -> str:
-            """Select agent using heuristics when 'either' or invalid agent is specified."""
+            """Select agent using heuristics when 'either' or invalid agent is specified.
+
+            NOTE: This returns a heuristic-based selection. The caller must still
+            apply AgentPolicy.enforce() to the result for forced mode compliance.
+            """
             if preferred in AGENTS:
                 return preferred
 
@@ -2048,6 +2243,8 @@ def run_parallel(
             enabled = getattr(config, "enable_agents", None) or getattr(config, "enabled_agents", None) or []
             if enabled and agent not in enabled:
                 agent = enabled[0]
+            # Apply agent policy enforcement (--only-* flags)
+            agent = policy.enforce(agent, f"task {tid} agent selection")
             tasks.append(
                 ParallelTask(
                     id=tid,
@@ -2498,6 +2695,9 @@ def _run_parallel_with_auto_continue(
         runs_dir = project_root / "runs" / run_id
         _ensure_dir(runs_dir)
 
+        # Update agent policy with runs_dir for violation artifacts
+        get_agent_policy().runs_dir = runs_dir
+
         # Handle continuation from previous run
         design_doc_path = (project_root / args.design_doc).resolve()
         if run_count > 1 and last_summary:
@@ -2665,7 +2865,18 @@ def main() -> int:
     ap.add_argument("--continuation", type=str, default="",
                     help="Path to continuation_prompt.txt from a previous run (use instead of design doc)")
 
+    # Agent-only flags for hard enforcement
+    ap.add_argument("--only-codex", action="store_true",
+                    help="ONLY use Codex agent for ALL operations (planner, workers, fallbacks)")
+    ap.add_argument("--only-claude", action="store_true",
+                    help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)")
+
     args = ap.parse_args()
+
+    # Validate mutually exclusive agent flags
+    if args.only_codex and args.only_claude:
+        print("[orchestrator] ERROR: --only-codex and --only-claude are mutually exclusive")
+        sys.exit(1)
 
     # Handle --no-auto-continue override
     if args.no_auto_continue:
@@ -2674,6 +2885,25 @@ def main() -> int:
     project_root = Path(args.project_root).resolve()
     config = load_config(project_root / args.config)
 
+    # Initialize agent policy based on --only-* flags
+    forced_agent: Optional[str] = None
+    if args.only_codex:
+        forced_agent = "codex"
+    elif args.only_claude:
+        forced_agent = "claude"
+
+    if forced_agent:
+        # Override start-agent to match forced agent
+        args.start_agent = forced_agent
+        print(f"[orchestrator] AGENT POLICY: --only-{forced_agent} active. ALL operations will use {forced_agent} only.")
+
+    # Note: runs_dir is set later, so we'll update the policy then
+    policy = AgentPolicy(
+        forced_agent=forced_agent,
+        allowed_agents=tuple(config.enable_agents) if config.enable_agents else AGENTS,
+    )
+    set_agent_policy(policy)
+
     schema_path = project_root / args.schema
     system_prompt_path = project_root / args.system_prompt
     design_doc_path = (project_root / args.design_doc).resolve()
@@ -2681,6 +2911,9 @@ def main() -> int:
     run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     runs_dir = project_root / "runs" / run_id
     _ensure_dir(runs_dir)
+
+    # Update agent policy with runs_dir for violation artifacts
+    get_agent_policy().runs_dir = runs_dir
 
     _git_init_if_needed(project_root)
     if not args.no_agent_branch:
@@ -2947,7 +3180,8 @@ def main() -> int:
             ).strip()
 
             # Heuristic: if it looks like only commit/cleanup, ask Claude; otherwise Codex.
-            agent = "claude" if "git status not clean" in msg or "committed" in msg else "codex"
+            heuristic_agent = "claude" if "git status not clean" in msg or "committed" in msg else "codex"
+            agent = get_agent_policy().enforce(heuristic_agent, "project completion failure heuristic")
             continue
 
         # Decide next agent.
