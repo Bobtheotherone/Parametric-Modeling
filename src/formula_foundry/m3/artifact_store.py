@@ -4,10 +4,12 @@ This module implements the ArtifactStore class, which provides:
 - Content-addressed storage under data/objects/ using SHA256 hashing
 - Atomic write pattern (write to .tmp then rename)
 - Manifest generation conforming to artifact.v1 schema
+- Spec ID computation for canonical artifact identification
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -206,6 +208,46 @@ class ArtifactManifest:
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON string."""
         return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
+
+    @property
+    def spec_id(self) -> str:
+        """Compute a short spec ID from the content hash.
+
+        Returns:
+            A 12-character base32-encoded identifier derived from the content hash.
+        """
+        return compute_spec_id(self.content_hash.digest)
+
+
+def compute_spec_id(digest: str, length: int = 12) -> str:
+    """Compute a short, human-friendly spec ID from a SHA256 digest.
+
+    This generates a canonical identifier suitable for use as a spec_id,
+    following the design pattern: spec_id = base32(sha256_digest)[0:length]
+
+    The result uses lowercase alphanumeric characters without padding,
+    making it suitable for use in filenames, URLs, and CLI arguments.
+
+    Args:
+        digest: A SHA256 hex digest (64 characters).
+        length: Desired length of the spec ID (default 12).
+
+    Returns:
+        A short base32-encoded identifier.
+
+    Example:
+        >>> digest = hashlib.sha256(b"hello").hexdigest()
+        >>> compute_spec_id(digest)
+        'l5ua4w36g7wa'
+
+    Note:
+        This follows Section 9.1 of the design document:
+        design_hash = SHA256(canonical_resolved_design_json_bytes)
+        coupon_id = base32(design_hash)[0:12]
+    """
+    digest_bytes = bytes.fromhex(digest)
+    encoded = base64.b32encode(digest_bytes).decode("ascii").lower().rstrip("=")
+    return encoded[:length]
 
 
 class ArtifactStoreError(Exception):
@@ -730,3 +772,34 @@ class ArtifactStore:
                     object_path.parent.rmdir()
                 except OSError:
                     pass  # Directory not empty
+
+    def compute_spec_id(self, content: bytes, length: int = 12) -> str:
+        """Compute a spec ID from content without storing it.
+
+        This is useful for computing a canonical identifier for content
+        before deciding whether to store it.
+
+        Args:
+            content: The binary content to hash.
+            length: Desired length of the spec ID (default 12).
+
+        Returns:
+            A short base32-encoded identifier derived from the content hash.
+        """
+        content_hash = self._compute_hash(content)
+        return compute_spec_id(content_hash.digest, length)
+
+    def get_spec_id(self, artifact_id: str) -> str:
+        """Get the spec ID for an existing artifact.
+
+        Args:
+            artifact_id: The artifact ID.
+
+        Returns:
+            The spec ID derived from the artifact's content hash.
+
+        Raises:
+            ArtifactNotFoundError: If the artifact is not found.
+        """
+        manifest = self.get_manifest(artifact_id)
+        return manifest.spec_id

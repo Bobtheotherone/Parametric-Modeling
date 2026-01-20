@@ -4,7 +4,30 @@ This module provides content-addressed storage with atomic writes,
 lineage tracking, and integration with DVC/MLflow tooling.
 """
 
-from formula_foundry.m3.artifact_store import ArtifactStore
+from formula_foundry.m3.artifact_store import (
+    ArtifactExistsError,
+    ArtifactManifest,
+    ArtifactNotFoundError,
+    ArtifactStore,
+    ArtifactStoreError,
+    ContentHash,
+    Lineage,
+    LineageReference,
+    Provenance,
+    compute_spec_id,
+)
 from formula_foundry.m3.registry import ArtifactRegistry
 
-__all__ = ["ArtifactStore", "ArtifactRegistry"]
+__all__ = [
+    "ArtifactExistsError",
+    "ArtifactManifest",
+    "ArtifactNotFoundError",
+    "ArtifactRegistry",
+    "ArtifactStore",
+    "ArtifactStoreError",
+    "ContentHash",
+    "Lineage",
+    "LineageReference",
+    "Provenance",
+    "compute_spec_id",
+]
