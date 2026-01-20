@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+import logging
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -17,10 +19,49 @@ SimulationSolverMode = Literal["stub", "cli"]
 
 _MANIFEST_SCHEMA_VERSION = 1
 _HASH_CHUNK_SIZE = 1024 * 1024
+_DEFAULT_TIMEOUT_SEC = 3600  # 1 hour default timeout
+
+logger = logging.getLogger(__name__)
+
+
+class SimulationError(Exception):
+    """Base exception for simulation errors."""
+
+    pass
+
+
+class SimulationTimeoutError(SimulationError):
+    """Raised when simulation exceeds timeout."""
+
+    pass
+
+
+class SimulationExecutionError(SimulationError):
+    """Raised when openEMS execution fails."""
+
+    def __init__(self, message: str, returncode: int, stdout: str, stderr: str) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 @dataclass(frozen=True)
 class SimulationResult:
+    """Result of a simulation run.
+
+    Attributes:
+        output_dir: Root output directory.
+        outputs_dir: Directory containing simulation outputs.
+        manifest_path: Path to the simulation manifest JSON.
+        cache_hit: Whether the result was retrieved from cache.
+        simulation_hash: SHA256 hash of the simulation inputs.
+        manifest_hash: SHA256 hash of the manifest content.
+        output_hashes: Dictionary mapping output file paths to their SHA256 hashes.
+        execution_time_sec: Execution time in seconds (None for cached results).
+        sparam_path: Path to S-parameter output file if generated.
+    """
+
     output_dir: Path
     outputs_dir: Path
     manifest_path: Path
@@ -28,16 +69,50 @@ class SimulationResult:
     simulation_hash: str
     manifest_hash: str
     output_hashes: dict[str, str]
+    execution_time_sec: float | None = None
+    sparam_path: Path | None = None
 
 
 class SimulationRunner:
-    def __init__(self, *, mode: SimulationSolverMode = "stub", openems_runner: OpenEMSRunner | None = None) -> None:
+    """Runner for openEMS FDTD simulations.
+
+    This class manages simulation execution with:
+    - Stub mode for testing without actual openEMS
+    - CLI mode for real openEMS execution
+    - Caching based on input hashes
+    - Manifest generation for reproducibility
+    - S-parameter output parsing
+
+    Attributes:
+        mode: Simulation mode ("stub" or "cli").
+        openems_runner: OpenEMSRunner instance for CLI mode.
+        timeout_sec: Timeout in seconds for simulation execution.
+    """
+
+    def __init__(
+        self,
+        *,
+        mode: SimulationSolverMode = "stub",
+        openems_runner: OpenEMSRunner | None = None,
+        timeout_sec: float = _DEFAULT_TIMEOUT_SEC,
+    ) -> None:
+        """Initialize the simulation runner.
+
+        Args:
+            mode: Simulation mode ("stub" or "cli").
+            openems_runner: OpenEMSRunner instance required for CLI mode.
+            timeout_sec: Timeout in seconds for simulation execution.
+
+        Raises:
+            ValueError: If mode is invalid or openems_runner missing for CLI mode.
+        """
         if mode not in ("stub", "cli"):
             raise ValueError(f"Unsupported simulation runner mode: {mode}")
         if mode == "cli" and openems_runner is None:
             raise ValueError("openems_runner is required for cli mode")
         self.mode = mode
         self.openems_runner = openems_runner
+        self.timeout_sec = timeout_sec
 
     def run(
         self,
@@ -46,7 +121,26 @@ class SimulationRunner:
         *,
         output_dir: Path,
         openems_args: Sequence[str] | None = None,
+        timeout_sec: float | None = None,
     ) -> SimulationResult:
+        """Run an openEMS simulation.
+
+        Args:
+            spec: Simulation specification.
+            geometry: Geometry specification for the simulation.
+            output_dir: Directory for simulation outputs.
+            openems_args: Command-line arguments for openEMS.
+            timeout_sec: Override timeout for this run (None uses default).
+
+        Returns:
+            SimulationResult containing output paths, hashes, and metadata.
+
+        Raises:
+            SimulationTimeoutError: If simulation exceeds timeout.
+            SimulationExecutionError: If openEMS execution fails.
+        """
+        import time
+
         resolved_output_dir = output_dir.resolve()
         outputs_dir = resolved_output_dir / spec.output.outputs_dir
         manifest_path = resolved_output_dir / "simulation_manifest.json"
@@ -56,6 +150,7 @@ class SimulationRunner:
         geometry_hash = _geometry_hash(geometry)
         simulation_hash = _simulation_hash(spec_hash, geometry_hash, solver_payload)
 
+        # Check cache
         cached_manifest = _load_manifest(manifest_path)
         if cached_manifest is not None and _is_cache_hit(
             cached_manifest,
@@ -68,6 +163,8 @@ class SimulationRunner:
         ):
             output_hashes = _hash_outputs(resolved_output_dir, outputs_dir)
             manifest_hash = _manifest_hash(cached_manifest)
+            sparam_path = _find_sparam_file(outputs_dir, spec)
+            logger.info("Cache hit for simulation %s", simulation_hash[:12])
             return SimulationResult(
                 output_dir=resolved_output_dir,
                 outputs_dir=outputs_dir,
@@ -76,15 +173,29 @@ class SimulationRunner:
                 simulation_hash=simulation_hash,
                 manifest_hash=manifest_hash,
                 output_hashes=output_hashes,
+                sparam_path=sparam_path,
             )
 
+        # Run simulation
         _clear_outputs_dir(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
+
+        start_time = time.perf_counter()
+        effective_timeout = timeout_sec if timeout_sec is not None else self.timeout_sec
+
         if self.mode == "stub":
             self._run_stub(spec, outputs_dir, simulation_hash)
         else:
-            self._run_cli(outputs_dir, openems_args)
+            self._run_cli(outputs_dir, openems_args, timeout_sec=effective_timeout)
 
+        execution_time = time.perf_counter() - start_time
+        logger.info(
+            "Simulation %s completed in %.2f seconds",
+            simulation_hash[:12],
+            execution_time,
+        )
+
+        # Build manifest and result
         output_hashes = _hash_outputs(resolved_output_dir, outputs_dir)
         manifest = _build_manifest(
             spec=spec,
@@ -93,9 +204,12 @@ class SimulationRunner:
             geometry_hash=geometry_hash,
             solver_payload=solver_payload,
             output_hashes=output_hashes,
+            execution_time_sec=execution_time,
         )
         _write_manifest(manifest_path, manifest)
         manifest_hash = _manifest_hash(manifest)
+        sparam_path = _find_sparam_file(outputs_dir, spec)
+
         return SimulationResult(
             output_dir=resolved_output_dir,
             outputs_dir=outputs_dir,
@@ -104,6 +218,8 @@ class SimulationRunner:
             simulation_hash=simulation_hash,
             manifest_hash=manifest_hash,
             output_hashes=output_hashes,
+            execution_time_sec=execution_time,
+            sparam_path=sparam_path,
         )
 
     def _solver_payload(self, openems_args: Sequence[str] | None) -> dict[str, Any]:
@@ -123,17 +239,53 @@ class SimulationRunner:
         seed = int(simulation_hash[:8], 16)
         _write_stub_outputs(spec, outputs_dir, seed)
 
-    def _run_cli(self, outputs_dir: Path, openems_args: Sequence[str] | None) -> None:
+    def _run_cli(
+        self,
+        outputs_dir: Path,
+        openems_args: Sequence[str] | None,
+        *,
+        timeout_sec: float | None = None,
+    ) -> None:
+        """Execute openEMS via CLI with timeout support.
+
+        Args:
+            outputs_dir: Working directory for the simulation.
+            openems_args: Command-line arguments for openEMS.
+            timeout_sec: Timeout in seconds (None for no timeout).
+
+        Raises:
+            SimulationTimeoutError: If simulation exceeds timeout.
+            SimulationExecutionError: If openEMS returns non-zero exit code.
+        """
         if self.openems_runner is None:
             raise ValueError("openems_runner is required for cli mode")
         args = list(openems_args or [])
         if not args:
             raise ValueError("openems_args must be provided for cli mode")
-        proc = self.openems_runner.run(args, workdir=outputs_dir)
+
+        try:
+            proc = self.openems_runner.run_with_timeout(
+                args, workdir=outputs_dir, timeout_sec=timeout_sec
+            )
+        except subprocess.TimeoutExpired as e:
+            raise SimulationTimeoutError(
+                f"openEMS simulation timed out after {timeout_sec} seconds"
+            ) from e
+
         if proc.returncode != 0:
-            raise RuntimeError(
-                "openEMS CLI failed with returncode "
-                f"{proc.returncode}: {(proc.stderr or proc.stdout or '').strip()}"
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+            error_msg = (stderr or stdout).strip()
+            logger.error(
+                "openEMS failed with code %d: %s",
+                proc.returncode,
+                error_msg[:500],
+            )
+            raise SimulationExecutionError(
+                f"openEMS CLI failed with returncode {proc.returncode}: {error_msg}",
+                returncode=proc.returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
 
 
@@ -164,12 +316,27 @@ def _build_manifest(
     geometry_hash: str,
     solver_payload: dict[str, Any],
     output_hashes: dict[str, str],
+    execution_time_sec: float | None = None,
 ) -> dict[str, Any]:
+    """Build a simulation manifest dictionary.
+
+    Args:
+        spec: Simulation specification.
+        simulation_hash: Hash of simulation inputs.
+        spec_hash: Hash of the simulation spec.
+        geometry_hash: Hash of the geometry spec.
+        solver_payload: Solver configuration details.
+        output_hashes: Map of output file paths to hashes.
+        execution_time_sec: Execution time in seconds (optional).
+
+    Returns:
+        Manifest dictionary.
+    """
     outputs = [
         {"path": path, "hash": output_hashes[path]}
         for path in sorted(output_hashes.keys())
     ]
-    return {
+    manifest: dict[str, Any] = {
         "schema_version": _MANIFEST_SCHEMA_VERSION,
         "simulation_id": spec.simulation_id,
         "simulation_hash": simulation_hash,
@@ -179,6 +346,9 @@ def _build_manifest(
         "solver": solver_payload,
         "outputs": outputs,
     }
+    if execution_time_sec is not None:
+        manifest["execution_time_sec"] = execution_time_sec
+    return manifest
 
 
 def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -212,6 +382,20 @@ def _is_cache_hit(
     output_dir: Path,
     outputs_dir: Path,
 ) -> bool:
+    """Check if the cached manifest matches the current simulation inputs.
+
+    Args:
+        manifest: Cached manifest dictionary.
+        simulation_hash: Hash of current simulation inputs.
+        spec_hash: Hash of current simulation spec.
+        geometry_hash: Hash of current geometry spec.
+        solver_payload: Current solver configuration.
+        output_dir: Root output directory.
+        outputs_dir: Directory containing simulation outputs.
+
+    Returns:
+        True if cache is valid, False otherwise.
+    """
     if manifest.get("simulation_hash") != simulation_hash:
         return False
     output_hashes = _hash_outputs(output_dir, outputs_dir)
@@ -228,7 +412,12 @@ def _is_cache_hit(
         )
     except Exception:
         return False
-    return canonical_json_dumps(expected) == canonical_json_dumps(manifest)
+    # Compare manifests excluding execution_time_sec (which varies between runs)
+    manifest_copy = dict(manifest)
+    expected_copy = dict(expected)
+    manifest_copy.pop("execution_time_sec", None)
+    expected_copy.pop("execution_time_sec", None)
+    return canonical_json_dumps(expected_copy) == canonical_json_dumps(manifest_copy)
 
 
 def _manifest_stub_spec(manifest: dict[str, Any]) -> SimulationSpec:
@@ -294,6 +483,38 @@ def _clear_outputs_dir(outputs_dir: Path) -> None:
             path.unlink()
         elif path.is_dir():
             path.rmdir()
+
+
+def _find_sparam_file(outputs_dir: Path, spec: SimulationSpec) -> Path | None:
+    """Find the S-parameter output file in the outputs directory.
+
+    Args:
+        outputs_dir: Directory containing simulation outputs.
+        spec: Simulation specification.
+
+    Returns:
+        Path to S-parameter file if found, None otherwise.
+    """
+    if not spec.output.s_params:
+        return None
+
+    # Check for touchstone files first
+    if spec.output.s_params_format in ("touchstone", "both"):
+        # Look for .s2p file (2-port S-parameters)
+        s2p_path = outputs_dir / "sparams.s2p"
+        if s2p_path.exists():
+            return s2p_path
+        # Also check for any .sNp file
+        for path in outputs_dir.glob("*.s?p"):
+            return path
+
+    # Check for CSV format
+    if spec.output.s_params_format in ("csv", "both"):
+        csv_path = outputs_dir / "sparams.csv"
+        if csv_path.exists():
+            return csv_path
+
+    return None
 
 
 def _write_stub_outputs(spec: SimulationSpec, outputs_dir: Path, seed: int) -> None:
@@ -393,3 +614,43 @@ def _write_stub_nf2ff(path: Path, seed: int) -> None:
     payload = {"seed": seed, "fields": []}
     text = canonical_json_dumps(payload)
     path.write_text(f"{text}\n", encoding="utf-8")
+
+
+# =============================================================================
+# S-Parameter Result Loading
+# =============================================================================
+
+
+def load_sparam_result(result: SimulationResult) -> "SParameterData | None":
+    """Load S-parameter data from a simulation result.
+
+    This function reads the S-parameter output file (Touchstone format)
+    from a completed simulation result.
+
+    Args:
+        result: SimulationResult from a completed simulation.
+
+    Returns:
+        SParameterData if S-parameter file exists and is valid, None otherwise.
+
+    Example:
+        >>> runner = SimulationRunner(mode="stub")
+        >>> result = runner.run(spec, geometry, output_dir=Path("./output"))
+        >>> sparam_data = load_sparam_result(result)
+        >>> if sparam_data is not None:
+        ...     print(f"S21 at {sparam_data.f_min_hz} Hz: {sparam_data.s21()[0]}")
+    """
+    from formula_foundry.em.touchstone import SParameterData, read_touchstone
+
+    if result.sparam_path is None:
+        return None
+
+    if not result.sparam_path.exists():
+        logger.warning("S-parameter file not found: %s", result.sparam_path)
+        return None
+
+    try:
+        return read_touchstone(result.sparam_path)
+    except Exception as e:
+        logger.warning("Failed to parse S-parameter file %s: %s", result.sparam_path, e)
+        return None
