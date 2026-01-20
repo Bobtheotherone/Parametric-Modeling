@@ -1,0 +1,109 @@
+# Docker Compose for Formula Foundry M2 - openEMS Simulation Environment
+#
+# This compose file provides a local development environment for running
+# FDTD simulations with openEMS. It supports both CPU-only and GPU-accelerated
+# configurations.
+#
+# Usage:
+#   CPU-only:  docker compose up openems
+#   With GPU:  docker compose --profile gpu up openems-gpu
+#   AppCSXCAD: docker compose --profile gui up appcsxcad
+#
+# See README.md for GPU passthrough requirements.
+
+services:
+  # CPU-only openEMS service (default)
+  openems:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: formula-foundry-openems:0.0.35
+    container_name: ff-openems
+    volumes:
+      - ../../../data:/workspace/data:rw
+      - ../../../artifacts:/workspace/artifacts:rw
+      - simulation-cache:/workspace/.cache
+    working_dir: /workspace
+    environment:
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - OPENEMS_OPTS=${OPENEMS_OPTS:-}
+    # Override entrypoint for interactive use
+    entrypoint: ["/bin/bash"]
+    stdin_open: true
+    tty: true
+    # Resource limits for local development
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+  # GPU-accelerated openEMS service (requires NVIDIA runtime)
+  openems-gpu:
+    extends:
+      service: openems
+    container_name: ff-openems-gpu
+    profiles:
+      - gpu
+    runtime: nvidia
+    environment:
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - OPENEMS_OPTS=${OPENEMS_OPTS:-}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # AppCSXCAD visualization (requires X11 forwarding)
+  appcsxcad:
+    extends:
+      service: openems
+    container_name: ff-appcsxcad
+    profiles:
+      - gui
+    entrypoint: ["AppCSXCAD"]
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - ../../../data:/workspace/data:rw
+      - ../../../artifacts:/workspace/artifacts:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - ${XAUTHORITY:-~/.Xauthority}:/home/openems/.Xauthority:ro
+    network_mode: host
+    user: "${UID:-1000}:${GID:-1000}"
+
+  # One-shot simulation runner (for CI/batch jobs)
+  openems-run:
+    extends:
+      service: openems
+    container_name: ff-openems-run
+    profiles:
+      - ci
+    entrypoint: ["openEMS"]
+    stdin_open: false
+    tty: false
+    restart: "no"
+
+volumes:
+  simulation-cache:
+    driver: local
+
+# Network for inter-container communication (if needed for MPI)
+networks:
+  default:
+    name: formula-foundry-m2
+    driver: bridge
