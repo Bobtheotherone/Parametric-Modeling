@@ -32,6 +32,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -192,10 +193,10 @@ def _init_verify_artifacts(project_root: Path) -> VerifyArtifacts:
     run_dir = project_root / VERIFY_ARTIFACTS_DIR / run_id
     logs_dir = run_dir / "logs"
     failures_dir = run_dir / "failures"
-    tmp_dir = run_dir / "tmp"
+    run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     failures_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="tmp-", dir=run_dir))
     return VerifyArtifacts(
         run_id=run_id,
         run_dir=run_dir,
@@ -225,6 +226,15 @@ def _write_verify_artifacts(
     payload: dict[str, Any],
     env_overrides: dict[str, str],
 ) -> None:
+    log_lines = [
+        f"verify_run={artifacts.run_id}",
+        f"tmp_dir={artifacts.tmp_dir}",
+        "env:",
+    ]
+    for key in sorted(env_overrides):
+        log_lines.append(f"  {key}={env_overrides[key]}")
+    log_lines.append("")
+
     results_path = artifacts.run_dir / "results.json"
     results_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     env_payload = {
@@ -238,6 +248,18 @@ def _write_verify_artifacts(
     )
 
     for result in results:
+        status = "PASS" if result.passed else "FAIL"
+        log_lines.append(f"[{status}] {result.name} {result.note}".rstrip())
+        if result.cmd:
+            log_lines.append(f"cmd: {' '.join(result.cmd)}")
+        if result.stdout.strip():
+            log_lines.append("stdout:")
+            log_lines.append(result.stdout.rstrip())
+        if result.stderr.strip():
+            log_lines.append("stderr:")
+            log_lines.append(result.stderr.rstrip())
+        log_lines.append("")
+
         slug = _gate_slug(result.name)
         stdout_path = artifacts.logs_dir / f"{slug}.stdout.log"
         stderr_path = artifacts.logs_dir / f"{slug}.stderr.log"
@@ -255,6 +277,9 @@ def _write_verify_artifacts(
                 json.dumps(failure_payload, indent=2, sort_keys=True),
                 encoding="utf-8",
             )
+
+    verify_log_path = artifacts.run_dir / "verify.log"
+    verify_log_path.write_text("\n".join(log_lines).rstrip() + "\n", encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     artifacts = _init_verify_artifacts(project_root)
     global _VERIFY_ENV
     _VERIFY_ENV = _build_verify_env(artifacts.tmp_dir)
+    os.environ.update(_VERIFY_ENV)
 
     results: list[GateResult] = []
     results.append(_gate_spec_lint(project_root))
