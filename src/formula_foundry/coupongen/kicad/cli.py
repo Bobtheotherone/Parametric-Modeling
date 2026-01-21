@@ -28,6 +28,36 @@ class KicadCliRunner:
     docker_image: str | None = None
     kicad_bin: str = "kicad-cli"
 
+    def _to_container_path(self, host_path: Path, workdir: Path) -> str:
+        """Convert a host path to a container path relative to /workspace.
+
+        When running in docker mode, paths must be translated from host
+        absolute paths to container paths inside /workspace.
+
+        Args:
+            host_path: Absolute host path to convert.
+            workdir: The host directory mounted as /workspace.
+
+        Returns:
+            Container-relative path string (e.g., "board.kicad_pcb" or
+            "subdir/board.kicad_pcb" for paths within workdir).
+
+        Raises:
+            ValueError: If host_path is not within workdir.
+        """
+        host_abs = host_path.resolve()
+        workdir_abs = workdir.resolve()
+
+        try:
+            relative = host_abs.relative_to(workdir_abs)
+            # Return the relative path as a string (works as /workspace/relative)
+            return str(relative)
+        except ValueError as e:
+            raise ValueError(
+                f"Path {host_path} is not within workdir {workdir}. "
+                f"Docker mount mapping requires all paths to be within the mounted directory."
+            ) from e
+
     def build_command(self, args: Iterable[str], *, workdir: Path) -> list[str]:
         if self.mode == "local":
             return [self.kicad_bin, *args]
@@ -38,7 +68,7 @@ class KicadCliRunner:
             "run",
             "--rm",
             "-v",
-            f"{workdir}:/workspace",
+            f"{workdir.resolve()}:/workspace",
             "-w",
             "/workspace",
             self.docker_image,
@@ -48,33 +78,92 @@ class KicadCliRunner:
 
     def run(self, args: Iterable[str], *, workdir: Path) -> subprocess.CompletedProcess[str]:
         cmd = self.build_command(args, workdir=workdir)
-        return subprocess.run(cmd, cwd=workdir, text=True, capture_output=True, check=False)
+        result = subprocess.run(cmd, cwd=workdir, text=True, capture_output=True, check=False)
+
+        # Add debug info on failure (returncode 3 typically means file not found in KiCad)
+        if result.returncode == 3 and self.mode == "docker":
+            debug_msg = (
+                f"\n[DEBUG] Docker KiCad CLI returned code 3 (invalid input file).\n"
+                f"  Command: {' '.join(cmd)}\n"
+                f"  Workdir (host): {workdir.resolve()}\n"
+                f"  Workdir (container): /workspace\n"
+                f"  This usually means the board file path was not correctly "
+                f"translated to a container-relative path."
+            )
+            result = subprocess.CompletedProcess(
+                args=result.args,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr + debug_msg,
+            )
+        return result
 
     def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
-        args = build_drc_args(board_path, report_path)
-        return self.run(args, workdir=board_path.parent)
+        workdir = board_path.parent.resolve()
+
+        if self.mode == "docker":
+            # Translate paths to container-relative paths
+            board_container = self._to_container_path(board_path, workdir)
+            report_container = self._to_container_path(report_path, workdir)
+            args = build_drc_args(Path(board_container), Path(report_container))
+        else:
+            args = build_drc_args(board_path, report_path)
+
+        return self.run(args, workdir=workdir)
 
     def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
-        args = [
-            "pcb",
-            "export",
-            "gerbers",
-            "--output",
-            str(out_dir),
-            str(board_path),
-        ]
-        return self.run(args, workdir=board_path.parent)
+        workdir = board_path.parent.resolve()
+
+        if self.mode == "docker":
+            # Translate paths to container-relative paths
+            board_container = self._to_container_path(board_path, workdir)
+            out_container = self._to_container_path(out_dir, workdir)
+            args = [
+                "pcb",
+                "export",
+                "gerbers",
+                "--output",
+                out_container,
+                board_container,
+            ]
+        else:
+            args = [
+                "pcb",
+                "export",
+                "gerbers",
+                "--output",
+                str(out_dir),
+                str(board_path),
+            ]
+
+        return self.run(args, workdir=workdir)
 
     def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
-        args = [
-            "pcb",
-            "export",
-            "drill",
-            "--output",
-            str(out_dir),
-            str(board_path),
-        ]
-        return self.run(args, workdir=board_path.parent)
+        workdir = board_path.parent.resolve()
+
+        if self.mode == "docker":
+            # Translate paths to container-relative paths
+            board_container = self._to_container_path(board_path, workdir)
+            out_container = self._to_container_path(out_dir, workdir)
+            args = [
+                "pcb",
+                "export",
+                "drill",
+                "--output",
+                out_container,
+                board_container,
+            ]
+        else:
+            args = [
+                "pcb",
+                "export",
+                "drill",
+                "--output",
+                str(out_dir),
+                str(board_path),
+            ]
+
+        return self.run(args, workdir=workdir)
 
 
 def build_drc_args(board_path: Path, report_path: Path) -> list[str]:

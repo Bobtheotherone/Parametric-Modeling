@@ -63,17 +63,17 @@ discontinuity:
   antipads:
     L2:
       shape: CIRCLE
-      r_nm: "450 um"
+      r_nm: "480 um"
     L3:
       shape: CIRCLE
-      r_nm: "450 um"
+      r_nm: "480 um"
   return_vias:
     pattern: QUAD
     count: 4
     radius_nm: "1000 um"
     via:
       drill_nm: "300 um"
-      diameter_nm: "500 um"
+      diameter_nm: "510 um"
 
 constraints:
   mode: REJECT
