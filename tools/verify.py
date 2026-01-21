@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -50,9 +51,20 @@ class GateResult:
 
 
 DEFAULT_M0_GATE_TIMEOUT_S = 90
+DETERMINISTIC_ENV = {
+    "LC_ALL": "C.UTF-8",
+    "LANG": "C.UTF-8",
+    "TZ": "UTC",
+    "PYTHONHASHSEED": "0",
+}
+VERIFY_ARTIFACTS_DIR = Path("artifacts") / "verify"
+_VERIFY_ENV: dict[str, str] | None = None
 
 
 def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResult:
+    env = os.environ.copy()
+    if _VERIFY_ENV:
+        env.update(_VERIFY_ENV)
     try:
         proc = subprocess.run(
             cmd,
@@ -60,6 +72,7 @@ def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResu
             text=True,
             capture_output=True,
             timeout=timeout_s,
+            env=env,
         )
         return GateResult(
             name="",
@@ -79,6 +92,15 @@ def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResu
             stdout=stdout,
             stderr=stderr,
             note=f"timeout after {timeout_s}s",
+        )
+    except OSError as exc:
+        return GateResult(
+            name="",
+            passed=False,
+            cmd=cmd,
+            stdout="",
+            stderr=str(exc),
+            note="os error",
         )
 
 
@@ -152,6 +174,89 @@ def _resolve_m0_timeout(args: argparse.Namespace) -> int:
     return DEFAULT_M0_GATE_TIMEOUT_S
 
 
+@dataclass(frozen=True)
+class VerifyArtifacts:
+    run_id: str
+    run_dir: Path
+    logs_dir: Path
+    failures_dir: Path
+    tmp_dir: Path
+
+
+def _timestamp_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _init_verify_artifacts(project_root: Path) -> VerifyArtifacts:
+    run_id = _timestamp_utc()
+    run_dir = project_root / VERIFY_ARTIFACTS_DIR / run_id
+    logs_dir = run_dir / "logs"
+    failures_dir = run_dir / "failures"
+    tmp_dir = run_dir / "tmp"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    failures_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    return VerifyArtifacts(
+        run_id=run_id,
+        run_dir=run_dir,
+        logs_dir=logs_dir,
+        failures_dir=failures_dir,
+        tmp_dir=tmp_dir,
+    )
+
+
+def _build_verify_env(tmp_dir: Path) -> dict[str, str]:
+    env = dict(DETERMINISTIC_ENV)
+    tmp_path = str(tmp_dir)
+    env["TMPDIR"] = tmp_path
+    env["TEMP"] = tmp_path
+    env["TMP"] = tmp_path
+    return env
+
+
+def _gate_slug(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "_" for ch in name.strip())
+    return cleaned or "gate"
+
+
+def _write_verify_artifacts(
+    artifacts: VerifyArtifacts,
+    results: list[GateResult],
+    payload: dict[str, Any],
+    env_overrides: dict[str, str],
+) -> None:
+    results_path = artifacts.run_dir / "results.json"
+    results_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    env_payload = {
+        "run_id": artifacts.run_id,
+        "timestamp_utc": artifacts.run_id,
+        "env": env_overrides,
+    }
+    (artifacts.run_dir / "env.json").write_text(
+        json.dumps(env_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    for result in results:
+        slug = _gate_slug(result.name)
+        stdout_path = artifacts.logs_dir / f"{slug}.stdout.log"
+        stderr_path = artifacts.logs_dir / f"{slug}.stderr.log"
+        stdout_path.write_text(result.stdout, encoding="utf-8")
+        stderr_path.write_text(result.stderr, encoding="utf-8")
+        if not result.passed:
+            failure_payload = {
+                "name": result.name,
+                "cmd": result.cmd,
+                "note": result.note,
+                "stdout_path": str(stdout_path.relative_to(artifacts.run_dir)),
+                "stderr_path": str(stderr_path.relative_to(artifacts.run_dir)),
+            }
+            (artifacts.failures_dir / f"{slug}.json").write_text(
+                json.dumps(failure_payload, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--project-root", default=".")
@@ -174,6 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     project_root = Path(args.project_root).resolve()
+    artifacts = _init_verify_artifacts(project_root)
+    global _VERIFY_ENV
+    _VERIFY_ENV = _build_verify_env(artifacts.tmp_dir)
 
     results: list[GateResult] = []
     results.append(_gate_spec_lint(project_root))
@@ -217,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         out_path = project_root / args.json_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    _write_verify_artifacts(artifacts, results, payload, _VERIFY_ENV)
 
     # Human-friendly summary
     for r in results:
