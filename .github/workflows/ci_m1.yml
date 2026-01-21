@@ -100,25 +100,37 @@ jobs:
           pip install -e ".[dev]"
           pip install pyyaml
 
-      - name: Get KiCad Docker image reference
+      - name: Validate and get KiCad Docker image reference (digest-pinned)
         id: kicad-image
         run: |
-          # Read from toolchain lock file
-          IMAGE=$(python tools/print_kicad_image_ref.py --allow-placeholder --format image)
+          # Read from toolchain lock file - STRICT: no placeholders allowed
+          # This ensures CI uses a fully digest-pinned image for reproducibility
+          FULL_REF=$(python tools/print_kicad_image_ref.py --format full)
+          IMAGE=$(python tools/print_kicad_image_ref.py --format image)
+          DIGEST=$(python tools/print_kicad_image_ref.py --format digest)
+          echo "full_ref=$FULL_REF" >> $GITHUB_OUTPUT
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "Using KiCad image: $IMAGE"
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "Using KiCad image (digest-pinned): $FULL_REF"
 
-      - name: Pull KiCad Docker image
+      - name: Pull KiCad Docker image (by digest)
         run: |
-          docker pull ${{ steps.kicad-image.outputs.image }}
+          # Pull by full digest reference for reproducibility
+          docker pull ${{ steps.kicad-image.outputs.full_ref }}
           docker images | grep kicad
+          # Verify the pulled image digest matches expected
+          ACTUAL_DIGEST=$(docker inspect ${{ steps.kicad-image.outputs.full_ref }} --format '{{.RepoDigests}}' | grep -oP 'sha256:[a-f0-9]{64}')
+          echo "Expected digest: ${{ steps.kicad-image.outputs.digest }}"
+          echo "Actual digest: $ACTUAL_DIGEST"
 
       - name: Print KiCad image reference for CI logs
         run: |
-          python tools/print_kicad_image_ref.py --allow-placeholder
+          python tools/print_kicad_image_ref.py --format full
           echo "---"
           echo "Docker image info:"
-          docker inspect ${{ steps.kicad-image.outputs.image }} --format '{{.Id}}' || true
+          docker inspect ${{ steps.kicad-image.outputs.full_ref }} --format '{{.Id}}' || true
+          echo "KiCad CLI version from container:"
+          docker run --rm ${{ steps.kicad-image.outputs.full_ref }} kicad-cli version || true
 
       - name: Run KiCad integration tests
         run: |
@@ -127,15 +139,51 @@ jobs:
           PYTHONPATH: src:.
           COUPONGEN_TOOLCHAIN: docker
 
+      - name: Upload verification artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-integration-verify-artifacts
+          path: |
+            artifacts/verify/**
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload DRC reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: drc-reports
+          name: kicad-integration-drc-reports
           path: |
             **/drc.json
-            **/manifest.json
+            **/drc_report.json
           if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload manifests on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-integration-manifests
+          path: |
+            **/manifest.json
+            **/resolved_design.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload canonicalized exports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-integration-exports
+          path: |
+            **/*.gbr
+            **/*.drl
+            **/*.kicad_pcb
+            **/gerber/**
+            **/drill/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ==========================================================================
   # Gate Tests (explicit gate markers)
