@@ -70,7 +70,7 @@ discontinuity:
     radius_nm: "1200 um"
     via:
       drill_nm: "300 um"
-      diameter_nm: "500 um"
+      diameter_nm: "510 um"
 
 constraints:
   mode: REJECT

@@ -61,12 +61,12 @@ discontinuity:
     L2:
       shape: ROUNDRECT
       rx_nm: "600 um"
-      ry_nm: "400 um"
+      ry_nm: "480 um"
       corner_nm: "100 um"
     L3:
       shape: ROUNDRECT
       rx_nm: "600 um"
-      ry_nm: "400 um"
+      ry_nm: "480 um"
       corner_nm: "100 um"
   return_vias:
     pattern: QUAD
@@ -74,7 +74,7 @@ discontinuity:
     radius_nm: "1100 um"
     via:
       drill_nm: "300 um"
-      diameter_nm: "500 um"
+      diameter_nm: "510 um"
 
 constraints:
   mode: REJECT
