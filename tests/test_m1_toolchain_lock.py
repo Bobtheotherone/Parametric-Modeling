@@ -18,8 +18,10 @@ from formula_foundry.coupongen.toolchain import (
     ToolchainConfig,
     ToolchainLoadError,
     compute_toolchain_hash,
+    is_placeholder_digest,
     load_toolchain_lock,
     load_toolchain_lock_from_dict,
+    resolve_docker_image_ref,
 )
 
 
@@ -396,3 +398,142 @@ class TestRealLockFile:
             assert config.docker_digest.startswith("sha256:")
         else:
             pytest.skip("Lock file not found at expected location")
+
+
+class TestIsPlaceholderDigest:
+    """Tests for is_placeholder_digest function."""
+
+    def test_zeroed_placeholder(self) -> None:
+        """Should detect all-zeros as placeholder."""
+        assert is_placeholder_digest("sha256:" + "0" * 64)
+
+    def test_zeroed_with_one_placeholder(self) -> None:
+        """Should detect zeros-with-trailing-1 as placeholder."""
+        assert is_placeholder_digest("sha256:" + "0" * 63 + "1")
+
+    def test_placeholder_literal(self) -> None:
+        """Should detect PLACEHOLDER keyword."""
+        assert is_placeholder_digest("sha256:PLACEHOLDER")
+
+    def test_unknown_literal(self) -> None:
+        """Should detect UNKNOWN keyword."""
+        assert is_placeholder_digest("sha256:UNKNOWN_VALUE")
+
+    def test_real_digest_not_placeholder(self) -> None:
+        """Should not flag a real digest as placeholder."""
+        real_digest = "sha256:4ddaa54d9ead1f1b453e10a8420e0fcfba693e2143ee14b8b9c3b3c63b2a320f"
+        assert not is_placeholder_digest(real_digest)
+
+    def test_random_hex_not_placeholder(self) -> None:
+        """Should not flag random hex as placeholder."""
+        random_digest = "sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+        assert not is_placeholder_digest(random_digest)
+
+
+class TestResolveDockerImageRef:
+    """Tests for resolve_docker_image_ref function."""
+
+    def test_local_mode_returns_spec_as_is(self, tmp_path: Path) -> None:
+        """Local mode should return spec's docker_image unchanged."""
+        spec_image = "kicad/kicad:9.0.7@sha256:" + "0" * 63 + "1"
+        result = resolve_docker_image_ref(spec_image, lock_path=tmp_path / "nonexistent.json", mode="local")
+        assert result == spec_image
+
+    def test_docker_mode_placeholder_uses_lock_file(self, tmp_path: Path) -> None:
+        """Docker mode with placeholder should use lock file digest."""
+        lock_digest = "sha256:" + "a" * 64
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": lock_digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        spec_image = "kicad/kicad:9.0.7@sha256:" + "0" * 63 + "1"  # placeholder
+        result = resolve_docker_image_ref(spec_image, lock_path=lock_path, mode="docker")
+        assert result == f"kicad/kicad:9.0.7@{lock_digest}"
+
+    def test_docker_mode_no_digest_uses_lock_file(self, tmp_path: Path) -> None:
+        """Docker mode with no digest in spec should use lock file digest."""
+        lock_digest = "sha256:" + "b" * 64
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": lock_digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        spec_image = "kicad/kicad:9.0.7"  # no digest
+        result = resolve_docker_image_ref(spec_image, lock_path=lock_path, mode="docker")
+        assert result == f"kicad/kicad:9.0.7@{lock_digest}"
+
+    def test_docker_mode_matching_digest_uses_spec(self, tmp_path: Path) -> None:
+        """Docker mode with matching digest should use spec's reference."""
+        digest = "sha256:" + "c" * 64
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        spec_image = f"kicad/kicad:9.0.7@{digest}"
+        result = resolve_docker_image_ref(spec_image, lock_path=lock_path, mode="docker")
+        assert result == spec_image
+
+    def test_docker_mode_mismatched_digest_fails(self, tmp_path: Path) -> None:
+        """Docker mode with non-placeholder digest that differs should fail."""
+        lock_digest = "sha256:" + "d" * 64
+        spec_digest = "sha256:" + "e" * 64
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": lock_digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        spec_image = f"kicad/kicad:9.0.7@{spec_digest}"
+        with pytest.raises(ToolchainLoadError, match="does not match"):
+            resolve_docker_image_ref(spec_image, lock_path=lock_path, mode="docker")
+
+    def test_docker_mode_missing_lock_file_fails(self, tmp_path: Path) -> None:
+        """Docker mode without valid lock file should fail."""
+        spec_image = "kicad/kicad:9.0.7@sha256:" + "0" * 63 + "1"
+        with pytest.raises(ToolchainLoadError, match="Cannot resolve"):
+            resolve_docker_image_ref(spec_image, lock_path=tmp_path / "nonexistent.json", mode="docker")
+
+
+class TestGoldenSpecPlaceholderResolution:
+    """Integration tests for golden specs with placeholder digests."""
+
+    def test_golden_spec_placeholder_resolved_from_lock_file(self, tmp_path: Path) -> None:
+        """Golden specs with placeholder should resolve to lock file digest.
+
+        This test verifies REQ-M1: placeholder digests in specs are replaced
+        with real digests from the lock file when running in docker mode.
+        """
+        # Create a mock lock file with real digest
+        real_digest = "sha256:4ddaa54d9ead1f1b453e10a8420e0fcfba693e2143ee14b8b9c3b3c63b2a320f"
+        lock_data = {
+            "schema_version": "1.0",
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": real_digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        # Simulate a golden spec with placeholder digest
+        placeholder_spec_image = "kicad/kicad:9.0.7@sha256:" + "0" * 63 + "1"
+
+        # Resolve should use lock file digest
+        resolved = resolve_docker_image_ref(
+            placeholder_spec_image, lock_path=lock_path, mode="docker"
+        )
+
+        assert resolved == f"kicad/kicad:9.0.7@{real_digest}"
+        assert "000000" not in resolved  # No placeholder in result

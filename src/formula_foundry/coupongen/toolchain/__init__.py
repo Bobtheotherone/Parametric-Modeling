@@ -13,8 +13,10 @@ from .lock import (
     ToolchainConfig,
     ToolchainLoadError,
     compute_toolchain_hash,
+    is_placeholder_digest,
     load_toolchain_lock,
     load_toolchain_lock_from_dict,
+    resolve_docker_image_ref,
 )
 
 __all__ = [
@@ -22,6 +24,8 @@ __all__ = [
     "ToolchainConfig",
     "ToolchainLoadError",
     "compute_toolchain_hash",
+    "is_placeholder_digest",
     "load_toolchain_lock",
     "load_toolchain_lock_from_dict",
+    "resolve_docker_image_ref",
 ]

@@ -124,6 +124,17 @@ jobs:
           echo "Expected digest: ${{ steps.kicad-image.outputs.digest }}"
           echo "Actual digest: $ACTUAL_DIGEST"
 
+      - name: Tag KiCad image for integration tests
+        run: |
+          # Tag the digest-only image with the version tag so integration tests can find it
+          # Integration tests check for 'kicad/kicad:9.0.7' which requires an explicit tag
+          KICAD_TAG=$(python tools/print_kicad_image_ref.py --format image)
+          echo "Tagging ${{ steps.kicad-image.outputs.docker_ref }} as ${KICAD_TAG}"
+          docker tag ${{ steps.kicad-image.outputs.docker_ref }} "${KICAD_TAG}"
+          # Verify the tag was applied
+          docker image inspect "${KICAD_TAG}" --format '{{.Id}}' || exit 1
+          echo "Successfully tagged image as ${KICAD_TAG}"
+
       - name: Print KiCad image reference for CI logs
         run: |
           echo "KiCad Docker ref (digest-only): ${{ steps.kicad-image.outputs.docker_ref }}"

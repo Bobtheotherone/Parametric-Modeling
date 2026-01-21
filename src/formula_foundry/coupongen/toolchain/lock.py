@@ -234,3 +234,78 @@ def load_toolchain_lock_from_dict(lock_data: dict[str, Any]) -> ToolchainConfig:
         ToolchainLoadError: If required fields are missing.
     """
     return _parse_lock_data(lock_data)
+
+
+def resolve_docker_image_ref(
+    spec_docker_image: str,
+    *,
+    lock_path: Path | None = None,
+    repo_root: Path | None = None,
+    mode: str = "docker",
+) -> str:
+    """Resolve the Docker image reference to use for execution.
+
+    This function implements a single-source-of-truth resolution rule:
+    - If the spec's docker digest is a placeholder, substitute from lock file
+    - If the spec has a real digest that differs from lock file, fail-fast
+    - Local mode returns the spec's docker_image as-is (no validation)
+
+    Args:
+        spec_docker_image: Docker image reference from the spec (e.g.,
+            "kicad/kicad:9.0.7@sha256:...").
+        lock_path: Path to the toolchain lock file. If None, uses default.
+        repo_root: Repository root for finding lock file. If None, uses cwd.
+        mode: Execution mode ("local" or "docker"). Placeholder validation
+            only applies to "docker" mode.
+
+    Returns:
+        Resolved Docker image reference (from lock file if spec has placeholder).
+
+    Raises:
+        ToolchainLoadError: If mode is "docker" and:
+            - Lock file cannot be loaded
+            - Spec has a real (non-placeholder) digest that differs from lock file
+    """
+    if mode == "local":
+        # Local mode doesn't need docker image resolution
+        return spec_docker_image
+
+    # Load the lock file
+    try:
+        lock_config = load_toolchain_lock(lock_path=lock_path, repo_root=repo_root)
+    except ToolchainLoadError as e:
+        raise ToolchainLoadError(
+            f"Cannot resolve docker image ref in docker mode: {e}"
+        ) from e
+
+    # Check if the spec's docker_image contains a digest
+    spec_digest = None
+    if "@sha256:" in spec_docker_image:
+        _, spec_digest = spec_docker_image.split("@", 1)
+
+    # If spec has no digest or has a placeholder, use lock file
+    if spec_digest is None or _is_placeholder_digest(spec_digest):
+        return lock_config.pinned_image_ref
+
+    # Spec has a real digest - verify it matches the lock file
+    if spec_digest != lock_config.docker_digest:
+        raise ToolchainLoadError(
+            f"Spec docker digest ({spec_digest[:20]}...) does not match "
+            f"lock file digest ({lock_config.docker_digest[:20]}...). "
+            f"Update the spec or lock file to ensure reproducibility."
+        )
+
+    # Spec digest matches lock file - use spec's reference
+    return spec_docker_image
+
+
+def is_placeholder_digest(digest: str) -> bool:
+    """Public interface to check if a digest is a placeholder.
+
+    Args:
+        digest: Digest string to check (e.g., "sha256:0000...0001").
+
+    Returns:
+        True if the digest is a recognized placeholder value.
+    """
+    return _is_placeholder_digest(digest)

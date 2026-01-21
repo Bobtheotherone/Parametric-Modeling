@@ -23,6 +23,7 @@ References:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,6 +32,11 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+def _is_ci_environment() -> bool:
+    """Check if running in a CI environment (GitHub Actions, etc.)."""
+    return os.environ.get("CI", "").lower() == "true" or os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
 
 # Root of the repository
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -232,10 +238,21 @@ class TestKicadDRCIntegration:
         docker_available: bool,
         kicad_image_available: bool,
     ) -> None:
-        """Skip tests if Docker or KiCad image is not available."""
+        """Skip tests if Docker or KiCad image is not available.
+
+        In CI environments, missing prerequisites cause a hard failure instead
+        of a skip to ensure integration tests are never silently bypassed.
+        """
         if not docker_available:
+            if _is_ci_environment():
+                pytest.fail("Docker is not available in CI - this is a hard failure")
             pytest.skip("Docker is not available")
         if not kicad_image_available:
+            if _is_ci_environment():
+                pytest.fail(
+                    "KiCad Docker image not available (kicad/kicad:9.0.7) in CI - "
+                    "ensure the image is pulled and tagged in the workflow"
+                )
             pytest.skip("KiCad Docker image not available (kicad/kicad:9.0.7)")
 
     @pytest.mark.parametrize(
@@ -318,10 +335,21 @@ class TestDRCExitCodeSemantics:
         docker_available: bool,
         kicad_image_available: bool,
     ) -> None:
-        """Skip tests if Docker or KiCad image is not available."""
+        """Skip tests if Docker or KiCad image is not available.
+
+        In CI environments, missing prerequisites cause a hard failure instead
+        of a skip to ensure integration tests are never silently bypassed.
+        """
         if not docker_available:
+            if _is_ci_environment():
+                pytest.fail("Docker is not available in CI - this is a hard failure")
             pytest.skip("Docker is not available")
         if not kicad_image_available:
+            if _is_ci_environment():
+                pytest.fail(
+                    "KiCad Docker image not available (kicad/kicad:9.0.7) in CI - "
+                    "ensure the image is pulled and tagged in the workflow"
+                )
             pytest.skip("KiCad Docker image not available (kicad/kicad:9.0.7)")
 
     def test_clean_build_has_exit_code_zero(
@@ -373,10 +401,21 @@ class TestDRCReportFormat:
         docker_available: bool,
         kicad_image_available: bool,
     ) -> None:
-        """Skip tests if Docker or KiCad image is not available."""
+        """Skip tests if Docker or KiCad image is not available.
+
+        In CI environments, missing prerequisites cause a hard failure instead
+        of a skip to ensure integration tests are never silently bypassed.
+        """
         if not docker_available:
+            if _is_ci_environment():
+                pytest.fail("Docker is not available in CI - this is a hard failure")
             pytest.skip("Docker is not available")
         if not kicad_image_available:
+            if _is_ci_environment():
+                pytest.fail(
+                    "KiCad Docker image not available (kicad/kicad:9.0.7) in CI - "
+                    "ensure the image is pulled and tagged in the workflow"
+                )
             pytest.skip("KiCad Docker image not available (kicad/kicad:9.0.7)")
 
     def test_drc_json_has_expected_structure(

@@ -41,6 +41,7 @@ from .kicad.cli import KicadCliMode
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash, resolve
 from .spec import CouponSpec, KicadToolchain
+from .toolchain import ToolchainLoadError, resolve_docker_image_ref
 from .toolchain_capture import capture_toolchain_provenance
 
 if TYPE_CHECKING:
@@ -237,9 +238,17 @@ def run_drc(
     mode: KicadCliMode = "local",
     report_path: Path | None = None,
     runner: KicadRunnerProtocol | None = None,
+    lock_file: Path | None = None,
 ) -> DrcReport:
     resolved_report = report_path or board_path.parent / "drc.json"
-    runner = runner or KicadCliRunner(mode=mode, docker_image=toolchain.docker_image)
+    if runner is None:
+        # Resolve docker image from lock file if spec has placeholder
+        docker_image = resolve_docker_image_ref(
+            toolchain.docker_image,
+            lock_path=lock_file,
+            mode=mode,
+        )
+        runner = KicadCliRunner(mode=mode, docker_image=docker_image)
     proc = runner.run_drc(board_path, resolved_report)
     return DrcReport(report_path=resolved_report, returncode=proc.returncode)
 
@@ -251,9 +260,17 @@ def export_fab(
     *,
     mode: KicadCliMode = "local",
     runner: KicadRunnerProtocol | None = None,
+    lock_file: Path | None = None,
 ) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    runner = runner or KicadCliRunner(mode=mode, docker_image=toolchain.docker_image)
+    if runner is None:
+        # Resolve docker image from lock file if spec has placeholder
+        docker_image = resolve_docker_image_ref(
+            toolchain.docker_image,
+            lock_path=lock_file,
+            mode=mode,
+        )
+        runner = KicadCliRunner(mode=mode, docker_image=docker_image)
     gerber_dir = out_dir / "gerbers"
     drill_dir = out_dir / "drill"
     gerber_dir.mkdir(parents=True, exist_ok=True)
@@ -386,6 +403,7 @@ def build_coupon(
         evaluation.spec.toolchain.kicad,
         mode=mode,
         runner=runner,
+        lock_file=lock_file,
     )
     if evaluation.spec.constraints.drc.must_pass and report.returncode != 0:
         raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
@@ -395,6 +413,7 @@ def build_coupon(
         evaluation.spec.toolchain.kicad,
         mode=mode,
         runner=runner,
+        lock_file=lock_file,
     )
     manifest = build_manifest(
         spec=evaluation.spec,
@@ -566,6 +585,7 @@ def build_coupon_with_engine(
         spec.toolchain.kicad,
         mode=kicad_mode,
         runner=runner,
+        lock_file=lock_file,
     )
     if spec.constraints.drc.must_pass and report.returncode != 0:
         raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
@@ -577,6 +597,7 @@ def build_coupon_with_engine(
         spec.toolchain.kicad,
         mode=kicad_mode,
         runner=runner,
+        lock_file=lock_file,
     )
 
     # Build and write manifest
