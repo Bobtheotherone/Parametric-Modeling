@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
+
 from tools import verify
 
 
@@ -54,8 +56,46 @@ def test_verify_writes_failure_artifacts(
     assert (logs_dir / "spec_lint.stdout.log").read_text(encoding="utf-8") == "gate-stdout"
     assert (logs_dir / "spec_lint.stderr.log").read_text(encoding="utf-8") == "gate-stderr"
 
+    verify_log = (run_dir / "verify.log").read_text(encoding="utf-8")
+    assert "gate-stdout" in verify_log
+    assert "gate-stderr" in verify_log
+
     failure_path = run_dir / "failures" / "spec_lint.json"
     assert failure_path.exists()
     failure_payload = json.loads(failure_path.read_text(encoding="utf-8"))
     assert failure_payload["name"] == "spec_lint"
     assert failure_payload["note"] == "rc=2"
+
+
+def test_run_injects_deterministic_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifacts = verify._init_verify_artifacts(tmp_path)
+    env_overrides = verify._build_verify_env(artifacts.tmp_dir)
+    monkeypatch.setattr(verify, "_VERIFY_ENV", env_overrides)
+
+    captured: dict[str, dict[str, str]] = {}
+
+    def fake_run(
+        cmd: list[str],
+        cwd: str,
+        text: bool,
+        capture_output: bool,
+        timeout: float | None,
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        captured["env"] = env
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = verify._run(["echo", "ok"], tmp_path)
+    assert result.passed is True
+
+    env = captured["env"]
+    for key, value in verify.DETERMINISTIC_ENV.items():
+        assert env.get(key) == value
+
+    expected_tmp = str(artifacts.tmp_dir)
+    assert env.get("TMPDIR") == expected_tmp
+    assert env.get("TEMP") == expected_tmp
+    assert env.get("TMP") == expected_tmp
+    assert artifacts.tmp_dir.exists()
