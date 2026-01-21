@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
 
       - name: Set up Python
-        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
           python-version: "3.10"
           cache: "pip"
@@ -89,7 +89,7 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
 
       - name: Set up Python
-        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
           python-version: "3.10"
           cache: "pip"
@@ -143,7 +143,7 @@ jobs:
 
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@654a3f24f56a1de4d4c5fce4e5fcd5a2b7f5ab63
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kicad-integration-failure-artifacts
           path: |
@@ -181,7 +181,7 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
 
       - name: Set up Python
-        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
           python-version: "3.10"
           cache: "pip"
@@ -199,7 +199,7 @@ jobs:
 
       - name: Upload gate artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@654a3f24f56a1de4d4c5fce4e5fcd5a2b7f5ab63
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: gate-${{ matrix.gate }}-artifacts
           path: |
