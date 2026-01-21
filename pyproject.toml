@@ -39,7 +39,7 @@ dvc = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-q"
+addopts = "-q --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 markers = [
@@ -49,6 +49,7 @@ markers = [
     "gate_g3: Gate G3 - DRC clean (KiCad DRC passes with zero violations)",
     "gate_g4: Gate G4 - export completeness (all required layers + drill files present)",
     "gate_g5: Gate G5 - stable canonical hashes across repeated runs",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 
 [tool.ruff]
