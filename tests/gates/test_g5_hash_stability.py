@@ -121,24 +121,26 @@ class _FakeStabilityRunner:
         """Simulate Gerber export with deterministic content based on seed."""
         self.run_count += 1
         out_dir.mkdir(parents=True, exist_ok=True)
+        board_name = board_path.stem
 
         layers = [
-            ("F_Cu.gbr", "F.Cu"),
-            ("B_Cu.gbr", "B.Cu"),
-            ("In1_Cu.gbr", "In1.Cu"),
-            ("In2_Cu.gbr", "In2.Cu"),
-            ("F_Mask.gbr", "F.Mask"),
-            ("B_Mask.gbr", "B.Mask"),
-            ("Edge_Cuts.gbr", "Edge.Cuts"),
+            ("F_Cu", "F.Cu"),
+            ("B_Cu", "B.Cu"),
+            ("In1_Cu", "In1.Cu"),
+            ("In2_Cu", "In2.Cu"),
+            ("F_Mask", "F.Mask"),
+            ("B_Mask", "B.Mask"),
+            ("Edge_Cuts", "Edge.Cuts"),
         ]
 
-        for filename, layer in layers:
+        for kicad_layer, layer in layers:
             # Deterministic content based on seed and layer
             content_hash = hashlib.sha256(
                 f"{self.seed}:{layer}".encode()
             ).hexdigest()[:16]
             content = f"G04 Layer {layer}*\nG04 Hash={content_hash}*\nX0Y0D02*\nX1000Y0D01*\nM02*\n"
-            (out_dir / filename).write_text(content, encoding="utf-8")
+            # Use KiCad naming: board-F_Cu.gbr
+            (out_dir / f"{board_name}-{kicad_layer}.gbr").write_text(content, encoding="utf-8")
 
         return subprocess.CompletedProcess(
             args=["kicad-cli"], returncode=0, stdout="", stderr=""
@@ -280,7 +282,8 @@ class TestG5DesignHashStability:
     ) -> None:
         """design_hash must match committed golden hashes."""
         for spec_path in golden_specs:
-            key = spec_path.with_suffix(".json").name
+            # Golden hashes use the actual spec filename as key (e.g., f0_cal_001.yaml)
+            key = spec_path.name
 
             if key not in golden_hashes:
                 pytest.skip(f"No golden hash for {key}")

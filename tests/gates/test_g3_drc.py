@@ -113,7 +113,12 @@ class _FakeDrcRunner:
     ) -> subprocess.CompletedProcess[str]:
         """Simulate Gerber export."""
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "F.Cu.gbr").write_text("G04 Fake Gerber*\n", encoding="utf-8")
+        board_name = board_path.stem
+        # Generate all required layers with KiCad naming: board-F_Cu.gbr
+        for layer in ["F_Cu", "B_Cu", "In1_Cu", "In2_Cu", "F_Mask", "B_Mask", "Edge_Cuts"]:
+            (out_dir / f"{board_name}-{layer}.gbr").write_text(
+                f"G04 Fake {layer}*\n", encoding="utf-8"
+            )
         return subprocess.CompletedProcess(
             args=["kicad-cli"], returncode=0, stdout="", stderr=""
         )

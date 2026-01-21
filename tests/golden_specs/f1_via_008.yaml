@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 fab_profile:
   id: generic
@@ -47,7 +47,7 @@ transmission_line:
   type: CPWG
   layer: F.Cu
   w_nm: "155 um"
-  gap_nm: "105 um"
+  gap_nm: "127 um"
   length_left_nm: "14 mm"
   # CP-2.2: length_right_nm is deprecated for F1 - derived from continuity formula
 
