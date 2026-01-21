@@ -14,6 +14,7 @@ This script:
 import argparse
 import hashlib
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -104,6 +105,14 @@ def main():
 
     if not digest:
         print("Error: Could not resolve image digest", file=sys.stderr)
+        sys.exit(1)
+
+    if "PLACEHOLDER" in digest.upper():
+        print("Error: Digest resolved to placeholder value", file=sys.stderr)
+        sys.exit(1)
+
+    if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
+        print(f"Error: Digest has unexpected format: {digest}", file=sys.stderr)
         sys.exit(1)
 
     # Update lock data

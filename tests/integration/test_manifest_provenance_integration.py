@@ -218,10 +218,16 @@ class TestToolchainLockPresent:
         """REQ-CP1-1: Lock file must contain required fields."""
         lock_data = _load_toolchain_lock()
 
-        required_fields = ["kicad_version", "docker_image"]
+        required_fields = ["kicad_version", "docker_image", "docker_digest"]
         for field in required_fields:
             assert field in lock_data, f"Lock file missing required field: {field}"
             assert lock_data[field], f"Lock file field {field} must not be empty"
+
+        docker_digest = lock_data["docker_digest"]
+        assert "PLACEHOLDER" not in str(docker_digest).upper(), "docker_digest must be resolved"
+        assert isinstance(docker_digest, str)
+        assert len(docker_digest) == 71, "docker_digest must be sha256:<64-hex>"
+        assert docker_digest.startswith("sha256:")
 
 
 @pytest.mark.kicad_integration

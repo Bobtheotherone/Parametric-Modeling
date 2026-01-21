@@ -56,12 +56,24 @@ def load_docker_image_ref(lock_file: Path | None = None) -> str:
     if not docker_image:
         raise ValueError(f"docker_image not found in {lock_file}")
 
-    # If digest is present and not a placeholder, use pinned reference
-    if docker_digest and docker_digest != "sha256:PLACEHOLDER":
-        return f"{docker_image}@{docker_digest}"
+    image_base = docker_image
+    embedded_digest = None
+    if "@sha256:" in docker_image:
+        image_base, embedded_digest = docker_image.split("@", 1)
 
-    # Fall back to tag-only reference
-    return docker_image
+    if embedded_digest and docker_digest and embedded_digest != docker_digest:
+        raise ValueError("docker_image digest does not match docker_digest")
+
+    if not docker_digest:
+        raise ValueError("docker_digest missing from toolchain lock file")
+
+    if "PLACEHOLDER" in str(docker_digest).upper():
+        raise ValueError("docker_digest is a placeholder; run tools/pin_kicad_image.py")
+
+    if not re.match(r"^sha256:[0-9a-f]{64}$", docker_digest):
+        raise ValueError("docker_digest must be a sha256: 64-hex digest")
+
+    return f"{image_base}@{docker_digest}"
 
 
 class DockerKicadRunner(IKicadRunner):

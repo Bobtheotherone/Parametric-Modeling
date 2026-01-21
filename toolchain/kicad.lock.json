@@ -2,6 +2,6 @@
   "schema_version": "1.0",
   "kicad_version": "9.0.7",
   "docker_image": "kicad/kicad:9.0.7",
-  "docker_digest": "sha256:PLACEHOLDER",
-  "toolchain_hash": "2d14c82399e2f6d9a088120057b73b6b86f0def09979faa294be6adfb5568299"
+  "docker_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+  "toolchain_hash": "9358db9df797a41ebe0c27264d146291632961d6225ed1b051f3dd7a5c9ab22e"
 }
