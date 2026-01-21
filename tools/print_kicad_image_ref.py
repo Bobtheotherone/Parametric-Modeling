@@ -14,11 +14,12 @@ Output formats:
 Exit codes:
     0: Success
     1: Lock file not found or invalid
-    2: Digest is placeholder (not yet pinned)
+    2: Digest missing or placeholder (not yet pinned)
 """
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -63,29 +64,45 @@ def main():
     docker_digest = lock_data.get("docker_digest", "")
     kicad_version = lock_data.get("kicad_version", "")
 
-    # Check for placeholder digest
-    is_placeholder = (
-        not docker_digest or
-        docker_digest == "sha256:PLACEHOLDER" or
-        "PLACEHOLDER" in docker_digest.upper()
-    )
+    if not docker_image:
+        print("Error: Docker image missing in lock file.", file=sys.stderr)
+        sys.exit(1)
 
+    image_base = docker_image
+    embedded_digest = None
+    if "@sha256:" in docker_image:
+        image_base, embedded_digest = docker_image.split("@", 1)
+
+    if embedded_digest and docker_digest and embedded_digest != docker_digest:
+        print("Error: docker_image digest does not match docker_digest", file=sys.stderr)
+        sys.exit(1)
+
+    if not docker_digest:
+        print(
+            "Error: Docker digest missing in lock file. "
+            "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    is_placeholder = "PLACEHOLDER" in docker_digest.upper()
     if is_placeholder and not args.allow_placeholder:
         print(
             "Error: Docker digest is a placeholder. "
             "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
-            file=sys.stderr
+            file=sys.stderr,
         )
         sys.exit(2)
 
+    if not is_placeholder and not re.match(r"^sha256:[0-9a-f]{64}$", docker_digest):
+        print("Error: Docker digest must be sha256: followed by 64 hex chars.", file=sys.stderr)
+        sys.exit(1)
+
     # Output based on format
     if args.format == "full":
-        if is_placeholder:
-            print(docker_image)
-        else:
-            print(f"{docker_image}@{docker_digest}")
+        print(f"{image_base}@{docker_digest}")
     elif args.format == "image":
-        print(docker_image)
+        print(image_base)
     elif args.format == "digest":
         print(docker_digest)
     elif args.format == "tag":

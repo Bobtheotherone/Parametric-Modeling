@@ -346,7 +346,7 @@ class TestCaptureWithLockFile:
                 {
                     "kicad_version": "9.0.7",
                     "docker_image": "kicad/kicad:9.0.7",
-                    "docker_digest": "sha256:abc123def456",
+                    "docker_digest": "sha256:" + "a" * 64,
                 }
             )
         )
@@ -362,7 +362,7 @@ class TestCaptureWithLockFile:
             lock_file=lock_file,
         )
 
-        assert provenance.docker_image_ref == "kicad/kicad:9.0.7@sha256:abc123def456"
+        assert provenance.docker_image_ref == f"kicad/kicad:9.0.7@{'sha256:' + 'a' * 64}"
 
     @patch("formula_foundry.coupongen.toolchain_capture.DockerKicadRunner")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
@@ -382,7 +382,7 @@ class TestCaptureWithLockFile:
                 {
                     "kicad_version": "9.0.7",
                     "docker_image": "kicad/kicad:9.0.7",
-                    "docker_digest": "sha256:abc123def456",
+                    "docker_digest": "sha256:" + "b" * 64,
                 }
             )
         )

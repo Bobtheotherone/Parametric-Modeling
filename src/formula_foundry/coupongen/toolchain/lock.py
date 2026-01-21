@@ -15,6 +15,7 @@ Satisfies:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,7 @@ class ToolchainConfig:
     schema_version: str
     kicad_version: str
     docker_image: str
-    docker_digest: str | None
+    docker_digest: str
     toolchain_hash: str
 
     @property
@@ -54,12 +55,11 @@ class ToolchainConfig:
         """Return fully pinned docker image reference with digest if available.
 
         Returns:
-            Image reference like "kicad/kicad:9.0.7@sha256:..." if digest is
-            available, otherwise just the tag reference.
+            Image reference like "kicad/kicad:9.0.7@sha256:...".
         """
-        if self.docker_digest and "PLACEHOLDER" not in self.docker_digest:
-            return f"{self.docker_image}@{self.docker_digest}"
-        return self.docker_image
+        if "@sha256:" in self.docker_image:
+            return self.docker_image
+        return f"{self.docker_image}@{self.docker_digest}"
 
     def to_manifest_dict(self) -> dict[str, Any]:
         """Return dict suitable for inclusion in build manifest.
@@ -146,10 +146,28 @@ def _parse_lock_data(lock_data: dict[str, Any]) -> ToolchainConfig:
     Raises:
         ToolchainLoadError: If required fields are missing.
     """
-    required_fields = ["kicad_version", "docker_image"]
+    required_fields = ["kicad_version", "docker_image", "docker_digest"]
     missing = [f for f in required_fields if f not in lock_data]
     if missing:
         raise ToolchainLoadError(f"Missing required fields in lock file: {missing}")
+
+    docker_image = lock_data["docker_image"]
+    docker_digest = lock_data["docker_digest"]
+
+    if not docker_digest:
+        raise ToolchainLoadError("docker_digest must be set in lock file")
+
+    if "PLACEHOLDER" in str(docker_digest).upper():
+        raise ToolchainLoadError("docker_digest must be resolved (not PLACEHOLDER)")
+
+    if not re.match(r"^sha256:[0-9a-f]{64}$", docker_digest):
+        raise ToolchainLoadError("docker_digest must be a sha256: 64-hex digest")
+
+    if "@sha256:" in docker_image:
+        image_base, embedded_digest = docker_image.split("@", 1)
+        if embedded_digest != docker_digest:
+            raise ToolchainLoadError("docker_image digest does not match docker_digest")
+        docker_image = image_base
 
     # Compute hash from lock data
     toolchain_hash = compute_toolchain_hash(lock_data)
@@ -157,8 +175,8 @@ def _parse_lock_data(lock_data: dict[str, Any]) -> ToolchainConfig:
     return ToolchainConfig(
         schema_version=lock_data.get("schema_version", "1.0"),
         kicad_version=lock_data["kicad_version"],
-        docker_image=lock_data["docker_image"],
-        docker_digest=lock_data.get("docker_digest"),
+        docker_image=docker_image,
+        docker_digest=docker_digest,
         toolchain_hash=toolchain_hash,
     )
 
