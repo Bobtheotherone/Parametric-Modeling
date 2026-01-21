@@ -94,6 +94,7 @@ exclude = [
     "^scripts/",
     "^tools/",
     "^bridge/",
+    "^artifacts/",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped", "assignment", "arg-type", "return-value", "attr-defined", "name-defined"]
