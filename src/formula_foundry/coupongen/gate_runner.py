@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -44,6 +45,9 @@ GATE_DESCRIPTIONS: dict[str, str] = {
     "G4": "Export completeness (all required layers + drill files present)",
     "G5": "Stable canonical hashes across repeated runs",
 }
+
+KICAD_INTEGRATION_GATES = {"G3", "G4", "G5"}
+SPEC_TOKEN_RE = re.compile(r"\b(f[01]_[A-Za-z0-9_.-]+)\b", re.IGNORECASE)
 
 
 def parse_gates(gates_str: str) -> list[str]:
@@ -103,7 +107,7 @@ def build_pytest_marker_expr(gates: list[str]) -> str:
 
 def run_gates(
     gates: list[str],
-    test_dir: Path | None = None,
+    test_dir: Path | list[Path] | None = None,
     junit_xml: Path | None = None,
     verbose: bool = False,
     extra_args: list[str] | None = None,
@@ -123,14 +127,14 @@ def run_gates(
     import tempfile
 
     # Determine test directory
-    if test_dir is None:
-        # Default to tests/gates/ relative to repo root
-        repo_root = Path(__file__).resolve().parents[4]
-        test_dir = repo_root / "tests" / "gates"
-
-    if not test_dir.exists():
-        sys.stderr.write(f"Error: Test directory not found: {test_dir}\n")
+    test_dirs = _resolve_test_dirs(gates, test_dir)
+    if not test_dirs:
+        sys.stderr.write("Error: No test directories resolved\n")
         return 1, None
+    for path in test_dirs:
+        if not path.exists():
+            sys.stderr.write(f"Error: Test directory not found: {path}\n")
+            return 1, None
 
     # Create temp JUnit XML if not specified
     if junit_xml is None:
@@ -144,7 +148,7 @@ def run_gates(
         sys.executable,
         "-m",
         "pytest",
-        str(test_dir),
+        *[str(path) for path in test_dirs],
         "-m",
         marker_expr,
         f"--junit-xml={junit_xml}",
@@ -171,6 +175,24 @@ def run_gates(
         sys.stderr.write(result.stderr)
 
     return result.returncode, junit_xml
+
+
+def _resolve_test_dirs(gates: list[str], test_dir: Path | list[Path] | None) -> list[Path]:
+    """Resolve which test directories to include based on gates requested."""
+    if test_dir is not None:
+        if isinstance(test_dir, (list, tuple)):
+            return [Path(path) for path in test_dir]
+        return [Path(test_dir)]
+
+    repo_root = Path(__file__).resolve().parents[4]
+    test_dirs = [repo_root / "tests" / "gates"]
+
+    if any(gate in KICAD_INTEGRATION_GATES for gate in gates):
+        integration_dir = repo_root / "tests" / "integration"
+        if integration_dir.exists():
+            test_dirs.append(integration_dir)
+
+    return test_dirs
 
 
 def parse_junit_xml(xml_path: Path) -> dict[str, Any]:
@@ -268,22 +290,29 @@ def categorize_tests_by_gate(tests: list[dict[str, Any]]) -> dict[str, list[dict
     }
 
     for test in tests:
-        classname = test.get("classname", "").lower()
-        name = test.get("name", "").lower()
-
-        # Match by classname or test name patterns
-        if "g1" in classname or "g1" in name or "determinism" in classname:
-            gate_tests["G1"].append(test)
-        elif "g2" in classname or "g2" in name or "constraint" in classname:
-            gate_tests["G2"].append(test)
-        elif "g3" in classname or "g3" in name or "drc" in classname:
-            gate_tests["G3"].append(test)
-        elif "g4" in classname or "g4" in name or "export" in classname or "completeness" in classname:
-            gate_tests["G4"].append(test)
-        elif "g5" in classname or "g5" in name or "hash" in classname or "stability" in classname:
-            gate_tests["G5"].append(test)
+        gate_id = _infer_gate_id(test)
+        if gate_id and gate_id in gate_tests:
+            gate_tests[gate_id].append(test)
 
     return gate_tests
+
+
+def _infer_gate_id(test: dict[str, Any]) -> str | None:
+    classname = test.get("classname", "").lower()
+    name = test.get("name", "").lower()
+    haystack = f"{classname} {name}"
+
+    if "g1" in haystack or "determinism" in haystack or "resolve" in haystack:
+        return "G1"
+    if "g2" in haystack or "constraint" in haystack or "repair" in haystack:
+        return "G2"
+    if "g3" in haystack or "drc" in haystack:
+        return "G3"
+    if "g4" in haystack or "export" in haystack or "completeness" in haystack:
+        return "G4"
+    if "g5" in haystack or "hash" in haystack or "stability" in haystack:
+        return "G5"
+    return None
 
 
 def compute_gate_status(tests: list[dict[str, Any]]) -> Literal["passed", "failed", "skipped", "no_tests"]:
@@ -312,6 +341,7 @@ def build_audit_report(
     junit_results: dict[str, Any],
     return_code: int,
     junit_xml_path: Path | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Build machine-readable audit report.
 
@@ -375,7 +405,175 @@ def build_audit_report(
     if junit_xml_path:
         report["junit_xml_path"] = str(junit_xml_path)
 
+    if tests:
+        report["per_spec"] = _build_per_spec_results(tests, repo_root)
+    else:
+        report["per_spec"] = {}
+
     return report
+
+
+def _build_per_spec_results(tests: list[dict[str, Any]], repo_root: Path | None) -> dict[str, Any]:
+    if repo_root is None:
+        repo_root = Path(__file__).resolve().parents[4]
+
+    per_spec: dict[str, dict[str, Any]] = {}
+    for test in tests:
+        spec_id = _extract_spec_id(test)
+        if not spec_id:
+            continue
+
+        if spec_id not in per_spec:
+            per_spec[spec_id] = _init_spec_entry(spec_id, repo_root)
+
+        entry = per_spec[spec_id]
+        status = test.get("status", "unknown")
+
+        entry["summary"]["total"] += 1
+        if status == "passed":
+            entry["summary"]["passed"] += 1
+        elif status == "skipped":
+            entry["summary"]["skipped"] += 1
+        elif status in ("failed", "error"):
+            entry["summary"]["failed"] += 1
+        else:
+            entry["summary"]["errors"] += 1
+
+        gate_id = _infer_gate_id(test)
+        if gate_id:
+            gate_entry = entry["gates"].setdefault(
+                gate_id,
+                {
+                    "tests": [],
+                    "tests_count": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                },
+            )
+            gate_entry["tests"].append(_minimal_test_ref(test, gate_id))
+            gate_entry["tests_count"] += 1
+            if status == "passed":
+                gate_entry["passed"] += 1
+            elif status == "skipped":
+                gate_entry["skipped"] += 1
+            elif status in ("failed", "error"):
+                gate_entry["failed"] += 1
+
+        entry["tests"].append(_minimal_test_ref(test, gate_id))
+
+    for spec_id, entry in per_spec.items():
+        statuses = [t["status"] for t in entry["tests"]]
+        if not statuses:
+            entry["status"] = "no_tests"
+        elif any(status in ("failed", "error") for status in statuses):
+            entry["status"] = "failed"
+        elif all(status == "skipped" for status in statuses):
+            entry["status"] = "skipped"
+        elif any(status == "skipped" for status in statuses):
+            entry["status"] = "partial"
+        else:
+            entry["status"] = "passed"
+
+        for gate_id, gate_entry in entry["gates"].items():
+            gate_entry["status"] = compute_gate_status(gate_entry["tests"])
+
+    return per_spec
+
+
+def _minimal_test_ref(test: dict[str, Any], gate_id: str | None) -> dict[str, Any]:
+    return {
+        "name": test.get("name", ""),
+        "classname": test.get("classname", ""),
+        "status": test.get("status", "unknown"),
+        "gate": gate_id or "",
+    }
+
+
+def _extract_spec_id(test: dict[str, Any]) -> str | None:
+    name = test.get("name", "")
+    classname = test.get("classname", "")
+
+    param_id = _extract_param_id(name)
+    for candidate in (param_id, name, classname):
+        spec_id = _extract_spec_token(candidate)
+        if spec_id:
+            return spec_id
+    return None
+
+
+def _extract_param_id(name: str) -> str | None:
+    if "[" in name and name.endswith("]"):
+        return name[name.rfind("[") + 1 : -1]
+    return None
+
+
+def _extract_spec_token(candidate: str | None) -> str | None:
+    if not candidate:
+        return None
+    match = SPEC_TOKEN_RE.search(candidate)
+    if match:
+        return _normalize_spec_id(match.group(1))
+    return None
+
+
+def _normalize_spec_id(candidate: str) -> str | None:
+    candidate = candidate.strip()
+    if not candidate:
+        return None
+    for ext in (".yaml", ".yml", ".json"):
+        if ext in candidate:
+            candidate = candidate.split(ext, 1)[0] + ext
+            break
+    candidate = candidate.split("/")[-1].split("\\")[-1]
+    if candidate.endswith((".yaml", ".yml", ".json")):
+        candidate = Path(candidate).stem
+    return candidate or None
+
+
+def _init_spec_entry(spec_id: str, repo_root: Path) -> dict[str, Any]:
+    metadata = _resolve_spec_metadata(spec_id, repo_root)
+    return {
+        "status": "no_tests",
+        "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0},
+        "tests": [],
+        "gates": {},
+        **metadata,
+    }
+
+
+def _resolve_spec_metadata(spec_id: str, repo_root: Path) -> dict[str, Any]:
+    artifact_paths: dict[str, str] = {}
+    spec_path = _find_spec_path(spec_id, repo_root)
+    if spec_path:
+        artifact_paths["spec"] = str(spec_path)
+
+    metadata: dict[str, Any] = {"artifact_paths": artifact_paths}
+    if spec_path:
+        try:
+            from formula_foundry.coupongen import coupon_id_from_design_hash, design_hash, load_spec, resolve_spec
+
+            spec = load_spec(spec_path)
+            resolved = resolve_spec(spec)
+            design_hash_value = design_hash(resolved)
+            metadata["design_hash"] = design_hash_value
+            metadata["coupon_id"] = coupon_id_from_design_hash(design_hash_value)
+        except Exception as exc:  # pragma: no cover - best-effort metadata
+            metadata["design_hash_error"] = str(exc)
+
+    return metadata
+
+
+def _find_spec_path(spec_id: str, repo_root: Path) -> Path | None:
+    golden_dir = repo_root / "tests" / "golden_specs"
+    direct = golden_dir / spec_id
+    if direct.exists():
+        return direct
+    for ext in (".yaml", ".yml", ".json"):
+        candidate = golden_dir / f"{spec_id}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def print_summary(report: dict[str, Any], verbose: bool = False) -> None:

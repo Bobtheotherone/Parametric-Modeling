@@ -311,6 +311,7 @@ class TestBuildAuditReport:
         assert "pytest_returncode" in report
         assert "summary" in report
         assert "gates" in report
+        assert "per_spec" in report
 
         # Check gates
         assert "G1" in report["gates"]
@@ -618,3 +619,41 @@ class TestSubprocessMocking:
         # All gates should be present
         for gate_id in ["G1", "G2", "G3", "G4", "G5"]:
             assert gate_id in parsed["gates"]
+
+    def test_report_per_spec_summary_includes_paths(self, tmp_path: Path) -> None:
+        """Per-spec summary should include spec path and status."""
+        repo_root = tmp_path
+        spec_dir = repo_root / "tests" / "golden_specs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        spec_path = spec_dir / "f0_cal_example.yaml"
+        spec_path.write_text("invalid: true\n", encoding="utf-8")
+
+        junit_results = {
+            "tests": [
+                {
+                    "classname": "tests.gates.test_g1_determinism.TestG1",
+                    "name": "test_determinism[f0_cal_example.yaml]",
+                    "status": "passed",
+                    "time": 0.1,
+                },
+                {
+                    "classname": "tests.gates.test_g2_constraints.TestG2",
+                    "name": "test_constraints[f0_cal_example.yaml]",
+                    "status": "failed",
+                    "time": 0.2,
+                },
+            ],
+            "summary": {"total": 2, "passed": 1, "failed": 1, "skipped": 0, "errors": 0},
+        }
+
+        report = build_audit_report(
+            gates_requested=["G1", "G2"],
+            junit_results=junit_results,
+            return_code=1,
+            repo_root=repo_root,
+        )
+
+        assert "per_spec" in report
+        spec_entry = report["per_spec"]["f0_cal_example"]
+        assert spec_entry["status"] == "failed"
+        assert spec_entry["artifact_paths"]["spec"] == str(spec_path)
