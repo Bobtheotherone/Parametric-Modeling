@@ -149,8 +149,10 @@ def test_report_generation(tmp_path: Path) -> None:
     for section in required_sections:
         assert section in content
 
+    assert "Generated: 20260101T000000Z" in content
     assert "spec_lint" in content
     assert "G1" in content
+    assert "- verify_env: artifacts/verify/20260101T000000Z/env.json" in content
     assert "- manifest: artifacts/sample_run/manifest.json" in content
     assert "- drc_report: artifacts/sample_run/drc.json" in content
     assert "kicad/kicad:9.0.7@sha256:deadbeef" in content
