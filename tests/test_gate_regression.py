@@ -51,6 +51,13 @@ class TestGateMarkerConfiguration:
         content = PYPROJECT_PATH.read_text(encoding="utf-8")
         assert "kicad_integration" in content, "kicad_integration marker not declared"
 
+    def test_strict_markers_enabled(self) -> None:
+        """--strict-markers must be enabled in addopts."""
+        content = PYPROJECT_PATH.read_text(encoding="utf-8")
+        assert "--strict-markers" in content, (
+            "pytest addopts must include --strict-markers for consistent enforcement"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Regression Tests: Golden Spec Coverage
