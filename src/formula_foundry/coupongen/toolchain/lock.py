@@ -75,6 +75,45 @@ class ToolchainConfig:
         }
 
 
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PLACEHOLDER_HEX = {
+    "0" * 64,
+    "0" * 63 + "1",
+}
+
+
+def _is_placeholder_digest(digest: str) -> bool:
+    """Return True if digest is an explicit placeholder value."""
+    digest_text = str(digest)
+    upper = digest_text.upper()
+    if "PLACEHOLDER" in upper or "UNKNOWN" in upper:
+        return True
+    if digest_text.startswith("sha256:"):
+        hex_part = digest_text.split("sha256:", 1)[1]
+        if hex_part in _PLACEHOLDER_HEX:
+            return True
+    return False
+
+
+def _validate_digest(digest: str, *, field: str) -> None:
+    """Validate a sha256 digest string and reject placeholders."""
+    if not digest:
+        raise ToolchainLoadError(f"{field} must be set in lock file")
+    if _is_placeholder_digest(digest):
+        raise ToolchainLoadError(f"{field} must be resolved (not placeholder)")
+    if not _DIGEST_PATTERN.match(str(digest)):
+        raise ToolchainLoadError(f"{field} must be a sha256: 64-hex digest")
+
+
+def _parse_docker_ref(docker_ref: str) -> tuple[str, str]:
+    """Parse docker_ref into (image_base, digest) and validate digest."""
+    if "@sha256:" not in docker_ref:
+        raise ToolchainLoadError("docker_ref must include sha256 digest")
+    image_base, digest = docker_ref.split("@", 1)
+    _validate_digest(digest, field="docker_ref")
+    return image_base, digest
+
+
 def compute_toolchain_hash(lock_data: dict[str, Any]) -> str:
     """Compute SHA256 hash from canonical JSON representation of lock data.
 
@@ -153,21 +192,22 @@ def _parse_lock_data(lock_data: dict[str, Any]) -> ToolchainConfig:
 
     docker_image = lock_data["docker_image"]
     docker_digest = lock_data["docker_digest"]
+    docker_ref = lock_data.get("docker_ref")
 
-    if not docker_digest:
-        raise ToolchainLoadError("docker_digest must be set in lock file")
-
-    if "PLACEHOLDER" in str(docker_digest).upper():
-        raise ToolchainLoadError("docker_digest must be resolved (not PLACEHOLDER)")
-
-    if not re.match(r"^sha256:[0-9a-f]{64}$", docker_digest):
-        raise ToolchainLoadError("docker_digest must be a sha256: 64-hex digest")
+    _validate_digest(docker_digest, field="docker_digest")
 
     if "@sha256:" in docker_image:
         image_base, embedded_digest = docker_image.split("@", 1)
         if embedded_digest != docker_digest:
             raise ToolchainLoadError("docker_image digest does not match docker_digest")
         docker_image = image_base
+
+    if docker_ref:
+        ref_base, ref_digest = _parse_docker_ref(docker_ref)
+        if ref_digest != docker_digest:
+            raise ToolchainLoadError("docker_ref digest does not match docker_digest")
+        if ref_base != docker_image:
+            raise ToolchainLoadError("docker_ref does not match docker_image")
 
     # Compute hash from lock data
     toolchain_hash = compute_toolchain_hash(lock_data)

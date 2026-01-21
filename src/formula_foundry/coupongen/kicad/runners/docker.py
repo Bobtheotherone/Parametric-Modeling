@@ -27,6 +27,41 @@ if TYPE_CHECKING:
 # Default path to the toolchain lock file
 DEFAULT_LOCK_FILE = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "toolchain" / "kicad.lock.json"
 
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PLACEHOLDER_HEX = {
+    "0" * 64,
+    "0" * 63 + "1",
+}
+
+
+def _is_placeholder_digest(digest: str) -> bool:
+    digest_text = str(digest)
+    upper = digest_text.upper()
+    if "PLACEHOLDER" in upper or "UNKNOWN" in upper:
+        return True
+    if digest_text.startswith("sha256:"):
+        hex_part = digest_text.split("sha256:", 1)[1]
+        if hex_part in _PLACEHOLDER_HEX:
+            return True
+    return False
+
+
+def _validate_digest(digest: str, *, field: str) -> None:
+    if not digest:
+        raise ValueError(f"{field} missing from toolchain lock file")
+    if _is_placeholder_digest(digest):
+        raise ValueError(f"{field} is a placeholder; run tools/pin_kicad_image.py")
+    if not _DIGEST_PATTERN.match(str(digest)):
+        raise ValueError(f"{field} must be a sha256: 64-hex digest")
+
+
+def _parse_docker_ref(docker_ref: str) -> tuple[str, str]:
+    if "@sha256:" not in docker_ref:
+        raise ValueError("docker_ref must include sha256 digest")
+    image_base, digest = docker_ref.split("@", 1)
+    _validate_digest(digest, field="docker_ref")
+    return image_base, digest
+
 
 def load_docker_image_ref(lock_file: Path | None = None) -> str:
     """Load the pinned Docker image reference from the toolchain lock file.
@@ -52,6 +87,7 @@ def load_docker_image_ref(lock_file: Path | None = None) -> str:
 
     docker_image = lock_data.get("docker_image")
     docker_digest = lock_data.get("docker_digest")
+    docker_ref = lock_data.get("docker_ref")
 
     if not docker_image:
         raise ValueError(f"docker_image not found in {lock_file}")
@@ -64,14 +100,14 @@ def load_docker_image_ref(lock_file: Path | None = None) -> str:
     if embedded_digest and docker_digest and embedded_digest != docker_digest:
         raise ValueError("docker_image digest does not match docker_digest")
 
-    if not docker_digest:
-        raise ValueError("docker_digest missing from toolchain lock file")
+    _validate_digest(docker_digest, field="docker_digest")
 
-    if "PLACEHOLDER" in str(docker_digest).upper():
-        raise ValueError("docker_digest is a placeholder; run tools/pin_kicad_image.py")
-
-    if not re.match(r"^sha256:[0-9a-f]{64}$", docker_digest):
-        raise ValueError("docker_digest must be a sha256: 64-hex digest")
+    if docker_ref:
+        ref_base, ref_digest = _parse_docker_ref(docker_ref)
+        if ref_digest != docker_digest:
+            raise ValueError("docker_ref digest does not match docker_digest")
+        if ref_base != image_base:
+            raise ValueError("docker_ref does not match docker_image")
 
     return f"{image_base}@{docker_digest}"
 

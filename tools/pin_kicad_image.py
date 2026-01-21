@@ -21,6 +21,26 @@ from pathlib import Path
 from typing import Optional
 
 
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_PLACEHOLDER_HEX = {
+    "0" * 64,
+    "0" * 63 + "1",
+}
+
+
+def is_placeholder_digest(digest: str) -> bool:
+    """Return True if digest is an explicit placeholder value."""
+    digest_text = str(digest)
+    upper = digest_text.upper()
+    if "PLACEHOLDER" in upper or "UNKNOWN" in upper:
+        return True
+    if digest_text.startswith("sha256:"):
+        hex_part = digest_text.split("sha256:", 1)[1]
+        if hex_part in _PLACEHOLDER_HEX:
+            return True
+    return False
+
+
 def get_dockerhub_token(repository: str) -> str:
     """Get an anonymous auth token from DockerHub."""
     url = f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repository}:pull"
@@ -107,17 +127,18 @@ def main():
         print("Error: Could not resolve image digest", file=sys.stderr)
         sys.exit(1)
 
-    if "PLACEHOLDER" in digest.upper():
+    if is_placeholder_digest(digest):
         print("Error: Digest resolved to placeholder value", file=sys.stderr)
         sys.exit(1)
 
-    if not re.match(r"^sha256:[0-9a-f]{64}$", digest):
+    if not _DIGEST_PATTERN.match(digest):
         print(f"Error: Digest has unexpected format: {digest}", file=sys.stderr)
         sys.exit(1)
 
     # Update lock data
     lock_data["docker_digest"] = digest
     lock_data["docker_image"] = f"{repository}:{tag}"
+    lock_data["docker_ref"] = f"{repository}:{tag}@{digest}"
 
     # Compute toolchain hash
     toolchain_hash = compute_toolchain_hash(lock_data)
