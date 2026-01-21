@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +171,24 @@ def _extract_manifest_excerpt(manifest: dict[str, Any] | None) -> dict[str, Any]
     return excerpt
 
 
+def _resolve_generated_at(
+    verify_env: dict[str, Any] | None,
+    audit_report: dict[str, Any] | None,
+    verify_dir: Path | None,
+) -> str:
+    if verify_env:
+        timestamp = verify_env.get("timestamp_utc") or verify_env.get("run_id")
+        if timestamp:
+            return str(timestamp)
+    if audit_report:
+        timestamp = audit_report.get("timestamp")
+        if timestamp:
+            return str(timestamp)
+    if verify_dir:
+        return verify_dir.name
+    return "unknown"
+
+
 def _render_verify_table(results: list[dict[str, Any]]) -> list[str]:
     lines = [
         "| Gate | Status | Note |",
@@ -211,6 +228,8 @@ def build_report(
     *,
     project_root: Path,
     verify_dir: Path | None,
+    verify_env: dict[str, Any] | None,
+    verify_env_path: Path | None,
     verify_results: dict[str, Any] | None,
     verify_results_path: Path | None,
     audit_report: dict[str, Any] | None,
@@ -222,7 +241,7 @@ def build_report(
     toolchain_lock: dict[str, Any] | None,
     toolchain_lock_path: Path | None,
 ) -> str:
-    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    generated_at = _resolve_generated_at(verify_env, audit_report, verify_dir)
     verify_run_id = verify_dir.name if verify_dir else "unknown"
 
     lines: list[str] = [
@@ -233,6 +252,7 @@ def build_report(
         f"Verify run: {verify_run_id}",
         "",
         "## Inputs",
+        f"- verify_env: {_format_path(verify_env_path, project_root)}",
         f"- verify_results: {_format_path(verify_results_path, project_root)}",
         f"- audit_report: {_format_path(audit_report_path, project_root)}",
         f"- manifest: {_format_path(manifest_path, project_root)}",
@@ -317,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
     verify_dir = _resolve_verify_dir(project_root, args.verify_dir or None, args.verify_run or None)
     verify_results_path = verify_dir / "results.json" if verify_dir else None
     verify_results = _load_json(verify_results_path) if verify_results_path and verify_results_path.exists() else None
+    verify_env_path = verify_dir / "env.json" if verify_dir else None
+    verify_env = _load_json(verify_env_path) if verify_env_path and verify_env_path.exists() else None
 
     audit_report_path = _resolve_path(project_root, args.audit_report or None)
     if audit_report_path is None:
@@ -344,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     report_text = build_report(
         project_root=project_root,
         verify_dir=verify_dir,
+        verify_env=verify_env,
+        verify_env_path=verify_env_path,
         verify_results=verify_results,
         verify_results_path=verify_results_path,
         audit_report=audit_report,
