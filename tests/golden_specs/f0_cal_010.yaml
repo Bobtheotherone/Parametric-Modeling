@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 fab_profile:
   id: pcbway
@@ -47,7 +47,7 @@ transmission_line:
   type: CPWG
   layer: F.Cu
   w_nm: "175 um"
-  gap_nm: "125 um"
+  gap_nm: "127 um"
   length_left_nm: "11 mm"
   length_right_nm: "11 mm"
 

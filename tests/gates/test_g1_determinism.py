@@ -158,8 +158,8 @@ class TestG1ResolverDeterminism:
         committed golden hashes.
         """
         for spec_path in golden_specs:
-            # Golden hashes use JSON filename as key
-            key = spec_path.with_suffix(".json").name
+            # Golden hashes use the actual spec filename as key (e.g., f0_cal_001.yaml)
+            key = spec_path.name
 
             if key not in golden_hashes:
                 pytest.skip(f"No golden hash for {key}")

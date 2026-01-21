@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 fab_profile:
   id: oshpark_4layer

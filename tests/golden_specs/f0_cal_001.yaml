@@ -1,5 +1,5 @@
 # Golden spec F0-001: Baseline F0 calibration thru line
-# Parameters: 150um trace width, 100um gap, 10mm length per side
+# Parameters: 150um trace width, 127um gap (OSH Park 5mil min), 10mm length per side
 schema_version: 1
 coupon_family: F0_CAL_THRU_LINE
 units: nm
@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 fab_profile:
   id: oshpark_4layer
@@ -47,7 +47,7 @@ transmission_line:
   type: CPWG
   layer: F.Cu
   w_nm: "150 um"
-  gap_nm: "100 um"
+  gap_nm: "127 um"
   length_left_nm: "10 mm"
   length_right_nm: "10 mm"
 

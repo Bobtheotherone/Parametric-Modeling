@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
 
 fab_profile:
   id: oshpark_4layer
@@ -47,7 +47,7 @@ transmission_line:
   type: CPWG
   layer: F.Cu
   w_nm: "150 um"
-  gap_nm: "100 um"
+  gap_nm: "127 um"
   # CP-2.2: For symmetric layout with connectors at 1mm and 29mm (28mm span),
   # set length_left = 14mm so discontinuity is at 15mm (center).
   # Derived length_right = 29mm - 15mm = 14mm (symmetric).

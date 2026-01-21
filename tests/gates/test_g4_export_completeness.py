@@ -111,6 +111,9 @@ class _FakeExportRunner:
         self.gerber_calls.append((board_path, out_dir))
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Get board name prefix from board_path (e.g., "coupon" from "coupon.kicad_pcb")
+        board_name = board_path.stem
+
         # Generate copper layers based on copper_layers setting
         copper_layer_names = ["F.Cu", "B.Cu"]
         if self.copper_layers >= 4:
@@ -119,21 +122,22 @@ class _FakeExportRunner:
             copper_layer_names = ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"]
 
         layers = [
-            *[(f"{layer}.gbr", f"G04 {layer}*") for layer in copper_layer_names],
-            ("F.SilkS.gbr", "G04 Top Silkscreen*"),
-            ("B.SilkS.gbr", "G04 Bottom Silkscreen*"),
-            ("F.Mask.gbr", "G04 Top Soldermask*"),
-            ("B.Mask.gbr", "G04 Bottom Soldermask*"),
-            ("Edge.Cuts.gbr", "G04 Board Outline*"),
+            *[(layer, f"G04 {layer}*") for layer in copper_layer_names],
+            ("F.SilkS", "G04 Top Silkscreen*"),
+            ("B.SilkS", "G04 Bottom Silkscreen*"),
+            ("F.Mask", "G04 Top Soldermask*"),
+            ("B.Mask", "G04 Bottom Soldermask*"),
+            ("Edge.Cuts", "G04 Board Outline*"),
         ]
 
-        for filename, content_start in layers:
+        for layer_name, content_start in layers:
             content_hash = hashlib.sha256(
-                f"{self.seed}:{filename}".encode()
+                f"{self.seed}:{layer_name}".encode()
             ).hexdigest()[:8]
             content = f"{content_start}\nG04 Hash={content_hash}*\nX0Y0D02*\nM02*\n"
-            # Convert layer name to KiCad filename format
-            kicad_filename = filename.replace(".", "_").replace("_gbr", ".gbr")
+            # Convert layer name to KiCad filename format: board-F_Cu.gbr
+            kicad_layer = layer_name.replace(".", "_")
+            kicad_filename = f"{board_name}-{kicad_layer}.gbr"
             (out_dir / kicad_filename).write_text(content, encoding="utf-8")
 
         return subprocess.CompletedProcess(
