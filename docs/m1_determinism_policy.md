@@ -1,6 +1,6 @@
 # M1 Determinism Policy
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-21
 **Satisfies:** CP-5.1, CP-5.2, D5, D6 (ECO-M1-ALIGN-0002)
 
 This document specifies the determinism requirements for M1 compliance in the parametric coupon generation pipeline. It ensures that identical inputs produce identical, verifiable outputs suitable for physics dataset generation and symbolic discovery.
@@ -142,7 +142,51 @@ This provides:
 
 ---
 
-## 5. Determinism Gates
+## 5. Determinism Envelope
+
+The **determinism envelope** defines the scope and boundaries within which bit-for-bit reproducibility is guaranteed.
+
+### 5.1 What Is Inside the Envelope
+
+**Full determinism is guaranteed when:**
+- Same `CouponSpec` input parameters
+- Same pinned KiCad Docker image (by SHA256 digest)
+- Same `toolchain_hash` value
+- Build executed on any Linux x86_64 host with Docker support
+
+**Deterministic outputs include:**
+- `resolved_design.json` (identical `design_hash`)
+- `manifest.json` structure (excluding lineage fields)
+- Canonicalized Gerber files (identical hashes)
+- Canonicalized drill files (identical hashes)
+- Canonicalized DRC reports (identical hashes)
+- Constraint proof results (pass/fail, margins)
+
+### 5.2 What Is Outside the Envelope
+
+**Intentionally non-deterministic (lineage fields):**
+- `lineage.timestamp_utc` — build timestamp varies per run
+- `lineage.git_sha` — may differ if source changes
+- Raw file timestamps embedded by KiCad — stripped during canonicalization
+
+**Environment-dependent (excluded from hashes):**
+- Absolute file paths in DRC reports
+- Host-specific environment variables
+- Docker container runtime IDs
+
+### 5.3 Envelope Boundaries
+
+| Boundary | Inside Envelope | Outside Envelope |
+|----------|-----------------|------------------|
+| Design parameters | `design_hash` (canonical) | N/A |
+| Toolchain | `toolchain_hash` (pinned) | Different KiCad versions |
+| Timestamps | Excluded from hashes | `lineage.timestamp_utc` |
+| File paths | Normalized to basename | Absolute paths |
+| Git SHA | Excluded from `design_hash` | `lineage.git_sha` |
+
+---
+
+## 6. Determinism Gates
 
 M1 compliance is verified through these determinism gates:
 
@@ -154,7 +198,7 @@ M1 compliance is verified through these determinism gates:
 | G4 | Export completeness | All expected layers present |
 | G5 | Hash stability | 3 consecutive runs produce identical hashes |
 
-### 5.1 Gate Failure Handling
+### 6.1 Gate Failure Handling
 
 - **G1 Failure**: Investigate non-canonical JSON serialization or floating-point rounding
 - **G2 Failure**: Review constraint engine for missing evaluations
@@ -164,9 +208,9 @@ M1 compliance is verified through these determinism gates:
 
 ---
 
-## 6. Canonicalization Algorithms
+## 7. Canonicalization Algorithms
 
-### 6.1 Canonical JSON
+### 7.1 Canonical JSON
 
 All JSON hashing uses canonical representation:
 - Keys sorted alphabetically (recursive)
@@ -176,7 +220,7 @@ All JSON hashing uses canonical representation:
 
 Implementation: `formula_foundry.substrate.canonical_json_dumps()`
 
-### 6.2 KiCad Board Canonicalization
+### 7.2 KiCad Board Canonicalization
 
 ```
 1. Remove (tstamp ...) patterns
@@ -185,7 +229,7 @@ Implementation: `formula_foundry.substrate.canonical_json_dumps()`
 4. Normalize CR → LF
 ```
 
-### 6.3 Gerber Canonicalization
+### 7.3 Gerber Canonicalization
 
 ```
 1. Remove G04 comment lines
@@ -194,7 +238,7 @@ Implementation: `formula_foundry.substrate.canonical_json_dumps()`
 4. Trim trailing whitespace per line
 ```
 
-### 6.4 DRC JSON Canonicalization
+### 7.4 DRC JSON Canonicalization
 
 ```
 1. Remove date, time, timestamp keys
@@ -206,7 +250,7 @@ Implementation: `formula_foundry.substrate.canonical_json_dumps()`
 
 ---
 
-## 7. Implementation References
+## 8. Implementation References
 
 | Component | Location |
 |-----------|----------|
@@ -218,7 +262,7 @@ Implementation: `formula_foundry.substrate.canonical_json_dumps()`
 
 ---
 
-## 8. References
+## 9. References
 
 - ECO-M1-ALIGN-0002: Engineering Change Order for M1 compliance
 - docs/DETERMINISM_POLICY.md: General determinism policy
