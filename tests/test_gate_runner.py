@@ -26,6 +26,7 @@ from formula_foundry.coupongen.gate_runner import (
     compute_gate_status,
     parse_gates,
     parse_junit_xml,
+    run_gates,
 )
 
 
@@ -388,3 +389,232 @@ class TestMarkerDeclaration:
         # Check all gate markers are declared
         for gate_id, marker in GATES.items():
             assert marker in content, f"Marker {marker} for {gate_id} not declared in pyproject.toml"
+
+
+class TestArtifactPath:
+    """Tests for artifact path computation."""
+
+    def test_compute_artifact_path_default_root(self) -> None:
+        """compute_artifact_path uses default artifacts root."""
+        from formula_foundry.coupongen.gate_runner import compute_artifact_path
+
+        design_hash = "abcd1234567890ef"
+        path = compute_artifact_path(design_hash)
+
+        assert path.name == "audit_report.json"
+        assert path.parent.name == design_hash
+        assert path.parent.parent.name == "audit_m1"
+        assert "artifacts" in str(path)
+
+    def test_compute_artifact_path_custom_root(self, tmp_path: Path) -> None:
+        """compute_artifact_path uses custom artifacts root."""
+        from formula_foundry.coupongen.gate_runner import compute_artifact_path
+
+        design_hash = "test_hash_123"
+        path = compute_artifact_path(design_hash, artifact_root=tmp_path)
+
+        expected = tmp_path / "audit_m1" / design_hash / "audit_report.json"
+        assert path == expected
+
+
+class TestSubprocessMocking:
+    """Tests for gate runner with subprocess mocking.
+
+    These tests verify report structure without actually running pytest.
+    """
+
+    def test_run_gates_mocked_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test run_gates with mocked subprocess returning success."""
+        from unittest.mock import MagicMock
+        from formula_foundry.coupongen.gate_runner import run_gates
+
+        # Create mock JUnit XML
+        junit_xml_path = tmp_path / "junit.xml"
+        junit_content = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="pytest" tests="3" errors="0" failures="0" skipped="0">
+    <testcase classname="test_g1" name="test_determinism" time="0.1"/>
+    <testcase classname="test_g2" name="test_constraints" time="0.2"/>
+    <testcase classname="test_g3" name="test_drc" time="0.3"/>
+</testsuite>
+"""
+        junit_xml_path.write_text(junit_content)
+
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "3 passed"
+        mock_result.stderr = ""
+
+        import subprocess
+        original_run = subprocess.run
+
+        def mock_subprocess_run(cmd, **kwargs):
+            # Write the JUnit XML to the specified path
+            for i, arg in enumerate(cmd):
+                if isinstance(arg, str) and arg.startswith("--junit-xml="):
+                    path = Path(arg.split("=", 1)[1])
+                    path.write_text(junit_content)
+                    break
+            return mock_result
+
+        monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
+        # Run gates with mocked subprocess
+        return_code, result_xml = run_gates(
+            gates=["G1", "G2", "G3"],
+            test_dir=tmp_path,
+            verbose=False,
+        )
+
+        assert return_code == 0
+        assert result_xml is not None
+        assert result_xml.exists()
+
+    def test_run_gates_mocked_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test run_gates with mocked subprocess returning failure."""
+        from unittest.mock import MagicMock
+        from formula_foundry.coupongen.gate_runner import run_gates
+
+        junit_content = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="pytest" tests="2" errors="0" failures="1" skipped="0">
+    <testcase classname="test_g1" name="test_pass" time="0.1"/>
+    <testcase classname="test_g1" name="test_fail" time="0.2">
+        <failure message="assertion failed">AssertionError</failure>
+    </testcase>
+</testsuite>
+"""
+
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = "1 passed, 1 failed"
+        mock_result.stderr = ""
+
+        import subprocess
+
+        def mock_subprocess_run(cmd, **kwargs):
+            for arg in cmd:
+                if isinstance(arg, str) and arg.startswith("--junit-xml="):
+                    path = Path(arg.split("=", 1)[1])
+                    path.write_text(junit_content)
+                    break
+            return mock_result
+
+        monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
+        return_code, result_xml = run_gates(
+            gates=["G1"],
+            test_dir=tmp_path,
+            verbose=False,
+        )
+
+        assert return_code == 1
+        assert result_xml is not None
+
+    def test_report_structure_with_mocked_results(self, tmp_path: Path) -> None:
+        """Test audit report structure with mocked JUnit results."""
+        junit_results = {
+            "tests": [
+                {"classname": "test_g1", "name": "test_a", "status": "passed", "time": 0.1},
+                {"classname": "test_g1", "name": "test_b", "status": "passed", "time": 0.2},
+                {"classname": "test_g2", "name": "test_c", "status": "failed", "message": "error"},
+                {"classname": "test_g3", "name": "test_d", "status": "skipped"},
+            ],
+            "summary": {
+                "total": 4,
+                "passed": 2,
+                "failed": 1,
+                "skipped": 1,
+                "errors": 0,
+            },
+        }
+
+        report = build_audit_report(
+            gates_requested=["G1", "G2", "G3"],
+            junit_results=junit_results,
+            return_code=1,
+            junit_xml_path=tmp_path / "junit.xml",
+        )
+
+        # Verify required report structure
+        assert "schema_version" in report
+        assert report["schema_version"] == "1.0.0"
+        assert "timestamp" in report
+        assert "gates_requested" in report
+        assert report["gates_requested"] == ["G1", "G2", "G3"]
+        assert "overall_status" in report
+        assert report["overall_status"] == "failed"  # G2 failed
+        assert "pytest_returncode" in report
+        assert report["pytest_returncode"] == 1
+        assert "summary" in report
+        assert "gates" in report
+
+        # Verify gate structure
+        for gate_id in ["G1", "G2", "G3"]:
+            assert gate_id in report["gates"]
+            gate = report["gates"][gate_id]
+            assert "description" in gate
+            assert "marker" in gate
+            assert "status" in gate
+            assert "tests_count" in gate
+            assert "passed" in gate
+            assert "failed" in gate
+            assert "skipped" in gate
+            assert "tests" in gate
+
+        # Verify G1 passed (both tests passed)
+        assert report["gates"]["G1"]["status"] == "passed"
+        assert report["gates"]["G1"]["passed"] == 2
+
+        # Verify G2 failed
+        assert report["gates"]["G2"]["status"] == "failed"
+        assert report["gates"]["G2"]["failed"] == 1
+
+        # Verify G3 skipped
+        assert report["gates"]["G3"]["status"] == "skipped"
+
+    def test_report_with_design_hash_artifact_structure(self, tmp_path: Path) -> None:
+        """Test that report with design_hash creates proper artifact structure."""
+        from formula_foundry.coupongen.gate_runner import compute_artifact_path
+
+        design_hash = "abc123def456"
+        artifact_root = tmp_path / "artifacts"
+
+        output_path = compute_artifact_path(design_hash, artifact_root=artifact_root)
+
+        expected_path = artifact_root / "audit_m1" / design_hash / "audit_report.json"
+        assert output_path == expected_path
+
+        # Verify structure
+        assert output_path.parent.name == design_hash
+        assert output_path.parent.parent.name == "audit_m1"
+
+    def test_report_json_serialization(self) -> None:
+        """Test that report is properly JSON serializable."""
+        junit_results = {
+            "tests": [
+                {"classname": "test_g1", "name": "test_a", "status": "passed"},
+            ],
+            "summary": {"total": 1, "passed": 1, "failed": 0, "skipped": 0, "errors": 0},
+        }
+
+        report = build_audit_report(
+            gates_requested=["G1", "G2", "G3", "G4", "G5"],
+            junit_results=junit_results,
+            return_code=0,
+        )
+
+        # Serialize to JSON
+        json_str = json.dumps(report, indent=2, sort_keys=True)
+
+        # Parse back
+        parsed = json.loads(json_str)
+
+        # Verify round-trip
+        assert parsed["gates_requested"] == ["G1", "G2", "G3", "G4", "G5"]
+        assert parsed["overall_status"] in ("passed", "failed", "partial")
+        assert "summary" in parsed
+        assert "gates" in parsed
+
+        # All gates should be present
+        for gate_id in ["G1", "G2", "G3", "G4", "G5"]:
+            assert gate_id in parsed["gates"]
