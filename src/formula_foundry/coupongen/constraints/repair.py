@@ -975,6 +975,36 @@ class RepairEngine:
                         "T2_RETURN_VIA_RING_RADIUS",
                     )
 
+        # Discontinuity copper-to-edge clearance (X direction)
+        # Ensure board length accommodates signal/return vias near the right edge.
+        disc = payload.get("discontinuity")
+        connectors = payload.get("connectors", {})
+        left_conn = connectors.get("left", {})
+        left_pos = left_conn.get("position_nm", [])
+        tl = payload.get("transmission_line", {})
+        if disc is not None and len(left_pos) >= 1 and "length_left_nm" in tl:
+            x_disc = int(left_pos[0]) + int(tl.get("length_left_nm", 0))
+            signal_pad_radius = int(disc["signal_via"]["pad_diameter_nm"]) // 2
+            required_length = x_disc + signal_pad_radius + min_edge_clearance
+            constraint_id = "T3_VIA_COPPER_TO_RIGHT_EDGE"
+
+            if disc.get("return_vias") is not None:
+                return_ring_radius = int(disc["return_vias"]["radius_nm"])
+                return_via_radius = int(disc["return_vias"]["via"]["diameter_nm"]) // 2
+                return_extent = return_ring_radius + return_via_radius
+                required_length = max(required_length, x_disc + return_extent + min_edge_clearance)
+                constraint_id = "T3_RETURN_VIA_COPPER_TO_EDGE_X"
+
+            if board_length < required_length:
+                payload["board"]["outline"]["length_nm"] = self._record(
+                    "board.outline.length_nm",
+                    board_length,
+                    required_length,
+                    f"Board length {board_length}nm extended to {required_length}nm for discontinuity edge clearance",
+                    constraint_id,
+                )
+                board_length = required_length
+
         # Ground via fence spacing
         fence = payload["transmission_line"].get("ground_via_fence")
         if fence is not None and fence.get("enabled", False):
