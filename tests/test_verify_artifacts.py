@@ -19,17 +19,21 @@ def test_verify_writes_failure_artifacts(
 ) -> None:
     _write_design_doc(tmp_path / "DESIGN_DOCUMENT.md", "M1")
 
-    def fake_run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> verify.GateResult:
-        return verify.GateResult(
-            name="fake",
-            passed=False,
-            cmd=cmd,
-            stdout="gate-stdout",
-            stderr="gate-stderr",
-            note="rc=2",
-        )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "drc.json").write_text('{"violations": []}', encoding="utf-8")
 
-    monkeypatch.setattr(verify, "_run", fake_run)
+    def fake_run(
+        cmd: list[str],
+        cwd: str,
+        text: bool,
+        capture_output: bool,
+        timeout: float | None,
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 2, stdout="gate-stdout", stderr="gate-stderr")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
     rc = verify.main(
         [
@@ -51,6 +55,9 @@ def test_verify_writes_failure_artifacts(
     assert len(run_dirs) == 1
     run_dir = run_dirs[0]
 
+    tmp_dir = run_dir / "tmp"
+    assert tmp_dir.exists()
+
     logs_dir = run_dir / "logs"
     assert (logs_dir / "spec_lint.stdout.log").read_text(encoding="utf-8") == "gate-stdout"
     assert (logs_dir / "spec_lint.stderr.log").read_text(encoding="utf-8") == "gate-stderr"
@@ -58,12 +65,19 @@ def test_verify_writes_failure_artifacts(
     verify_log = (run_dir / "verify.log").read_text(encoding="utf-8")
     assert "gate-stdout" in verify_log
     assert "gate-stderr" in verify_log
+    assert "cmd:" in verify_log
+    assert "tools.spec_lint" in verify_log
+
+    raw_drc = run_dir / "failures" / "raw" / "out" / "drc.json"
+    assert raw_drc.exists()
+    assert raw_drc.read_text(encoding="utf-8") == '{"violations": []}'
 
     failure_path = run_dir / "failures" / "spec_lint.json"
     assert failure_path.exists()
     failure_payload = json.loads(failure_path.read_text(encoding="utf-8"))
     assert failure_payload["name"] == "spec_lint"
     assert failure_payload["note"] == "rc=2"
+    assert failure_payload["cmd_str"]
 
 
 def test_run_injects_deterministic_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -97,4 +111,5 @@ def test_run_injects_deterministic_env(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert env.get("TMPDIR") == expected_tmp
     assert env.get("TEMP") == expected_tmp
     assert env.get("TMP") == expected_tmp
+    assert artifacts.tmp_dir == artifacts.run_dir / "tmp"
     assert artifacts.tmp_dir.exists()

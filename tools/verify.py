@@ -55,8 +55,8 @@ class GateResult:
 
 DEFAULT_M0_GATE_TIMEOUT_S = 90
 DETERMINISTIC_ENV = {
-    "LC_ALL": "C",
-    "LANG": "C",
+    "LC_ALL": "UTC",
+    "LANG": "UTC",
     "TZ": "UTC",
     "PYTHONHASHSEED": "0",
     "FF_MAX_KICAD_JOBS": "1",
@@ -203,7 +203,8 @@ def _init_verify_artifacts(project_root: Path) -> VerifyArtifacts:
     run_dir.mkdir(parents=True, exist_ok=True)
     logs_dir.mkdir(parents=True, exist_ok=True)
     failures_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir = Path(tempfile.mkdtemp(prefix="tmp-", dir=run_dir))
+    tmp_dir = run_dir / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     return VerifyArtifacts(
         run_id=run_id,
         run_dir=run_dir,
@@ -531,6 +532,7 @@ def _write_verify_artifacts(
             failure_payload = {
                 "name": result.name,
                 "cmd": result.cmd,
+                "cmd_str": _format_cmd(result.cmd),
                 "note": result.note,
                 "returncode": result.returncode,
                 "stdout_path": str(stdout_path.relative_to(artifacts.run_dir)),
@@ -547,6 +549,13 @@ def _write_verify_artifacts(
         for artifact in captured:
             dest_rel = artifact.dest.relative_to(artifacts.run_dir)
             log_lines.append(f"  - {artifact.kind}: {dest_rel}")
+        log_lines.append("")
+
+    failed_gates = [result.name for result in results if not result.passed]
+    if failed_gates:
+        log_lines.append("failed_gates:")
+        for gate in failed_gates:
+            log_lines.append(f"  - {gate}")
         log_lines.append("")
 
     verify_log_path = artifacts.run_dir / "verify.log"
@@ -603,14 +612,18 @@ def main(argv: list[str] | None = None) -> int:
         results.append(_gate_git_guard(project_root, strict=args.strict_git))
 
     required_failures = [r for r in results if not r.passed]
+    failed_gates = [r.name for r in required_failures]
 
     payload: dict[str, Any] = {
         "ok": len(required_failures) == 0,
+        "failed_gates": failed_gates,
+        "first_failed_gate": failed_gates[0] if failed_gates else "",
         "results": [
             {
                 "name": r.name,
                 "passed": r.passed,
                 "cmd": r.cmd,
+                "cmd_str": _format_cmd(r.cmd),
                 "returncode": r.returncode,
                 "note": r.note,
                 "stdout": r.stdout[-20000:],
