@@ -151,5 +151,9 @@ def test_report_generation(tmp_path: Path) -> None:
 
     assert "spec_lint" in content
     assert "G1" in content
+    assert "- manifest: artifacts/sample_run/manifest.json" in content
+    assert "- drc_report: artifacts/sample_run/drc.json" in content
     assert "kicad/kicad:9.0.7@sha256:deadbeef" in content
+    assert "lock.kicad_version: 9.0.7" in content
+    assert "lock.docker_digest: sha256:deadbeef" in content
     assert "design_hash" in content
