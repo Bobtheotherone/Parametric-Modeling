@@ -482,6 +482,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip printing human-readable summary",
     )
+    run_parser.add_argument(
+        "--design-hash",
+        type=str,
+        default=None,
+        help="Design hash for artifact directory structure (artifacts/audit_m1/<design_hash>/)",
+    )
+    run_parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        default=None,
+        help="Override artifacts root directory (default: repo_root/artifacts)",
+    )
 
     # list subcommand
     list_parser = subparsers.add_parser(
@@ -524,6 +536,26 @@ def cmd_list() -> int:
     return 0
 
 
+def compute_artifact_path(design_hash: str, artifact_root: Path | None = None) -> Path:
+    """Compute the artifact path for a given design hash.
+
+    Per ECO-M1-ALIGN-0001, audit reports are stored at:
+        artifacts/audit_m1/<design_hash>/audit_report.json
+
+    Args:
+        design_hash: The design hash to use as directory name
+        artifact_root: Override the artifacts root directory (default: repo_root/artifacts)
+
+    Returns:
+        Path to the audit_report.json file
+    """
+    if artifact_root is None:
+        repo_root = Path(__file__).resolve().parents[4]
+        artifact_root = repo_root / "artifacts"
+
+    return artifact_root / "audit_m1" / design_hash / "audit_report.json"
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Handle 'run' subcommand."""
     # Parse gates
@@ -562,19 +594,41 @@ def cmd_run(args: argparse.Namespace) -> int:
         junit_xml_path=junit_xml,
     )
 
+    # Add design_hash to report if provided
+    design_hash = getattr(args, "design_hash", None)
+    if design_hash:
+        report["design_hash"] = design_hash
+
+    # Determine output path
+    output_path = args.output
+    if output_path is None and design_hash:
+        # Use artifact path structure when design_hash is provided
+        output_path = compute_artifact_path(design_hash, args.artifact_root)
+
     # Output report
     report_json = json.dumps(report, indent=2, sort_keys=True)
 
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(report_json, encoding="utf-8")
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(report_json, encoding="utf-8")
         if args.verbose:
-            print(f"Audit report written to: {args.output}")
+            print(f"Audit report written to: {output_path}")
+
+        # Also write JUnit XML to artifact directory if using artifact structure
+        if design_hash and junit_xml and junit_xml.exists():
+            artifact_junit_path = output_path.parent / "junit.xml"
+            artifact_junit_path.write_bytes(junit_xml.read_bytes())
+            report["artifact_paths"] = {
+                "audit_report": str(output_path),
+                "junit_xml": str(artifact_junit_path),
+            }
+            # Re-write report with artifact paths
+            output_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
     else:
         print(report_json)
 
     # Print summary unless disabled
-    if not args.no_summary and args.output:
+    if not args.no_summary and output_path:
         print_summary(report, verbose=args.verbose)
 
     # Return non-zero if any gates failed
