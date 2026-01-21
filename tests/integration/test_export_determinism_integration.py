@@ -635,8 +635,8 @@ class TestLayerSetValidation:
         """
         # Import layer_validation module
         from formula_foundry.coupongen.layer_validation import (
-            validate_layer_set,
             LayerSetValidationError,
+            validate_layer_set,
         )
 
         # Find the spec file

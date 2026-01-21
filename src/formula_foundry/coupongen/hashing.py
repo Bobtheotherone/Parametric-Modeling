@@ -19,15 +19,13 @@ from __future__ import annotations
 
 import base64
 
-from formula_foundry.substrate import sha256_bytes
-
 # Import authoritative canonicalization functions from kicad/canonicalize.py
 from .kicad.canonicalize import (
-    canonicalize_export,
-    canonicalize_kicad_pcb,
     canonical_hash_drc_json,
     canonical_hash_export,
     canonical_hash_kicad_pcb,
+    canonicalize_export,
+    canonicalize_kicad_pcb,
 )
 
 # Re-export for backward compatibility with existing module-level names

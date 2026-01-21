@@ -29,7 +29,7 @@ from .tiers import ConstraintResult, ConstraintTier, TierChecker, _bool_constrai
 if TYPE_CHECKING:
     from typing import Any
 
-    from ..geom.layout import LayoutPlan, PortPlan, SegmentPlan
+    from ..geom.layout import LayoutPlan
 
 
 class NodeType(Enum):
@@ -252,7 +252,7 @@ class ConnectivityOracle:
         return True, ""
 
 
-def build_oracle_from_layout(layout: "LayoutPlan", via_radius_nm: int = 0) -> ConnectivityOracle:
+def build_oracle_from_layout(layout: LayoutPlan, via_radius_nm: int = 0) -> ConnectivityOracle:
     """Build a connectivity oracle from a LayoutPlan.
 
     Extracts connectivity nodes from the layout plan:
@@ -362,7 +362,7 @@ def build_oracle_from_layout(layout: "LayoutPlan", via_radius_nm: int = 0) -> Co
 
 
 def check_layout_connectivity(
-    layout: "LayoutPlan",
+    layout: LayoutPlan,
     via_radius_nm: int = 0,
 ) -> tuple[bool, list[str]]:
     """Check connectivity of a LayoutPlan.
@@ -412,9 +412,9 @@ class ConnectivityChecker(TierChecker):
 
     def check(
         self,
-        spec: "Any",
+        spec: Any,
         fab_limits: dict[str, int],
-        resolved: "Any | None" = None,
+        resolved: Any | None = None,
     ) -> list[ConstraintResult]:
         """Check connectivity constraints.
 

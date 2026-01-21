@@ -19,7 +19,6 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 # Path to layer sets configuration
 LAYER_SETS_PATH = Path(__file__).resolve().parents[3] / "coupongen" / "layer_sets.json"
@@ -103,7 +102,7 @@ def get_layer_set_for_copper_count(copper_layers: int) -> LayerSetConfig:
     if key not in config["layer_sets"]:
         supported = sorted(
             int(k.replace("_layer", ""))
-            for k in config["layer_sets"].keys()
+            for k in config["layer_sets"]
         )
         raise ValueError(
             f"Unsupported copper layer count: {copper_layers}. "

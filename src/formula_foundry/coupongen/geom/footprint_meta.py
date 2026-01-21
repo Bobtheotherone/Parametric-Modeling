@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from ..paths import FOOTPRINT_META_DIR
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    pass
 
 __all__ = [
     "FootprintMeta",

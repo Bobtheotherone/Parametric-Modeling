@@ -20,13 +20,12 @@ from typing import Any
 import pytest
 
 from formula_foundry.coupongen import (
+    design_hash,
     load_spec,
     resolve,
-    design_hash,
     resolved_design_canonical_json,
 )
 from formula_foundry.substrate import sha256_bytes
-
 
 # ---------------------------------------------------------------------------
 # Test data paths

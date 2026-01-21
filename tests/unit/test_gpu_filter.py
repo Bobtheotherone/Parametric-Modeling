@@ -27,7 +27,6 @@ from formula_foundry.coupongen.constraints.gpu_filter import (
     is_gpu_available,
 )
 
-
 # ============================================================================
 # Test Fixtures
 # ============================================================================
@@ -555,8 +554,7 @@ class TestRepairDeterminism:
         feasible_mask = result.mask
         if feasible_mask.any():
             feasible_distances = result.repair_meta.repair_distances[feasible_mask]
-            # Already-feasible candidates shouldn't need repair
-            # (though they may still be repaired if initial check failed)
+            assert (feasible_distances == 0).all()
 
     def test_repair_count_consistency(
         self, default_fab_limits: dict[str, int]

@@ -27,7 +27,6 @@ from .kicad import BackendA, KicadCliRunner
 from .kicad.cli import KicadCliMode
 from .layer_validation import (
     LayerValidationResult,
-    layer_validation_payload,
     validate_family_layer_requirements,
     validate_layer_set,
 )

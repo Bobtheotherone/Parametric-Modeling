@@ -22,16 +22,16 @@ from .backend import (
 )
 from .canonicalize import (
     canonical_hash_board,
-    canonical_hash_drill,
     canonical_hash_drc_json,
+    canonical_hash_drill,
     canonical_hash_export,
     canonical_hash_file,
     canonical_hash_files,
     canonical_hash_gerber,
     canonical_hash_kicad_pcb,
     canonicalize_board,
-    canonicalize_drill,
     canonicalize_drc_json,
+    canonicalize_drill,
     canonicalize_export,
     canonicalize_gerber,
     canonicalize_kicad_pcb,

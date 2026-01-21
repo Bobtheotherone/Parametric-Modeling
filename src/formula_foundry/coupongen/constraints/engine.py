@@ -24,12 +24,11 @@ CP-3.1: Unified ConstraintEngine as single path for constraint validation
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 from .connectivity import ConnectivityChecker
 from .repair import (
     ConstraintProofDocument,
-    RepairEngine,
     RepairResult,
     generate_constraint_proof,
     repair_spec_tiered,
@@ -66,7 +65,7 @@ class ConstraintEngineResult:
         repair_result: Repair details if REPAIR mode was used and changes were made
     """
 
-    resolved: "ResolvedDesign"
+    resolved: ResolvedDesign
     proof: TieredConstraintProof
     repair_result: RepairResult | None = None
 
@@ -237,7 +236,7 @@ class ConstraintEngine:
     def _normalize_input(
         self,
         spec_or_resolved: SpecOrResolved,
-    ) -> tuple["CouponSpec", "ResolvedDesign"]:
+    ) -> tuple[CouponSpec, ResolvedDesign]:
         """Normalize input to (spec, resolved) tuple.
 
         Args:
@@ -247,7 +246,6 @@ class ConstraintEngine:
             Tuple of (CouponSpec, ResolvedDesign)
         """
         from ..resolve import ResolvedDesign, resolve
-        from ..spec import CouponSpec
 
         if isinstance(spec_or_resolved, ResolvedDesign):
             # Extract spec from resolved design - need to reconstruct

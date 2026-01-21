@@ -150,7 +150,10 @@ def _set_cupy_seed(cupy_module: Any, seed: int) -> None:
     seed_fn = getattr(random_module, "seed", None)
     if seed_fn is None:
         return
-    seed_fn(seed)
+    try:
+        seed_fn(seed)
+    except Exception:
+        return
 
 
 def _set_torch_seed(torch_module: Any, seed: int) -> None:
@@ -266,11 +269,17 @@ def _get_cupy_state(cupy_module: Any | None) -> object | None:
     get_random_state = getattr(random_module, "get_random_state", None)
     if get_random_state is None:
         return None
-    rng = get_random_state()
+    try:
+        rng = get_random_state()
+    except Exception:
+        return None
     get_state = getattr(rng, "get_state", None)
     if get_state is None:
         return None
-    return cast(object, get_state())
+    try:
+        return cast(object, get_state())
+    except Exception:
+        return None
 
 
 def _set_cupy_state(cupy_module: Any, state: object) -> None:
@@ -280,11 +289,17 @@ def _set_cupy_state(cupy_module: Any, state: object) -> None:
     get_random_state = getattr(random_module, "get_random_state", None)
     if get_random_state is None:
         return
-    rng = get_random_state()
+    try:
+        rng = get_random_state()
+    except Exception:
+        return
     set_state = getattr(rng, "set_state", None)
     if set_state is None:
         return
-    set_state(state)
+    try:
+        set_state(state)
+    except Exception:
+        return
 
 
 def _get_torch_state(torch_module: Any | None) -> object | None:

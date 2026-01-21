@@ -213,10 +213,7 @@ class TestManifestCompleteness:
                 return True
 
             docker = toolchain.get("docker", {})
-            if docker.get("image_ref") == "unknown":
-                return True
-
-            return False
+            return docker.get("image_ref") == "unknown"
 
         assert has_unknown_values(invalid_toolchain) is True
 
@@ -319,6 +316,7 @@ class TestDrcReportCanonicalization:
     def test_drc_timestamps_removed(self) -> None:
         """DRC report canonicalization should remove timestamps."""
         import json
+
         from formula_foundry.coupongen.kicad.canonicalize import canonicalize_drc_json
 
         drc_report = {
@@ -339,6 +337,7 @@ class TestDrcReportCanonicalization:
     def test_drc_paths_removed(self) -> None:
         """DRC report canonicalization should remove absolute paths."""
         import json
+
         from formula_foundry.coupongen.kicad.canonicalize import canonicalize_drc_json
 
         drc_report = {

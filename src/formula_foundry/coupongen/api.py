@@ -28,24 +28,22 @@ from formula_foundry.substrate import canonical_json_dumps, get_git_sha
 
 from .constraints import (
     ConstraintEvaluation,
+    TieredConstraintResult,
     constraint_proof_payload,
     enforce_constraints,
 )
-from .constraints.engine import ConstraintEngine, ConstraintEngineResult, create_constraint_engine
-from .constraints.repair import generate_constraint_proof
+from .constraints.engine import ConstraintEngineResult, create_constraint_engine
 from .fab_profiles import get_fab_limits, load_fab_profile
 from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
-from .kicad import BackendA, KicadCliRunner, get_kicad_cli_version
+from .kicad import BackendA, KicadCliRunner
 from .kicad.cli import KicadCliMode
-from .kicad.runners.docker import load_docker_image_ref
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash, resolve
 from .spec import CouponSpec, KicadToolchain
-from .toolchain_capture import ToolchainProvenance, capture_toolchain_provenance
+from .toolchain_capture import capture_toolchain_provenance
 
 if TYPE_CHECKING:
-    from .constraints.repair import ConstraintProofDocument
     from .constraints.tiers import TieredConstraintProof
 
 # Constraint mode type alias
@@ -88,9 +86,19 @@ class ValidationResult:
 
     spec: CouponSpec
     resolved: ResolvedDesign
-    proof: "TieredConstraintProof"
+    proof: TieredConstraintProof
     engine_result: ConstraintEngineResult
     was_repaired: bool
+
+
+def _ensure_docker_image_meta(toolchain_meta: dict[str, Any], docker_image: str | None) -> None:
+    if not docker_image:
+        return
+    docker_meta = toolchain_meta.get("docker")
+    if not isinstance(docker_meta, dict):
+        toolchain_meta["docker"] = {"image_ref": docker_image}
+        return
+    docker_meta.setdefault("image_ref", docker_image)
 
 
 class KicadRunnerProtocol(Protocol):
@@ -356,6 +364,7 @@ def build_coupon(
         if mode == "docker" and "docker" not in toolchain_meta:
             toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
 
+    _ensure_docker_image_meta(toolchain_meta, evaluation.spec.toolchain.kicad.docker_image)
     toolchain_hash_value = toolchain_hash(toolchain_meta)
 
     if manifest_path.exists():
@@ -529,6 +538,7 @@ def build_coupon_with_engine(
         if kicad_mode == "docker" and "docker" not in toolchain_meta:
             toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
 
+    _ensure_docker_image_meta(toolchain_meta, spec.toolchain.kicad.docker_image)
     toolchain_hash_value = toolchain_hash(toolchain_meta)
 
     # Check cache
@@ -572,7 +582,8 @@ def build_coupon_with_engine(
     # Build and write manifest
     # Note: We need to convert the TieredConstraintProof to the legacy ConstraintProof format
     # for the manifest builder. This is a temporary bridge until the manifest is updated.
-    from .constraints.core import ConstraintProof, ConstraintResult as LegacyConstraintResult
+    from .constraints.core import ConstraintProof
+    from .constraints.core import ConstraintResult as LegacyConstraintResult
 
     # Convert tiered proof to legacy proof format
     legacy_constraints = tuple(
@@ -587,6 +598,8 @@ def build_coupon_with_engine(
         )
         for c in engine_result.proof.constraints
     )
+    empty_tier: tuple[TieredConstraintResult, ...] = ()
+    engine_tiers: tuple[Literal["T0", "T1", "T2", "T3"], ...] = ("T0", "T1", "T2", "T3")
     legacy_tiers: dict[str, tuple[LegacyConstraintResult, ...]] = {
         tier: tuple(
             LegacyConstraintResult(
@@ -598,10 +611,11 @@ def build_coupon_with_engine(
                 margin=c.margin,
                 passed=c.passed,
             )
-            for c in engine_result.proof.tiers.get(tier, ())  # type: ignore[arg-type]
+            for c in engine_result.proof.tiers.get(tier, empty_tier)
         )
-        for tier in ("T0", "T1", "T2", "T3", "T4")
+        for tier in engine_tiers
     }
+    legacy_tiers["T4"] = ()
     legacy_proof = ConstraintProof(
         constraints=legacy_constraints,
         tiers=legacy_tiers,  # type: ignore[arg-type]
@@ -653,7 +667,7 @@ def _write_engine_validation_outputs(result: ConstraintEngineResult, out_dir: Pa
         result: The ConstraintEngineResult from validation
         out_dir: Directory to write outputs
     """
-    from .constraints.repair import write_constraint_proof, write_repair_map
+    from .constraints.repair import write_repair_map
 
     out_dir.mkdir(parents=True, exist_ok=True)
 

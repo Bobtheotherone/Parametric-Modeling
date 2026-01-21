@@ -426,10 +426,10 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
     This test verifies the build-batch command accepts input and runs the GPU
     filter pipeline. Full end-to-end testing is in test_cp43_gpu_pipeline.py.
     """
-    from formula_foundry.coupongen.cli_main import _run_build_batch
-
     # Create a valid F1 spec template using proper YAML
     import yaml
+
+    from formula_foundry.coupongen.cli_main import _run_build_batch
     spec_dict = _minimal_f1_spec_dict_for_cli()
     spec_path = tmp_path / "spec_template.yaml"
     spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
@@ -450,7 +450,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
 
     # Mock build_coupon_with_engine to avoid KiCad dependency
     with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, \
-         patch("sys.stdout.write") as mock_stdout:
+         patch("sys.stdout.write"):
 
         mock_result = MagicMock()
         mock_result.design_hash = "test_hash"
@@ -460,7 +460,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
         mock_result.manifest_path = tmp_path / "manifest.json"
         mock_build.return_value = mock_result
 
-        exit_code = cli_main.main([
+        cli_main.main([
             "build-batch",
             str(spec_path),
             "--u", str(u_path),
@@ -496,7 +496,7 @@ def test_cli_build_batch_with_limit(tmp_path: Path) -> None:
     out_dir = tmp_path / "builds"
 
     with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, \
-         patch("sys.stdout.write") as mock_stdout:
+         patch("sys.stdout.write"):
 
         mock_result = MagicMock()
         mock_result.design_hash = "test_hash"
@@ -506,7 +506,7 @@ def test_cli_build_batch_with_limit(tmp_path: Path) -> None:
         mock_result.manifest_path = tmp_path / "manifest.json"
         mock_build.return_value = mock_result
 
-        exit_code = cli_main.main([
+        cli_main.main([
             "build-batch",
             str(spec_path),
             "--u", str(u_path),

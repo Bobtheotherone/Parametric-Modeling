@@ -375,7 +375,7 @@ class TestDefaultLockPath:
 
     def test_default_path_structure(self) -> None:
         """DEFAULT_LOCK_PATH should point to toolchain directory."""
-        assert DEFAULT_LOCK_PATH == Path("toolchain/kicad.lock.json")
+        assert Path("toolchain/kicad.lock.json") == DEFAULT_LOCK_PATH
 
 
 class TestRealLockFile:

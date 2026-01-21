@@ -427,7 +427,6 @@ class TestSubprocessMocking:
     def test_run_gates_mocked_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test run_gates with mocked subprocess returning success."""
         from unittest.mock import MagicMock
-        from formula_foundry.coupongen.gate_runner import run_gates
 
         # Create mock JUnit XML
         junit_xml_path = tmp_path / "junit.xml"
@@ -447,11 +446,10 @@ class TestSubprocessMocking:
         mock_result.stderr = ""
 
         import subprocess
-        original_run = subprocess.run
 
         def mock_subprocess_run(cmd, **kwargs):
             # Write the JUnit XML to the specified path
-            for i, arg in enumerate(cmd):
+            for _i, arg in enumerate(cmd):
                 if isinstance(arg, str) and arg.startswith("--junit-xml="):
                     path = Path(arg.split("=", 1)[1])
                     path.write_text(junit_content)
@@ -474,7 +472,6 @@ class TestSubprocessMocking:
     def test_run_gates_mocked_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test run_gates with mocked subprocess returning failure."""
         from unittest.mock import MagicMock
-        from formula_foundry.coupongen.gate_runner import run_gates
 
         junit_content = """<?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="pytest" tests="2" errors="0" failures="1" skipped="0">

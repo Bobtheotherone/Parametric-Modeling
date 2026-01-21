@@ -416,7 +416,7 @@ class TestEndToEndPipeline:
             args.constraint_mode = "REPAIR"
 
             # Run
-            result = _run_build_batch(args)
+            _run_build_batch(args)
 
             # Verify filter metadata was written
             assert (out_path / "filter_metadata.json").exists()
@@ -480,7 +480,7 @@ class TestEndToEndPipeline:
             args.constraint_mode = "REPAIR"
 
             # Run
-            result = _run_build_batch(args)
+            _run_build_batch(args)
 
             # Verify filter metadata was NOT written (skipped)
             assert not (out_path / "filter_metadata.json").exists()

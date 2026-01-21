@@ -26,7 +26,7 @@ from formula_foundry.substrate import get_git_sha
 
 from .kicad import KicadCliRunner, get_kicad_cli_version
 from .kicad.cli import KicadCliMode
-from .kicad.runners.docker import DockerKicadRunner, load_docker_image_ref
+from .kicad.runners.docker import DockerKicadRunner
 from .toolchain import ToolchainLoadError, load_toolchain_lock
 
 

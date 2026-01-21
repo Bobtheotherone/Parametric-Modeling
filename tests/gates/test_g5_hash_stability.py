@@ -36,9 +36,9 @@ import pytest
 from formula_foundry.coupongen import (
     canonical_hash_export_text,
     canonical_hash_kicad_pcb_text,
+    design_hash,
     load_spec,
     resolve,
-    design_hash,
     resolved_design_canonical_json,
 )
 from formula_foundry.coupongen.hashing import (
@@ -46,7 +46,6 @@ from formula_foundry.coupongen.hashing import (
     canonicalize_kicad_pcb_text,
 )
 from formula_foundry.substrate import sha256_bytes
-
 
 # ---------------------------------------------------------------------------
 # Constants and paths

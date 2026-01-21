@@ -23,7 +23,6 @@ import re
 import sys
 from pathlib import Path
 
-
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PLACEHOLDER_HEX = {
     "0" * 64,

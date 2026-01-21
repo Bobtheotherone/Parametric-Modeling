@@ -18,8 +18,6 @@ import re
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Optional
-
 
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _PLACEHOLDER_HEX = {
@@ -49,7 +47,7 @@ def get_dockerhub_token(repository: str) -> str:
         return data["token"]
 
 
-def get_image_digest(repository: str, tag: str, token: str) -> Optional[str]:
+def get_image_digest(repository: str, tag: str, token: str) -> str | None:
     """Get the manifest digest for a Docker image tag.
 
     Returns the sha256 digest or None if not found.
