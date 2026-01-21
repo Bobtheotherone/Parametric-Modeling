@@ -14,6 +14,7 @@ from .lock import (
     ToolchainLoadError,
     compute_toolchain_hash,
     load_toolchain_lock,
+    load_toolchain_lock_from_dict,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ToolchainLoadError",
     "compute_toolchain_hash",
     "load_toolchain_lock",
+    "load_toolchain_lock_from_dict",
 ]

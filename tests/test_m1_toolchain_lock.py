@@ -19,8 +19,8 @@ from formula_foundry.coupongen.toolchain import (
     ToolchainLoadError,
     compute_toolchain_hash,
     load_toolchain_lock,
+    load_toolchain_lock_from_dict,
 )
-from formula_foundry.coupongen.toolchain.lock import load_toolchain_lock_from_dict
 
 
 class TestToolchainConfig:
@@ -236,6 +236,74 @@ class TestLoadToolchainLock:
 
         with pytest.raises(ToolchainLoadError, match="PLACEHOLDER"):
             load_toolchain_lock(lock_path=lock_path)
+
+    def test_invalid_sha256_format_too_short(self, tmp_path: Path) -> None:
+        """Should reject digest not matching sha256:<64-hex> format (too short)."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "sha256:abc123",  # Too short - not 64 hex chars
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="64-hex"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_invalid_sha256_format_missing_prefix(self, tmp_path: Path) -> None:
+        """Should reject digest without sha256: prefix."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "a" * 64,  # No sha256: prefix
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="sha256"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_invalid_sha256_format_wrong_chars(self, tmp_path: Path) -> None:
+        """Should reject digest with non-hex characters."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "sha256:" + "g" * 64,  # 'g' is not valid hex
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="64-hex"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_docker_image_digest_mismatch(self, tmp_path: Path) -> None:
+        """Should reject when docker_image has embedded digest that differs from docker_digest."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7@sha256:" + "a" * 64,
+            "docker_digest": "sha256:" + "b" * 64,  # Different from embedded
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="does not match"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_docker_image_with_matching_embedded_digest(self, tmp_path: Path) -> None:
+        """Should accept docker_image with embedded digest that matches docker_digest."""
+        digest = "sha256:" + "c" * 64
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": f"kicad/kicad:9.0.7@{digest}",
+            "docker_digest": digest,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        config = load_toolchain_lock(lock_path=lock_path)
+        # docker_image should be normalized to remove embedded digest
+        assert config.docker_image == "kicad/kicad:9.0.7"
+        assert config.docker_digest == digest
 
 
 class TestLoadToolchainLockFromDict:

@@ -220,3 +220,16 @@ jobs:
           pytest -m "${{ matrix.gate }}" --tb=short -q
         env:
           PYTHONPATH: src:.
+
+      - name: Upload gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-${{ matrix.gate }}-artifacts
+          path: |
+            artifacts/verify/**
+            **/resolved_design.json
+            **/manifest.json
+            **/constraint_proof.json
+          if-no-files-found: ignore
+          retention-days: 14
