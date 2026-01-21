@@ -100,6 +100,14 @@ def main():
     if "@sha256:" in docker_image:
         image_base, embedded_digest = docker_image.split("@", 1)
 
+    if not docker_digest:
+        print(
+            "Error: Docker digest missing in lock file. "
+            "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     if embedded_digest and docker_digest and embedded_digest != docker_digest:
         print("Error: docker_image digest does not match docker_digest", file=sys.stderr)
         sys.exit(1)
@@ -116,14 +124,6 @@ def main():
         if ref_base != image_base:
             print("Error: docker_ref does not match docker_image", file=sys.stderr)
             sys.exit(1)
-
-    if not docker_digest:
-        print(
-            "Error: Docker digest missing in lock file. "
-            "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
 
     is_placeholder = is_placeholder_digest(docker_digest)
     if is_placeholder and not args.allow_placeholder:

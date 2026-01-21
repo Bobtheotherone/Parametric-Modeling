@@ -111,7 +111,10 @@ def main():
         lock_data = json.load(f)
 
     repository = "kicad/kicad"
-    tag = lock_data.get("kicad_version", "9.0.7")
+    tag = lock_data.get("kicad_version")
+    if not tag:
+        print("Error: kicad_version missing in lock file.", file=sys.stderr)
+        sys.exit(1)
 
     print(f"Resolving digest for {repository}:{tag}...")
 
