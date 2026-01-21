@@ -7,6 +7,7 @@ Usage:
 
 Output formats:
     full:   kicad/kicad:9.0.7@sha256:...  (default)
+    ref:    kicad/kicad@sha256:...  (digest-only, no tag - for CI docker pull)
     image:  kicad/kicad:9.0.7
     digest: sha256:...
     tag:    9.0.7
@@ -61,7 +62,7 @@ def main():
     )
     parser.add_argument(
         "--format",
-        choices=["full", "image", "digest", "tag"],
+        choices=["full", "ref", "image", "digest", "tag"],
         default="full",
         help="Output format (default: full)"
     )
@@ -140,6 +141,13 @@ def main():
     # Output based on format
     if args.format == "full":
         print(f"{image_base}@{docker_digest}")
+    elif args.format == "ref":
+        # Digest-only reference (no tag) - for CI docker pull
+        # Strip tag from image_base: "kicad/kicad:9.0.7" -> "kicad/kicad"
+        base_no_tag = image_base
+        if ":" in image_base and image_base.rfind(":") > image_base.rfind("/"):
+            base_no_tag = image_base[:image_base.rfind(":")]
+        print(f"{base_no_tag}@{docker_digest}")
     elif args.format == "image":
         print(image_base)
     elif args.format == "digest":

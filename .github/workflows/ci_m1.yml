@@ -105,25 +105,14 @@ jobs:
         run: |
           # Read from toolchain lock file - STRICT: no placeholders allowed
           # This ensures CI uses a fully digest-pinned image for reproducibility
-          IMAGE=$(python tools/print_kicad_image_ref.py --format image)
+          # Use --format ref to get digest-only reference without tag for docker pull
+          DOCKER_REF=$(python tools/print_kicad_image_ref.py --format ref)
           DIGEST=$(python tools/print_kicad_image_ref.py --format digest)
-          NO_TAG_REF=$(python - "$IMAGE" "$DIGEST" <<'PY'
-import sys
-
-image = sys.argv[1]
-digest = sys.argv[2]
-
-base = image.split("@", 1)[0]
-if ":" in base and base.rfind(":") > base.rfind("/"):
-    base = base[:base.rfind(":")]
-
-print(f"{base}@{digest}")
-PY
-)
-          echo "docker_ref=$NO_TAG_REF" >> $GITHUB_OUTPUT
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          FULL_REF=$(python tools/print_kicad_image_ref.py --format full)
+          echo "docker_ref=$DOCKER_REF" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "Using KiCad image (digest-pinned, no tag): $NO_TAG_REF"
+          echo "full_ref=$FULL_REF" >> $GITHUB_OUTPUT
+          echo "Using KiCad image (digest-pinned, no tag): $DOCKER_REF"
 
       - name: Pull KiCad Docker image (by digest)
         run: |
@@ -138,6 +127,7 @@ PY
       - name: Print KiCad image reference for CI logs
         run: |
           echo "KiCad Docker ref (digest-only): ${{ steps.kicad-image.outputs.docker_ref }}"
+          echo "KiCad Docker ref (full): ${{ steps.kicad-image.outputs.full_ref }}"
           echo "---"
           echo "Docker image info:"
           docker inspect ${{ steps.kicad-image.outputs.docker_ref }} --format '{{.Id}}' || true
