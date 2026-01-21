@@ -105,32 +105,44 @@ jobs:
         run: |
           # Read from toolchain lock file - STRICT: no placeholders allowed
           # This ensures CI uses a fully digest-pinned image for reproducibility
-          FULL_REF=$(python tools/print_kicad_image_ref.py --format full)
           IMAGE=$(python tools/print_kicad_image_ref.py --format image)
           DIGEST=$(python tools/print_kicad_image_ref.py --format digest)
-          echo "full_ref=$FULL_REF" >> $GITHUB_OUTPUT
+          NO_TAG_REF=$(python - "$IMAGE" "$DIGEST" <<'PY'
+import sys
+
+image = sys.argv[1]
+digest = sys.argv[2]
+
+base = image.split("@", 1)[0]
+if ":" in base and base.rfind(":") > base.rfind("/"):
+    base = base[:base.rfind(":")]
+
+print(f"{base}@{digest}")
+PY
+)
+          echo "docker_ref=$NO_TAG_REF" >> $GITHUB_OUTPUT
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "Using KiCad image (digest-pinned): $FULL_REF"
+          echo "Using KiCad image (digest-pinned, no tag): $NO_TAG_REF"
 
       - name: Pull KiCad Docker image (by digest)
         run: |
           # Pull by full digest reference for reproducibility
-          docker pull ${{ steps.kicad-image.outputs.full_ref }}
+          docker pull ${{ steps.kicad-image.outputs.docker_ref }}
           docker images | grep kicad
           # Verify the pulled image digest matches expected
-          ACTUAL_DIGEST=$(docker inspect ${{ steps.kicad-image.outputs.full_ref }} --format '{{.RepoDigests}}' | grep -oP 'sha256:[a-f0-9]{64}')
+          ACTUAL_DIGEST=$(docker inspect ${{ steps.kicad-image.outputs.docker_ref }} --format '{{.RepoDigests}}' | grep -oP 'sha256:[a-f0-9]{64}')
           echo "Expected digest: ${{ steps.kicad-image.outputs.digest }}"
           echo "Actual digest: $ACTUAL_DIGEST"
 
       - name: Print KiCad image reference for CI logs
         run: |
-          python tools/print_kicad_image_ref.py --format full
+          echo "KiCad Docker ref (digest-only): ${{ steps.kicad-image.outputs.docker_ref }}"
           echo "---"
           echo "Docker image info:"
-          docker inspect ${{ steps.kicad-image.outputs.full_ref }} --format '{{.Id}}' || true
+          docker inspect ${{ steps.kicad-image.outputs.docker_ref }} --format '{{.Id}}' || true
           echo "KiCad CLI version from container:"
-          docker run --rm ${{ steps.kicad-image.outputs.full_ref }} kicad-cli version || true
+          docker run --rm ${{ steps.kicad-image.outputs.docker_ref }} kicad-cli version || true
 
       - name: Run KiCad integration tests
         run: |
@@ -139,47 +151,21 @@ jobs:
           PYTHONPATH: src:.
           COUPONGEN_TOOLCHAIN: docker
 
-      - name: Upload verification artifacts on failure
+      - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: kicad-integration-verify-artifacts
+          name: kicad-integration-failure-artifacts
           path: |
             artifacts/verify/**
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload DRC reports on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kicad-integration-drc-reports
-          path: |
             **/drc.json
             **/drc_report.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload manifests on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kicad-integration-manifests
-          path: |
             **/manifest.json
             **/resolved_design.json
-          if-no-files-found: ignore
-          retention-days: 14
-
-      - name: Upload canonicalized exports on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kicad-integration-exports
-          path: |
             **/*.gbr
             **/*.drl
             **/*.kicad_pcb
+            **/gerbers/**
             **/gerber/**
             **/drill/**
           if-no-files-found: ignore
@@ -228,8 +214,16 @@ jobs:
           name: gate-${{ matrix.gate }}-artifacts
           path: |
             artifacts/verify/**
+            **/drc.json
+            **/drc_report.json
             **/resolved_design.json
             **/manifest.json
             **/constraint_proof.json
+            **/*.gbr
+            **/*.drl
+            **/*.kicad_pcb
+            **/gerbers/**
+            **/gerber/**
+            **/drill/**
           if-no-files-found: ignore
           retention-days: 14
