@@ -210,8 +210,8 @@ def _capture_local_provenance(
     try:
         runner = KicadCliRunner(mode="local")
         kicad_cli_version = get_kicad_cli_version(runner, workdir)
-    except RuntimeError:
-        # For local mode, we allow "unknown" as a fallback
+    except (RuntimeError, OSError):
+        # For local mode, allow missing kicad-cli or other lookup failures.
         kicad_cli_version = "unknown"
 
     return ToolchainProvenance(
