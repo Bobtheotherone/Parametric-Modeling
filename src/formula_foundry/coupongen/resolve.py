@@ -45,14 +45,14 @@ class ResolvedDesign(BaseModel):
     # LayoutPlan is the single source of truth for geometry (CP-2.1)
     # Stored as a private attribute, excluded from serialization/hashing
     # as it's computed deterministically from parameters
-    _layout_plan: "LayoutPlan | None" = None
+    _layout_plan: LayoutPlan | None = None
 
     @property
-    def layout_plan(self) -> "LayoutPlan | None":
+    def layout_plan(self) -> LayoutPlan | None:
         """Get the computed LayoutPlan (single source of truth for geometry)."""
         return self._layout_plan
 
-    def with_layout_plan(self, layout_plan: "LayoutPlan") -> "ResolvedDesign":
+    def with_layout_plan(self, layout_plan: LayoutPlan) -> ResolvedDesign:
         """Return a copy with the layout_plan set.
 
         Since layout_plan is excluded from serialization, this method allows
@@ -198,7 +198,7 @@ def _coerce_int(value: Any) -> int:
 
 def _build_derived_features(
     spec: CouponSpec,
-    layout_plan: "LayoutPlan",
+    layout_plan: LayoutPlan,
     derived_length_right_nm: int | None,
 ) -> dict[str, int]:
     """Build derived features using LayoutPlan as the source of truth.

@@ -14,7 +14,6 @@ This module enables the build-batch command to:
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -22,7 +21,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from .constraints.gpu_filter import FamilyF1ParameterSpace, ParameterMapping
+from .constraints.gpu_filter import FamilyF1ParameterSpace
 from .spec import CouponSpec
 
 

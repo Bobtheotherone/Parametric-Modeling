@@ -1118,7 +1118,6 @@ class Tier3Checker(TierChecker):
             if left_x < board_corner_radius:
                 # Connector is in X-range of corner
                 # Check if Y is in the corner cutout (y > half_width - corner_radius)
-                y_distance_from_corner = half_board_width - left_y
                 in_corner_zone = left_y > (half_board_width - board_corner_radius)
 
                 results.append(

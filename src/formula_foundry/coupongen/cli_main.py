@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter batch of normalized design vectors using GPU prefilter (CP-4.1 API)",
     )
     batch_filter.add_argument(
-        "input_file",
+        "u_npy",
         type=Path,
         help="Input file with normalized vectors: .npy (N, d) or .jsonl (one JSON array per line)",
     )
@@ -365,7 +365,7 @@ def _run_batch_filter(args: argparse.Namespace) -> int:
         - metadata.json: Filtering statistics and parameters
     """
     # Load input u vectors
-    input_path: Path = args.input_file
+    input_path: Path = args.u_npy
     if not input_path.exists():
         sys.stderr.write(f"Error: Input file not found: {input_path}\n")
         return 1

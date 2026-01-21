@@ -47,7 +47,6 @@ from formula_foundry.coupongen.layer_validation import (
     validate_layer_set,
 )
 
-
 # ---------------------------------------------------------------------------
 # Constants and paths
 # ---------------------------------------------------------------------------

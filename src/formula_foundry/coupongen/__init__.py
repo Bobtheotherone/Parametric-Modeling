@@ -59,6 +59,7 @@ from .hashing import (
     canonicalize_kicad_pcb_text,
     coupon_id_from_design_hash,
 )
+from .kicad import BackendA, IKiCadBackend, KicadCliMode, KicadCliRunner, build_drc_args, deterministic_uuid
 from .layer_validation import (
     FamilyOverride,
     LayerSetConfig,
@@ -73,7 +74,6 @@ from .layer_validation import (
     validate_family_layer_requirements,
     validate_layer_set,
 )
-from .kicad import BackendA, IKiCadBackend, KicadCliMode, KicadCliRunner, build_drc_args, deterministic_uuid
 from .manifest import ManifestPaths, build_manifest, load_manifest, toolchain_hash, write_manifest
 from .paths import FOOTPRINT_LIB_DIR, REPO_ROOT
 from .resolve import ResolvedDesign, design_hash, resolve, resolved_design_canonical_json

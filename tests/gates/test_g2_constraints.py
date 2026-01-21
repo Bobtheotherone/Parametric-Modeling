@@ -45,7 +45,6 @@ from formula_foundry.coupongen.constraints.tiers import (
 )
 from formula_foundry.coupongen.spec import CouponSpec
 
-
 # ---------------------------------------------------------------------------
 # Constants and paths
 # ---------------------------------------------------------------------------

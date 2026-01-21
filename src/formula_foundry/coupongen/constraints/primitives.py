@@ -16,9 +16,10 @@ REQ-M1-011: constraint_proof.json with per-constraint evaluations and signed mar
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from ..fab_profiles import FabCapabilityProfile
@@ -108,7 +109,7 @@ class Constraint:
     tier: ConstraintTierLiteral
     category: ConstraintCategoryLiteral
     description: str
-    expr: str | Callable[["ConstraintContext"], "ConstraintResult"]
+    expr: str | Callable[[ConstraintContext], ConstraintResult]
     severity: ConstraintSeverityLiteral = "ERROR"
     must_pass: bool = True
     repairable: bool = False
@@ -211,7 +212,7 @@ class ConstraintResult:
         passed: bool,
         reason: str = "",
         repair_hint: str = "",
-    ) -> "ConstraintResult":
+    ) -> ConstraintResult:
         """Create a result from a constraint definition."""
         return cls(
             constraint_id=constraint.id,
@@ -245,10 +246,10 @@ class ConstraintContext:
         cache: Optional cache for expensive computations
     """
 
-    spec: "CouponSpec"
+    spec: CouponSpec
     fab_limits: dict[str, int]
-    fab_profile: "FabCapabilityProfile | None" = None
-    resolved: "ResolvedDesign | None" = None
+    fab_profile: FabCapabilityProfile | None = None
+    resolved: ResolvedDesign | None = None
     mode: Literal["REJECT", "REPAIR"] = "REJECT"
     cache: dict[str, Any] = field(default_factory=dict)
 

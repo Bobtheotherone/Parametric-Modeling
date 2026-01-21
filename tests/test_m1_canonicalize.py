@@ -16,12 +16,12 @@ import pytest
 
 from formula_foundry.coupongen.kicad import (
     canonical_hash_board,
+    canonical_hash_drc_json,
     canonical_hash_drill,
     canonical_hash_gerber,
-    canonical_hash_drc_json,
     canonicalize_board,
-    canonicalize_drill,
     canonicalize_drc_json,
+    canonicalize_drill,
     canonicalize_gerber,
 )
 

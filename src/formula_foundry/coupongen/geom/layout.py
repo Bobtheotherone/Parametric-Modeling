@@ -514,7 +514,6 @@ def compute_layout_plan(
     Satisfies CP-2.3 per ECO-M1-ALIGN-0001 Section 13.2.4.
     """
     from ..families import FAMILY_F0, FAMILY_F1
-
     from .footprint_meta import load_footprint_meta
 
     # Extract board dimensions

@@ -138,9 +138,8 @@ def run_gates(
 
     # Create temp JUnit XML if not specified
     if junit_xml is None:
-        tmp_fd = tempfile.NamedTemporaryFile(suffix=".xml", delete=False)
-        junit_xml = Path(tmp_fd.name)
-        tmp_fd.close()
+        with tempfile.NamedTemporaryFile(suffix=".xml", delete=False) as tmp_fd:
+            junit_xml = Path(tmp_fd.name)
 
     # Build pytest command
     marker_expr = build_pytest_marker_expr(gates)
@@ -462,7 +461,7 @@ def _build_per_spec_results(tests: list[dict[str, Any]], repo_root: Path | None)
 
         entry["tests"].append(_minimal_test_ref(test, gate_id))
 
-    for spec_id, entry in per_spec.items():
+    for _spec_id, entry in per_spec.items():
         statuses = [t["status"] for t in entry["tests"]]
         if not statuses:
             entry["status"] = "no_tests"
@@ -475,7 +474,7 @@ def _build_per_spec_results(tests: list[dict[str, Any]], repo_root: Path | None)
         else:
             entry["status"] = "passed"
 
-        for gate_id, gate_entry in entry["gates"].items():
+        for _gate_id, gate_entry in entry["gates"].items():
             gate_entry["status"] = compute_gate_status(gate_entry["tests"])
 
     return per_spec
@@ -694,7 +693,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # list subcommand
-    list_parser = subparsers.add_parser(
+    subparsers.add_parser(
         "list",
         help="List available gates",
     )

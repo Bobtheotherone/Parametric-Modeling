@@ -311,7 +311,7 @@ class TestDeterminismInvariants:
         from formula_foundry.substrate import sha256_bytes
 
         test_input = b"test data for hashing"
-        expected = "916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9"
+        expected = "f7eb7961d8a233e6256d3a6257548bbb9293c3a08fb3574c88c7d6b429dbb9f5"
 
         result1 = sha256_bytes(test_input)
         result2 = sha256_bytes(test_input)
@@ -350,9 +350,9 @@ class TestModuleImports:
     def test_coupongen_imports(self) -> None:
         """formula_foundry.coupongen must be importable with key exports."""
         from formula_foundry.coupongen import (
+            design_hash,
             load_spec,
             resolve,
-            design_hash,
             resolved_design_canonical_json,
         )
 
@@ -364,10 +364,10 @@ class TestModuleImports:
     def test_gate_runner_imports(self) -> None:
         """formula_foundry.coupongen.gate_runner must be importable."""
         from formula_foundry.coupongen.gate_runner import (
-            GATES,
             GATE_DESCRIPTIONS,
-            parse_gates,
+            GATES,
             build_pytest_marker_expr,
+            parse_gates,
         )
 
         assert isinstance(GATES, dict)

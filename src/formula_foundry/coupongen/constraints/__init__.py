@@ -24,6 +24,16 @@ REQ-M1-011: constraint_proof.json with per-constraint evaluations and signed mar
 """
 
 # Re-export core constraint types and functions for backward compatibility
+# Export connectivity oracle (CP-2.5, Section 13.2.5)
+from .connectivity import (
+    ConnectivityChecker,
+    ConnectivityNode,
+    ConnectivityOracle,
+    NodeType,
+    UnionFind,
+    build_oracle_from_layout,
+    check_layout_connectivity,
+)
 from .core import (
     ConstraintEvaluation,
     ConstraintProof,
@@ -39,6 +49,15 @@ from .core import (
     resolve_fab_limits_from_profile,
 )
 
+# Export unified ConstraintEngine (CP-3.1, Section 13.3)
+from .engine import (
+    ConstraintEngine,
+    ConstraintEngineResult,
+    ConstraintMode,
+    SpecOrResolved,
+    create_constraint_engine,
+)
+
 # Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
 # Updated for CP-4.1 formal API with mode, seed, and RepairMeta
 from .gpu_filter import (
@@ -51,6 +70,23 @@ from .gpu_filter import (
     batch_filter,
     is_gpu_available,
 )
+
+# Export constraint primitives (Section 13.3.1)
+from .primitives import (
+    Constraint,
+    ConstraintCategory,
+    ConstraintCategoryLiteral,
+    ConstraintContext,
+    ConstraintSeverity,
+    ConstraintSeverityLiteral,
+    ConstraintTierLiteral,
+    create_bool_constraint_result,
+    create_equality_constraint_result,
+    create_max_constraint_result,
+    create_min_constraint_result,
+)
+from .primitives import ConstraintResult as PrimitiveConstraintResult
+from .primitives import ConstraintTier as PrimitiveConstraintTier
 
 # Export REPAIR mode and constraint proof generation (new in M1-CONSTRAINTS-REPAIR)
 # CP-3.4: Enhanced with audit trail, L2/Linf metrics, design vectors
@@ -80,43 +116,6 @@ from .tiers import (
     TieredConstraintProof,
     TieredConstraintSystem,
     evaluate_tiered_constraints,
-)
-
-# Export constraint primitives (Section 13.3.1)
-from .primitives import (
-    Constraint,
-    ConstraintCategory,
-    ConstraintCategoryLiteral,
-    ConstraintContext,
-    ConstraintSeverity,
-    ConstraintSeverityLiteral,
-    ConstraintTierLiteral,
-    create_bool_constraint_result,
-    create_equality_constraint_result,
-    create_max_constraint_result,
-    create_min_constraint_result,
-)
-from .primitives import ConstraintResult as PrimitiveConstraintResult
-from .primitives import ConstraintTier as PrimitiveConstraintTier
-
-# Export connectivity oracle (CP-2.5, Section 13.2.5)
-from .connectivity import (
-    ConnectivityChecker,
-    ConnectivityNode,
-    ConnectivityOracle,
-    NodeType,
-    UnionFind,
-    build_oracle_from_layout,
-    check_layout_connectivity,
-)
-
-# Export unified ConstraintEngine (CP-3.1, Section 13.3)
-from .engine import (
-    ConstraintEngine,
-    ConstraintEngineResult,
-    ConstraintMode,
-    SpecOrResolved,
-    create_constraint_engine,
 )
 
 __all__ = [
