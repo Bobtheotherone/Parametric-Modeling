@@ -34,6 +34,7 @@ toolchain/kicad.lock.json
   "kicad_version": "9.0.7",
   "docker_image": "kicad/kicad:9.0.7",
   "docker_digest": "sha256:<64-char-hex-digest>",
+  "docker_ref": "kicad/kicad:9.0.7@sha256:<64-char-hex-digest>",
   "toolchain_hash": "<64-char-hex-hash>"
 }
 ```
@@ -45,7 +46,8 @@ toolchain/kicad.lock.json
 | `kicad_version` | string | Pinned KiCad version (required) |
 | `docker_image` | string | Docker image reference (required) |
 | `schema_version` | string | Lock file schema version (default: "1.0") |
-| `docker_digest` | string | SHA256 digest of Docker image (optional, but required for production) |
+| `docker_digest` | string | SHA256 digest of Docker image (required for production) |
+| `docker_ref` | string | Full image reference with digest (required for production) |
 | `toolchain_hash` | string | Computed hash (auto-generated) |
 
 ---

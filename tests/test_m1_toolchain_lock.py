@@ -234,7 +234,20 @@ class TestLoadToolchainLock:
         lock_path = tmp_path / "kicad.lock.json"
         lock_path.write_text(json.dumps(lock_data))
 
-        with pytest.raises(ToolchainLoadError, match="PLACEHOLDER"):
+        with pytest.raises(ToolchainLoadError, match="placeholder"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_zeroed_docker_digest_placeholder(self, tmp_path: Path) -> None:
+        """Should reject zeroed placeholder docker_digest."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "sha256:" + "0" * 63 + "1",
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="placeholder"):
             load_toolchain_lock(lock_path=lock_path)
 
     def test_invalid_sha256_format_too_short(self, tmp_path: Path) -> None:
@@ -304,6 +317,34 @@ class TestLoadToolchainLock:
         # docker_image should be normalized to remove embedded digest
         assert config.docker_image == "kicad/kicad:9.0.7"
         assert config.docker_digest == digest
+
+    def test_docker_ref_missing_digest(self, tmp_path: Path) -> None:
+        """Should reject docker_ref without embedded digest."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "sha256:" + "d" * 64,
+            "docker_ref": "kicad/kicad:9.0.7",
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="docker_ref must include"):
+            load_toolchain_lock(lock_path=lock_path)
+
+    def test_docker_ref_digest_mismatch(self, tmp_path: Path) -> None:
+        """Should reject docker_ref digest mismatching docker_digest."""
+        lock_data = {
+            "kicad_version": "9.0.7",
+            "docker_image": "kicad/kicad:9.0.7",
+            "docker_digest": "sha256:" + "e" * 64,
+            "docker_ref": "kicad/kicad:9.0.7@sha256:" + "f" * 64,
+        }
+        lock_path = tmp_path / "kicad.lock.json"
+        lock_path.write_text(json.dumps(lock_data))
+
+        with pytest.raises(ToolchainLoadError, match="docker_ref digest"):
+            load_toolchain_lock(lock_path=lock_path)
 
 
 class TestLoadToolchainLockFromDict:

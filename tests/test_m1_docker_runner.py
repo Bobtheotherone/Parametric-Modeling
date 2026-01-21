@@ -158,6 +158,21 @@ class TestLoadDockerImageRef:
         image_ref = load_docker_image_ref(lock_file)
         assert image_ref == f"kicad/kicad:9.0.7@{'sha256:' + 'a' * 64}"
 
+    def test_load_with_docker_ref(self, tmp_path: Path) -> None:
+        lock_file = tmp_path / "kicad.lock.json"
+        lock_file.write_text(
+            json.dumps(
+                {
+                    "docker_image": "kicad/kicad:9.0.7",
+                    "docker_digest": "sha256:" + "b" * 64,
+                    "docker_ref": "kicad/kicad:9.0.7@sha256:" + "b" * 64,
+                }
+            )
+        )
+
+        image_ref = load_docker_image_ref(lock_file)
+        assert image_ref == f"kicad/kicad:9.0.7@{'sha256:' + 'b' * 64}"
+
     def test_load_placeholder_digest(self, tmp_path: Path) -> None:
         lock_file = tmp_path / "kicad.lock.json"
         lock_file.write_text(
@@ -170,6 +185,21 @@ class TestLoadDockerImageRef:
         )
 
         with pytest.raises(ValueError, match="placeholder"):
+            load_docker_image_ref(lock_file)
+
+    def test_load_mismatched_docker_ref(self, tmp_path: Path) -> None:
+        lock_file = tmp_path / "kicad.lock.json"
+        lock_file.write_text(
+            json.dumps(
+                {
+                    "docker_image": "kicad/kicad:9.0.7",
+                    "docker_digest": "sha256:" + "c" * 64,
+                    "docker_ref": "kicad/kicad:9.0.7@sha256:" + "d" * 64,
+                }
+            )
+        )
+
+        with pytest.raises(ValueError, match="docker_ref digest"):
             load_docker_image_ref(lock_file)
 
     def test_load_missing_digest(self, tmp_path: Path) -> None:
