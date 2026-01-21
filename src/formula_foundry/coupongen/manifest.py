@@ -6,18 +6,32 @@ provenance information and export hashes.
 Satisfies:
     - REQ-M1-018: The repo must emit a manifest.json for every build containing
                   required provenance fields and export hashes.
+    - CP-5.1: Ensure toolchain provenance always captured (lock_file_toolchain_hash)
 
-Required manifest fields (per DESIGN_DOCUMENT.md Section 9.3):
+Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
     - schema_version, coupon_family
     - design_hash, coupon_id
-    - resolved_design
+    - resolved_design (integer nm params)
     - derived_features + dimensionless_groups
-    - fab_profile_id + resolved limits
-    - stackup
-    - toolchain (KiCad version, docker image tag/digest, kicad-cli --version output)
+    - fab_profile (id + resolved limits)
+    - stackup (nm thicknesses + material props)
+    - toolchain:
+        - kicad.version
+        - kicad.cli_version_output
+        - docker.image_ref (tag+digest)
+        - mode
+        - generator_git_sha
+        - lock_file_toolchain_hash (CP-5.1: from toolchain lock file)
+    - toolchain_hash (computed from runtime toolchain metadata)
     - exports list with canonical hashes
-    - verification (DRC summary + constraint_proof summary)
-    - lineage (git commit hash, UTC timestamp)
+    - verification:
+        - constraints (passed + failed_ids)
+        - drc (returncode, report_path, summary, canonical_hash)
+        - layer_set (per Section 13.5.3) - validation of expected layers
+    - lineage (git sha, UTC timestamp - explicitly excluded from design_hash)
+
+DRC canonicalization is delegated to kicad/canonicalize.py per Section 13.5.2,
+which is the authoritative source for all artifact canonicalization algorithms.
 """
 
 from __future__ import annotations
@@ -32,6 +46,8 @@ from typing import Any, cast
 from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_bytes
 
 from .constraints import ConstraintProof, resolve_fab_limits
+from .kicad.canonicalize import canonical_hash_drc_json
+from .layer_validation import LayerValidationResult, layer_validation_payload
 from .resolve import ResolvedDesign
 from .spec import CouponSpec
 
@@ -59,6 +75,7 @@ def build_manifest(
     export_hashes: Mapping[str, str],
     drc_report_path: Path,
     drc_returncode: int,
+    layer_validation: LayerValidationResult | None = None,
     git_sha: str | None = None,
     timestamp_utc: str | None = None,
 ) -> dict[str, Any]:
@@ -78,6 +95,7 @@ def build_manifest(
         export_hashes: Mapping of relative export paths to their canonical hashes.
         drc_report_path: Path to the DRC JSON report.
         drc_returncode: Return code from the DRC check.
+        layer_validation: Optional layer set validation result (per Section 13.5.3).
         git_sha: Optional explicit git SHA (defaults to HEAD of cwd).
         timestamp_utc: Optional explicit UTC timestamp (defaults to now).
 
@@ -88,6 +106,8 @@ def build_manifest(
     timestamp = timestamp_utc or _utc_timestamp()
     exports = [{"path": path, "hash": export_hashes[path]} for path in sorted(export_hashes.keys())]
     failed_constraints = [result.constraint_id for result in proof.constraints if not result.passed]
+    drc_summary = parse_drc_summary(drc_report_path)
+    drc_canonical_hash = canonicalize_drc_report(drc_report_path)
     return {
         "schema_version": spec.schema_version,
         "coupon_family": spec.coupon_family,
@@ -112,13 +132,69 @@ def build_manifest(
             "drc": {
                 "returncode": drc_returncode,
                 "report_path": str(drc_report_path),
+                "summary": drc_summary,
+                "canonical_hash": drc_canonical_hash,
             },
+            "layer_set": layer_validation_payload(layer_validation) if layer_validation else None,
         },
         "lineage": {
             "git_sha": resolved_git_sha,
             "timestamp_utc": timestamp,
         },
     }
+
+
+def parse_drc_summary(drc_report_path: Path) -> dict[str, int]:
+    """Parse a KiCad DRC JSON report and return a summary.
+
+    Args:
+        drc_report_path: Path to the DRC JSON report file.
+
+    Returns:
+        Dictionary with violation, warning, and exclusion counts.
+    """
+    if not drc_report_path.exists():
+        return {"violations": 0, "warnings": 0, "exclusions": 0}
+
+    try:
+        report = json.loads(drc_report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"violations": 0, "warnings": 0, "exclusions": 0}
+
+    violations = len(report.get("violations", []))
+    warnings = len(report.get("warnings", []))
+    exclusions = len(report.get("exclusions", []))
+
+    return {"violations": violations, "warnings": warnings, "exclusions": exclusions}
+
+
+def canonicalize_drc_report(drc_report_path: Path) -> str:
+    """Canonicalize a DRC report and return its hash.
+
+    This function delegates to the authoritative canonicalization algorithm
+    in kicad/canonicalize.py (per Section 13.5.2), which handles:
+    - Removing timestamps (date, time, timestamp, generated_at)
+    - Removing environment keys (kicad_version, host, source, schema_version)
+    - Normalizing paths to filenames only
+    - Sorting all object keys alphabetically
+    - Preserving list ordering (semantically significant)
+
+    Args:
+        drc_report_path: Path to the DRC JSON report file.
+
+    Returns:
+        SHA-256 hash of the canonicalized DRC report.
+    """
+    if not drc_report_path.exists():
+        return sha256_bytes(b"")
+
+    try:
+        report = json.loads(drc_report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return sha256_bytes(b"")
+
+    # Delegate to the authoritative canonicalization implementation
+    return canonical_hash_drc_json(report)
 
 
 def write_manifest(path: Path, manifest: Mapping[str, Any]) -> None:

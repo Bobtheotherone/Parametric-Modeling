@@ -488,7 +488,6 @@ class Tier1Checker(TierChecker):
 
         # Trace length constraints
         trace_left = int(spec.transmission_line.length_left_nm)
-        trace_right = int(spec.transmission_line.length_right_nm)
 
         results.append(
             _min_constraint(
@@ -500,15 +499,41 @@ class Tier1Checker(TierChecker):
             )
         )
 
-        results.append(
-            _min_constraint(
-                "T1_TRACE_RIGHT_POSITIVE",
-                "Right trace length must be positive",
-                tier="T1",
-                value=trace_right,
-                limit=1,
+        # For F1 coupons, length_right_nm is deprecated and derived from continuity.
+        # If specified, validate it matches the derived value (CP-2.2).
+        # For F0 coupons, length_right_nm is required.
+        if spec.transmission_line.length_right_nm is not None:
+            trace_right = int(spec.transmission_line.length_right_nm)
+            results.append(
+                _min_constraint(
+                    "T1_TRACE_RIGHT_POSITIVE",
+                    "Right trace length must be positive",
+                    tier="T1",
+                    value=trace_right,
+                    limit=1,
+                )
             )
-        )
+
+            # CP-2.2: For F1 coupons, validate continuity (length_right must match derived value)
+            if spec.coupon_family == "F1_SINGLE_ENDED_VIA":
+                # Derive expected right length from continuity formula
+                left_x = int(spec.connectors.left.position_nm[0])
+                right_x = int(spec.connectors.right.position_nm[0])
+                x_disc = left_x + trace_left  # discontinuity position
+                derived_right = right_x - x_disc
+
+                # Continuity error must be zero
+                continuity_error = abs(trace_right - derived_right)
+
+                results.append(
+                    _bool_constraint(
+                        "T1_F1_CONTINUITY_LENGTH_ERROR",
+                        "F1 continuity: specified length_right_nm must equal derived value",
+                        tier="T1",
+                        condition=continuity_error == 0,
+                        reason=f"continuity_length_error_nm={continuity_error} (specified={trace_right}, derived={derived_right})",
+                    )
+                )
 
         # Board aspect ratio (sanity check - not too extreme)
         board_width = int(spec.board.outline.width_nm)
@@ -525,6 +550,61 @@ class Tier1Checker(TierChecker):
                 reason=f"Aspect ratio {aspect_ratio:.1f}:1 exceeds 20:1 limit",
             )
         )
+
+        # Copper-to-edge clearance (Section 13.3.2)
+        # The minimum copper-to-edge clearance is derived from:
+        # - Trace center at y=0 (centerline)
+        # - Trace half-width + gap + ground pour edge = distance from centerline
+        # - Board half-width - this distance = clearance to board edge
+        trace_width = int(spec.transmission_line.w_nm)
+        trace_gap = int(spec.transmission_line.gap_nm)
+        min_edge_clearance = fab_limits.get("min_edge_clearance_nm", 200_000)
+
+        # For CPWG, the ground pour extends beyond the gap. Compute clearance:
+        # Copper footprint from centerline = trace_width/2 + gap + ground_pour_margin
+        # For simplicity, we check that half the trace width + gap doesn't exceed
+        # half the board width minus edge clearance
+        half_board_width = board_width // 2
+        trace_extent_from_center = trace_width // 2 + trace_gap
+
+        # If there's a ground via fence, include its extent
+        fence = spec.transmission_line.ground_via_fence
+        if fence is not None and fence.enabled:
+            fence_offset = int(fence.offset_from_gap_nm)
+            fence_via_radius = int(fence.via.diameter_nm) // 2
+            trace_extent_from_center = trace_width // 2 + trace_gap + fence_offset + fence_via_radius
+
+        available_clearance = half_board_width - trace_extent_from_center
+
+        results.append(
+            _min_constraint(
+                "T1_COPPER_TO_EDGE_CLEARANCE",
+                "Copper features must maintain minimum clearance from board edge",
+                tier="T1",
+                value=available_clearance,
+                limit=min_edge_clearance,
+            )
+        )
+
+        # Fence pitch constraint (Section 13.3.2)
+        # Fence pitch should be reasonable relative to via diameter
+        if fence is not None and fence.enabled:
+            fence_pitch = int(fence.pitch_nm)
+            fence_via_dia = int(fence.via.diameter_nm)
+            min_via_to_via = fab_limits.get("min_via_to_via_nm", 200_000)
+
+            # Fence pitch must allow non-overlapping vias with clearance
+            min_fence_pitch = fence_via_dia + min_via_to_via
+
+            results.append(
+                _min_constraint(
+                    "T1_FENCE_PITCH_MIN",
+                    "Ground fence pitch must exceed via diameter plus spacing",
+                    tier="T1",
+                    value=fence_pitch,
+                    limit=min_fence_pitch,
+                )
+            )
 
         return results
 
@@ -619,10 +699,17 @@ class Tier2Checker(TierChecker):
 
         # Total trace length must fit within board
         trace_left = int(spec.transmission_line.length_left_nm)
-        trace_right = int(spec.transmission_line.length_right_nm)
         left_x = int(left_pos[0])
         right_x = int(right_pos[0])
         available_length = right_x - left_x
+
+        # For F1 coupons, derive right length if not specified (CP-2.2)
+        if spec.transmission_line.length_right_nm is not None:
+            trace_right = int(spec.transmission_line.length_right_nm)
+        else:
+            # Derive from continuity formula for F1
+            x_disc = left_x + trace_left
+            trace_right = right_x - x_disc
 
         results.append(
             _bool_constraint(
@@ -696,12 +783,17 @@ class Tier2Checker(TierChecker):
 
 
 class Tier3Checker(TierChecker):
-    """Tier 3: Exact geometry collision detection.
+    """Tier 3: Exact geometry collision detection (CP-3.4).
 
     Performs precise collision checks between geometric primitives:
-    - Via-to-via collisions
-    - Via-to-trace collisions
+    - Via-to-via collisions (return via ring overlap)
+    - Return vias vs signal via clearance
+    - Via fence vs CPWG gap clearance
+    - Copper-to-edge rule for all copper primitives
+    - Keepouts near board outline
     - Antipad coverage verification
+
+    Uses integer polygon containment/distance checks for determinism.
     """
 
     @property
@@ -710,6 +802,13 @@ class Tier3Checker(TierChecker):
 
     def check(self, spec: Any, fab_limits: dict[str, int], resolved: Any | None = None) -> list[ConstraintResult]:
         results: list[ConstraintResult] = []
+
+        # Get common geometry values
+        board_width = int(spec.board.outline.width_nm)
+        board_length = int(spec.board.outline.length_nm)
+        board_corner_radius = int(spec.board.outline.corner_radius_nm)
+        min_edge_clearance = fab_limits.get("min_edge_clearance_nm", 200_000)
+        min_via_to_via = fab_limits.get("min_via_to_via_nm", 200_000)
 
         # Return via ring collision detection
         if spec.discontinuity is not None and spec.discontinuity.return_vias is not None:
@@ -724,7 +823,7 @@ class Tier3Checker(TierChecker):
                 # Distance between adjacent via centers = 2*radius*sin(pi/count)
                 angular_spacing = math.pi / count
                 via_center_spacing = 2 * radius * math.sin(angular_spacing)
-                min_spacing = via_dia + fab_limits.get("min_via_to_via_nm", 200_000)
+                min_spacing = via_dia + min_via_to_via
 
                 results.append(
                     _min_constraint(
@@ -736,6 +835,25 @@ class Tier3Checker(TierChecker):
                         reason=f"{count} vias at radius {radius}nm: spacing={via_center_spacing:.0f}nm < required {min_spacing}nm",
                     )
                 )
+
+            # CP-3.4: Return vias vs signal via clearance check
+            # Return vias must have sufficient clearance from signal via pad
+            signal_pad_radius = int(spec.discontinuity.signal_via.pad_diameter_nm) // 2
+            return_via_radius = via_dia // 2
+            # Distance from signal via center to return via center = radius (ring radius)
+            # Clearance = radius - signal_pad_radius - return_via_radius
+            actual_clearance = radius - signal_pad_radius - return_via_radius
+
+            results.append(
+                _min_constraint(
+                    "T3_RETURN_VIA_SIGNAL_CLEARANCE",
+                    "Return vias must maintain clearance from signal via pad",
+                    tier="T3",
+                    value=actual_clearance,
+                    limit=min_via_to_via,
+                    reason=f"Return via ring at radius {radius}nm: clearance from signal pad = {actual_clearance}nm < required {min_via_to_via}nm",
+                )
+            )
 
         # Antipad coverage check
         if spec.discontinuity is not None:
@@ -783,11 +901,265 @@ class Tier3Checker(TierChecker):
                         )
                     )
 
+        # CP-3.4: Via fence vs CPWG gap clearance check
+        fence = spec.transmission_line.ground_via_fence
+        if fence is not None and fence.enabled:
+            fence_offset = int(fence.offset_from_gap_nm)
+            fence_via_dia = int(fence.via.diameter_nm)
+            fence_via_radius = fence_via_dia // 2
+            trace_gap = int(spec.transmission_line.gap_nm)
+            min_gap = fab_limits.get("min_gap_nm", 100_000)
+
+            # The fence via inner edge must not encroach on CPWG gap
+            # fence_offset is distance from gap edge to via center
+            # inner edge of via = fence_offset - fence_via_radius
+            # This must be >= 0 (via edge doesn't overlap gap)
+            fence_inner_edge_clearance = fence_offset - fence_via_radius
+
+            results.append(
+                _min_constraint(
+                    "T3_FENCE_VIA_CPWG_GAP_CLEARANCE",
+                    "Ground fence via must maintain clearance from CPWG gap",
+                    tier="T3",
+                    value=fence_inner_edge_clearance,
+                    limit=0,
+                    reason=f"Fence via inner edge at {fence_inner_edge_clearance}nm from gap edge (must be >= 0)",
+                )
+            )
+
+            # CP-3.4: Check fence via edge clearance from signal trace
+            # The fence via must maintain min_gap from the signal trace
+            # Distance from trace center to fence via edge = gap + fence_offset - fence_via_radius
+            # This should be >= min_gap (some fab houses want extra clearance)
+            # Actually, the CPWG gap already provides the required clearance, but
+            # let's check that the fence doesn't violate trace-to-copper spacing
+            trace_to_fence_clearance = trace_gap + fence_inner_edge_clearance
+
+            results.append(
+                _min_constraint(
+                    "T3_FENCE_VIA_TRACE_CLEARANCE",
+                    "Ground fence via must maintain minimum gap from signal trace edge",
+                    tier="T3",
+                    value=trace_to_fence_clearance,
+                    limit=min_gap,
+                    reason=f"Trace to fence via edge clearance = {trace_to_fence_clearance}nm < required {min_gap}nm",
+                )
+            )
+
+        # CP-3.4: Copper-to-edge rule for all copper primitives
+        # Check that all copper features maintain minimum edge clearance
+        half_board_width = board_width // 2
+        trace_width = int(spec.transmission_line.w_nm)
+        trace_half_width = trace_width // 2
+        trace_gap = int(spec.transmission_line.gap_nm)
+
+        # 1. Signal trace copper-to-edge check (top/bottom edges)
+        # Trace is centered at y=0, extends +/- trace_half_width
+        # Board edge is at +/- half_board_width
+        # Clearance = half_board_width - trace_half_width
+        trace_y_edge_clearance = half_board_width - trace_half_width
+
+        results.append(
+            _min_constraint(
+                "T3_TRACE_COPPER_TO_EDGE_Y",
+                "Signal trace must maintain minimum clearance from board Y edges",
+                tier="T3",
+                value=trace_y_edge_clearance,
+                limit=min_edge_clearance,
+                reason=f"Trace edge {trace_half_width}nm from center, board edge at {half_board_width}nm: clearance = {trace_y_edge_clearance}nm",
+            )
+        )
+
+        # 2. CPWG ground pour copper-to-edge check
+        # Ground pour extends from trace edge + gap outward
+        # The outer edge of ground pour is at: trace_half_width + gap + ground_pour_extent
+        # For simplicity, assume ground pour extends to board edge minus some margin
+        # Actually, we check that the gap region + trace doesn't exceed board boundaries
+        cpwg_extent = trace_half_width + trace_gap
+
+        # If there's a fence, include its extent
+        if fence is not None and fence.enabled:
+            fence_offset = int(fence.offset_from_gap_nm)
+            fence_via_radius = int(fence.via.diameter_nm) // 2
+            cpwg_extent = trace_half_width + trace_gap + fence_offset + fence_via_radius
+
+        cpwg_y_edge_clearance = half_board_width - cpwg_extent
+
+        results.append(
+            _min_constraint(
+                "T3_CPWG_COPPER_TO_EDGE_Y",
+                "CPWG copper (including fence vias) must maintain clearance from board Y edges",
+                tier="T3",
+                value=cpwg_y_edge_clearance,
+                limit=min_edge_clearance,
+                reason=f"CPWG extent {cpwg_extent}nm from center, board edge at {half_board_width}nm: clearance = {cpwg_y_edge_clearance}nm",
+            )
+        )
+
+        # 3. Connector copper-to-edge checks (X direction)
+        left_x = int(spec.connectors.left.position_nm[0])
+        right_x = int(spec.connectors.right.position_nm[0])
+
+        # Left connector clearance from left edge (x=0)
+        results.append(
+            _min_constraint(
+                "T3_LEFT_CONNECTOR_COPPER_TO_EDGE",
+                "Left connector must maintain clearance from left board edge",
+                tier="T3",
+                value=left_x,
+                limit=min_edge_clearance,
+                reason=f"Left connector at x={left_x}nm, minimum clearance = {min_edge_clearance}nm",
+            )
+        )
+
+        # Right connector clearance from right edge (x=board_length)
+        right_edge_clearance = board_length - right_x
+
+        results.append(
+            _min_constraint(
+                "T3_RIGHT_CONNECTOR_COPPER_TO_EDGE",
+                "Right connector must maintain clearance from right board edge",
+                tier="T3",
+                value=right_edge_clearance,
+                limit=min_edge_clearance,
+                reason=f"Right connector at x={right_x}nm, board length={board_length}nm: clearance = {right_edge_clearance}nm",
+            )
+        )
+
+        # 4. Discontinuity/via copper-to-edge check
+        if spec.discontinuity is not None:
+            # Get discontinuity X position (from left connector + left trace length)
+            trace_left = int(spec.transmission_line.length_left_nm)
+            x_disc = left_x + trace_left
+
+            # Check via clearance from X edges
+            signal_pad_radius = int(spec.discontinuity.signal_via.pad_diameter_nm) // 2
+
+            # Clearance from left edge
+            via_left_clearance = x_disc - signal_pad_radius
+
+            results.append(
+                _min_constraint(
+                    "T3_VIA_COPPER_TO_LEFT_EDGE",
+                    "Signal via must maintain clearance from left board edge",
+                    tier="T3",
+                    value=via_left_clearance,
+                    limit=min_edge_clearance,
+                    reason=f"Via center at x={x_disc}nm, pad radius={signal_pad_radius}nm: left clearance = {via_left_clearance}nm",
+                )
+            )
+
+            # Clearance from right edge
+            via_right_clearance = board_length - x_disc - signal_pad_radius
+
+            results.append(
+                _min_constraint(
+                    "T3_VIA_COPPER_TO_RIGHT_EDGE",
+                    "Signal via must maintain clearance from right board edge",
+                    tier="T3",
+                    value=via_right_clearance,
+                    limit=min_edge_clearance,
+                    reason=f"Via center at x={x_disc}nm, pad radius={signal_pad_radius}nm: right clearance = {via_right_clearance}nm",
+                )
+            )
+
+            # Return vias copper-to-edge check
+            if spec.discontinuity.return_vias is not None:
+                return_ring_radius = int(spec.discontinuity.return_vias.radius_nm)
+                return_via_radius = int(spec.discontinuity.return_vias.via.diameter_nm) // 2
+                # Max extent of return vias from discontinuity center
+                return_extent = return_ring_radius + return_via_radius
+
+                # Check all four directions (simplified: assumes ring centered at disc)
+                return_left_clearance = x_disc - return_extent
+                return_right_clearance = board_length - x_disc - return_extent
+                return_top_clearance = half_board_width - return_extent
+                return_bottom_clearance = half_board_width - return_extent  # symmetric
+
+                results.append(
+                    _min_constraint(
+                        "T3_RETURN_VIA_COPPER_TO_EDGE_X",
+                        "Return via ring must maintain clearance from board X edges",
+                        tier="T3",
+                        value=min(return_left_clearance, return_right_clearance),
+                        limit=min_edge_clearance,
+                        reason=f"Return via extent {return_extent}nm from center at x={x_disc}nm",
+                    )
+                )
+
+                results.append(
+                    _min_constraint(
+                        "T3_RETURN_VIA_COPPER_TO_EDGE_Y",
+                        "Return via ring must maintain clearance from board Y edges",
+                        tier="T3",
+                        value=min(return_top_clearance, return_bottom_clearance),
+                        limit=min_edge_clearance,
+                        reason=f"Return via extent {return_extent}nm from centerline, board half-width={half_board_width}nm",
+                    )
+                )
+
+        # CP-3.4: Keepout zone near board corners (rounded corners)
+        # With rounded corners, copper must not be placed in the corner cutout zone.
+        # The corner radius creates a keepout; copper at the corner would be cut off.
+        if board_corner_radius > 0:
+            # Check that no copper is within the corner keepout zone.
+            # The corner keepout is a square of side board_corner_radius at each corner.
+            # For the coupon geometry (centered traces), the critical check is:
+            # - Trace endpoints (connectors) are not too close to corners
+            # - For wide boards, this is typically not an issue since traces are centered.
+
+            # Check left connector vs bottom-left and top-left corners
+            left_y = abs(int(spec.connectors.left.position_nm[1]))  # distance from centerline
+            # At corner, the keepout zone starts at x=0 to x=corner_radius and
+            # y=half_board_width-corner_radius to y=half_board_width (and mirrored)
+            # The connector needs to be outside this zone.
+
+            # Simplified check: if connector X < corner_radius, ensure Y is not in corner zone
+            if left_x < board_corner_radius:
+                # Connector is in X-range of corner
+                # Check if Y is in the corner cutout (y > half_width - corner_radius)
+                in_corner_zone = left_y > (half_board_width - board_corner_radius)
+
+                results.append(
+                    _bool_constraint(
+                        "T3_LEFT_CONNECTOR_CORNER_KEEPOUT",
+                        "Left connector must not be in corner keepout zone",
+                        tier="T3",
+                        condition=not in_corner_zone,
+                        reason=f"Left connector at ({left_x}, {left_y}nm) is in corner keepout zone (corner_radius={board_corner_radius}nm)",
+                    )
+                )
+
+            # Check right connector vs bottom-right and top-right corners
+            right_y = abs(int(spec.connectors.right.position_nm[1]))
+            if right_x > (board_length - board_corner_radius):
+                # Connector is in X-range of corner
+                in_corner_zone = right_y > (half_board_width - board_corner_radius)
+
+                results.append(
+                    _bool_constraint(
+                        "T3_RIGHT_CONNECTOR_CORNER_KEEPOUT",
+                        "Right connector must not be in corner keepout zone",
+                        tier="T3",
+                        condition=not in_corner_zone,
+                        reason=f"Right connector at ({right_x}, {right_y}nm) is in corner keepout zone (corner_radius={board_corner_radius}nm)",
+                    )
+                )
+
         # Symmetry constraint (if enforced)
         if spec.constraints.symmetry.enforce:
             # Check that left and right trace lengths are equal
             trace_left = int(spec.transmission_line.length_left_nm)
-            trace_right = int(spec.transmission_line.length_right_nm)
+
+            # For F1 coupons, derive right length if not specified (CP-2.2)
+            if spec.transmission_line.length_right_nm is not None:
+                trace_right = int(spec.transmission_line.length_right_nm)
+            else:
+                # Derive from continuity formula for F1
+                left_x = int(spec.connectors.left.position_nm[0])
+                right_x = int(spec.connectors.right.position_nm[0])
+                x_disc = left_x + trace_left
+                trace_right = right_x - x_disc
 
             results.append(
                 _bool_constraint(

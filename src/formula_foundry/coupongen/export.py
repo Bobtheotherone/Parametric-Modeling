@@ -25,9 +25,15 @@ from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
 from .kicad import BackendA, KicadCliRunner
 from .kicad.cli import KicadCliMode
+from .layer_validation import (
+    LayerValidationResult,
+    validate_family_layer_requirements,
+    validate_layer_set,
+)
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash
 from .spec import CouponSpec, KicadToolchain
+from .toolchain_capture import ToolchainProvenance, capture_toolchain_provenance
 
 
 class KicadRunnerProtocol(Protocol):
@@ -117,6 +123,9 @@ class ExportPipeline:
     This class implements the complete export pipeline with caching support.
     It satisfies both REQ-M1-019 and REQ-M1-020.
 
+    Per Section 13.5.3, the pipeline validates that all expected layers are
+    present in the export output based on the copper layer count and family.
+
     Example usage:
         >>> pipeline = ExportPipeline(out_root=Path("output"))
         >>> result = pipeline.run(spec)
@@ -132,6 +141,8 @@ class ExportPipeline:
         runner: KicadRunnerProtocol | None = None,
         backend: BackendA | None = None,
         kicad_cli_version: str | None = None,
+        lock_file: Path | None = None,
+        validate_layers: bool = True,
     ) -> None:
         """Initialize the export pipeline.
 
@@ -140,13 +151,18 @@ class ExportPipeline:
             mode: KiCad CLI mode ("local" or "docker").
             runner: Custom KiCad runner (for testing).
             backend: Custom KiCad backend (for testing).
-            kicad_cli_version: Version of kicad-cli being used.
+            kicad_cli_version: Version of kicad-cli being used (for testing).
+            lock_file: Path to toolchain lock file (for docker mode).
+            validate_layers: Whether to validate exported layers (default True).
         """
         self.out_root = out_root
         self.mode = mode
         self._runner = runner
         self._backend = backend or BackendA()
         self._kicad_cli_version = kicad_cli_version
+        self._lock_file = lock_file
+        self._provenance: ToolchainProvenance | None = None
+        self._validate_layers = validate_layers
 
     def _get_runner(self, toolchain: KicadToolchain) -> KicadRunnerProtocol:
         """Get or create the KiCad runner."""
@@ -165,13 +181,30 @@ class ExportPipeline:
         return CacheKey(design_hash=design_hash_value, toolchain_hash=toolchain_hash_value)
 
     def _build_toolchain_meta(self, spec: CouponSpec) -> dict[str, Any]:
-        """Build toolchain metadata dictionary."""
-        return {
-            "kicad_version": spec.toolchain.kicad.version,
-            "docker_image": spec.toolchain.kicad.docker_image,
-            "mode": self.mode,
-            "kicad_cli_version": self._kicad_cli_version or "unknown",
-        }
+        """Build toolchain metadata dictionary.
+
+        For docker mode, this captures complete toolchain provenance (CP-5.3).
+        """
+        if self._kicad_cli_version is not None:
+            # Pre-captured version provided (for testing)
+            return {
+                "kicad_version": spec.toolchain.kicad.version,
+                "docker_image": spec.toolchain.kicad.docker_image,
+                "mode": self.mode,
+                "kicad_cli_version": self._kicad_cli_version,
+            }
+
+        # Capture provenance dynamically (CP-5.3)
+        if self._provenance is None:
+            self._provenance = capture_toolchain_provenance(
+                mode=self.mode,
+                kicad_version=spec.toolchain.kicad.version,
+                docker_image=spec.toolchain.kicad.docker_image,
+                workdir=self.out_root,
+                lock_file=self._lock_file,
+            )
+
+        return self._provenance.to_metadata()
 
     def _compute_output_dir(self, design_hash_value: str) -> Path:
         """Compute the output directory path.
@@ -216,6 +249,12 @@ class ExportPipeline:
         # Stage 1: Validate family
         validate_family(spec)
 
+        # Stage 1b: Validate family layer requirements (per Section 13.5.3)
+        validate_family_layer_requirements(
+            copper_layers=spec.stackup.copper_layers,
+            family=spec.coupon_family,
+        )
+
         # Stage 2: Validate constraints and resolve
         evaluation = enforce_constraints(spec)
         resolved = evaluation.resolved
@@ -253,6 +292,17 @@ class ExportPipeline:
         fab_dir = output_dir / "fab"
         export_hashes = self._export_fab(board_path, fab_dir, evaluation.spec.toolchain.kicad)
 
+        # Stage 6: Validate layer set (per Section 13.5.3)
+        layer_validation_result: LayerValidationResult | None = None
+        if self._validate_layers:
+            layer_validation_result = validate_layer_set(
+                export_paths=list(export_hashes.keys()),
+                copper_layers=evaluation.spec.stackup.copper_layers,
+                family=evaluation.spec.coupon_family,
+                gerber_dir="gerbers/",
+                strict=True,
+            )
+
         # Write manifest
         toolchain_meta = self._build_toolchain_meta(evaluation.spec)
         manifest = build_manifest(
@@ -266,6 +316,7 @@ class ExportPipeline:
             export_hashes=export_hashes,
             drc_report_path=report_path,
             drc_returncode=proc.returncode,
+            layer_validation=layer_validation_result,
         )
         write_manifest(manifest_path, manifest)
 
@@ -330,6 +381,8 @@ def run_export_pipeline(
     runner: KicadRunnerProtocol | None = None,
     backend: BackendA | None = None,
     kicad_cli_version: str | None = None,
+    lock_file: Path | None = None,
+    validate_layers: bool = True,
 ) -> ExportResult:
     """Convenience function to run the export pipeline.
 
@@ -338,6 +391,7 @@ def run_export_pipeline(
     Satisfies:
         - REQ-M1-019: Outputs keyed by design_hash and coupon_id.
         - REQ-M1-020: Caching keyed by design_hash + toolchain_hash.
+        - CP-5.3: Toolchain provenance always captured for docker builds.
 
     Args:
         spec: The coupon specification to build.
@@ -345,7 +399,9 @@ def run_export_pipeline(
         mode: KiCad CLI mode ("local" or "docker").
         runner: Custom KiCad runner (for testing).
         backend: Custom KiCad backend (for testing).
-        kicad_cli_version: Version of kicad-cli being used.
+        kicad_cli_version: Version of kicad-cli being used (for testing).
+        lock_file: Path to toolchain lock file (for docker mode).
+        validate_layers: Whether to validate exported layers (default True).
 
     Returns:
         ExportResult with paths and cache status.
@@ -361,50 +417,97 @@ def run_export_pipeline(
         runner=runner,
         backend=backend,
         kicad_cli_version=kicad_cli_version,
+        lock_file=lock_file,
+        validate_layers=validate_layers,
     )
     return pipeline.run(spec)
 
 
-def compute_cache_key(spec: CouponSpec, *, mode: KicadCliMode = "local") -> CacheKey:
+def compute_cache_key(
+    spec: CouponSpec,
+    *,
+    mode: KicadCliMode = "local",
+    lock_file: Path | None = None,
+    workdir: Path | None = None,
+    kicad_cli_version: str | None = None,
+) -> CacheKey:
     """Compute the cache key for a spec without running the pipeline.
 
     This is useful for cache invalidation checks or batch processing.
+    For docker mode, this will capture toolchain provenance by running
+    kicad-cli --version inside the container (per CP-5.3).
 
     Args:
         spec: The coupon specification.
         mode: KiCad CLI mode for toolchain hash.
+        lock_file: Path to toolchain lock file (for docker mode).
+        workdir: Working directory for running kicad-cli.
+        kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
 
     Returns:
         CacheKey with design_hash and toolchain_hash.
+
+    Raises:
+        ToolchainProvenanceError: If docker mode and provenance cannot be captured.
     """
     validate_family(spec)
     evaluation = enforce_constraints(spec)
     resolved = evaluation.resolved
 
     design_hash_value = design_hash(resolved)
-    toolchain_meta = {
-        "kicad_version": spec.toolchain.kicad.version,
-        "docker_image": spec.toolchain.kicad.docker_image,
-        "mode": mode,
-        "kicad_cli_version": "unknown",
-    }
+
+    if kicad_cli_version is not None:
+        # Pre-captured version provided (for testing)
+        toolchain_meta = {
+            "kicad_version": spec.toolchain.kicad.version,
+            "docker_image": spec.toolchain.kicad.docker_image,
+            "mode": mode,
+            "kicad_cli_version": kicad_cli_version,
+        }
+    else:
+        # Capture provenance dynamically (CP-5.3)
+        provenance = capture_toolchain_provenance(
+            mode=mode,
+            kicad_version=spec.toolchain.kicad.version,
+            docker_image=spec.toolchain.kicad.docker_image,
+            workdir=workdir or Path.cwd(),
+            lock_file=lock_file,
+        )
+        toolchain_meta = provenance.to_metadata()
     toolchain_hash_value = toolchain_hash(toolchain_meta)
 
     return CacheKey(design_hash=design_hash_value, toolchain_hash=toolchain_hash_value)
 
 
-def is_cache_valid(spec: CouponSpec, out_root: Path, *, mode: KicadCliMode = "local") -> bool:
+def is_cache_valid(
+    spec: CouponSpec,
+    out_root: Path,
+    *,
+    mode: KicadCliMode = "local",
+    lock_file: Path | None = None,
+    kicad_cli_version: str | None = None,
+) -> bool:
     """Check if a valid cache exists for the given spec.
+
+    For docker mode, this will capture toolchain provenance by running
+    kicad-cli --version inside the container (per CP-5.3).
 
     Args:
         spec: The coupon specification.
         out_root: Root directory for outputs.
         mode: KiCad CLI mode for toolchain hash.
+        lock_file: Path to toolchain lock file (for docker mode).
+        kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
 
     Returns:
         True if a valid cache hit would occur.
+
+    Raises:
+        ToolchainProvenanceError: If docker mode and provenance cannot be captured.
     """
-    cache_key = compute_cache_key(spec, mode=mode)
+    cache_key = compute_cache_key(
+        spec, mode=mode, lock_file=lock_file, workdir=out_root, kicad_cli_version=kicad_cli_version
+    )
     coupon_id = coupon_id_from_design_hash(cache_key.design_hash)
     output_dir = out_root / f"{coupon_id}-{cache_key.design_hash}"
     manifest_path = output_dir / "manifest.json"

@@ -41,7 +41,14 @@ class _CountingRunner:
 
     def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         self.gerber_calls += 1
-        (out_dir / "F.Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        # Create all required layers for a 4-layer board (per Section 13.5.3)
+        (out_dir / "board-F_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-In1_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-In2_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-B_Cu.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-F_Mask.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-B_Mask.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
+        (out_dir / "board-Edge_Cuts.gbr").write_text("G04 Cached*\nX0Y0D02*\n", encoding="utf-8")
         return _completed_process()
 
     def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -166,7 +173,7 @@ class TestExportPipeline:
         """Test that running the pipeline returns an ExportResult."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
-        pipeline = ExportPipeline(out_root=tmp_path, runner=runner)
+        pipeline = ExportPipeline(out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         result = pipeline.run(spec)
 
@@ -182,7 +189,7 @@ class TestExportPipeline:
         """REQ-M1-019: Output directory must be keyed by design_hash and coupon_id."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
-        pipeline = ExportPipeline(out_root=tmp_path, runner=runner)
+        pipeline = ExportPipeline(out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         result = pipeline.run(spec)
 
@@ -194,7 +201,7 @@ class TestExportPipeline:
         """REQ-M1-020: Cache must hit on second run with same spec."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
-        pipeline = ExportPipeline(out_root=tmp_path, runner=runner)
+        pipeline = ExportPipeline(out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         result_a = pipeline.run(spec)
         assert result_a.cache_hit is False
@@ -212,7 +219,7 @@ class TestExportPipeline:
         """REQ-M1-020: Cache must miss when toolchain changes."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
-        pipeline = ExportPipeline(out_root=tmp_path, runner=runner)
+        pipeline = ExportPipeline(out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         result_a = pipeline.run(spec)
         assert result_a.cache_hit is False
@@ -231,7 +238,7 @@ class TestExportPipeline:
         """REQ-M1-019: Re-running build must not create divergent outputs."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
-        pipeline = ExportPipeline(out_root=tmp_path, runner=runner)
+        pipeline = ExportPipeline(out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         result_a = pipeline.run(spec)
         result_b = pipeline.run(spec)
@@ -251,7 +258,7 @@ class TestRunExportPipeline:
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
 
-        result = run_export_pipeline(spec, out_root=tmp_path, runner=runner)
+        result = run_export_pipeline(spec, out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         assert isinstance(result, ExportResult)
         assert result.output_dir.exists()
@@ -263,7 +270,7 @@ class TestComputeCacheKey:
     def test_returns_cache_key(self) -> None:
         """Test that compute_cache_key returns a CacheKey."""
         spec = CouponSpec.model_validate(_example_spec_data())
-        key = compute_cache_key(spec)
+        key = compute_cache_key(spec, kicad_cli_version="9.0.7")
 
         assert isinstance(key, CacheKey)
         assert key.design_hash
@@ -272,8 +279,8 @@ class TestComputeCacheKey:
     def test_deterministic(self) -> None:
         """Test that compute_cache_key is deterministic."""
         spec = CouponSpec.model_validate(_example_spec_data())
-        key1 = compute_cache_key(spec)
-        key2 = compute_cache_key(spec)
+        key1 = compute_cache_key(spec, kicad_cli_version="9.0.7")
+        key2 = compute_cache_key(spec, kicad_cli_version="9.0.7")
 
         assert key1.design_hash == key2.design_hash
         assert key1.toolchain_hash == key2.toolchain_hash
@@ -285,26 +292,26 @@ class TestIsCacheValid:
     def test_returns_false_when_no_cache(self, tmp_path: Path) -> None:
         """Test that is_cache_valid returns False when no cache exists."""
         spec = CouponSpec.model_validate(_example_spec_data())
-        assert is_cache_valid(spec, tmp_path) is False
+        assert is_cache_valid(spec, tmp_path, kicad_cli_version="9.0.7") is False
 
     def test_returns_true_after_build(self, tmp_path: Path) -> None:
         """Test that is_cache_valid returns True after building."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
 
-        run_export_pipeline(spec, out_root=tmp_path, runner=runner)
-        assert is_cache_valid(spec, tmp_path) is True
+        run_export_pipeline(spec, out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
+        assert is_cache_valid(spec, tmp_path, kicad_cli_version="9.0.7") is True
 
     def test_returns_false_after_toolchain_change(self, tmp_path: Path) -> None:
         """Test that is_cache_valid returns False when toolchain changes."""
         runner = _CountingRunner()
         spec = CouponSpec.model_validate(_example_spec_data())
 
-        run_export_pipeline(spec, out_root=tmp_path, runner=runner)
+        run_export_pipeline(spec, out_root=tmp_path, runner=runner, kicad_cli_version="9.0.7")
 
         # Change toolchain
         modified = _example_spec_data()
         modified["toolchain"]["kicad"]["docker_image"] = "kicad/kicad:9.0.7@sha256:feedbeef"
         spec_modified = CouponSpec.model_validate(modified)
 
-        assert is_cache_valid(spec_modified, tmp_path) is False
+        assert is_cache_valid(spec_modified, tmp_path, kicad_cli_version="9.0.7") is False

@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 coupongen = "formula_foundry.coupongen.cli_main:main"
 m3 = "formula_foundry.m3.cli_main:main"
+audit-m1 = "formula_foundry.coupongen.gate_runner:main"
 
 [project.optional-dependencies]
 dev = [
@@ -38,9 +39,18 @@ dvc = [
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-q"
+addopts = "-q --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+markers = [
+    "kicad_integration: marks tests as KiCad integration tests (require Docker + KiCad toolchain)",
+    "gate_g1: Gate G1 - resolved design determinism",
+    "gate_g2: Gate G2 - constraint proof completeness and reject/repair behavior",
+    "gate_g3: Gate G3 - DRC clean (KiCad DRC passes with zero violations)",
+    "gate_g4: Gate G4 - export completeness (all required layers + drill files present)",
+    "gate_g5: Gate G5 - stable canonical hashes across repeated runs",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [tool.ruff]
 line-length = 130

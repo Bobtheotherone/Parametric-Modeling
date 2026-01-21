@@ -21,19 +21,24 @@ from .backend import (
     write_board,
 )
 from .canonicalize import (
+    canonical_hash_board,
+    canonical_hash_drc_json,
     canonical_hash_drill,
     canonical_hash_export,
     canonical_hash_file,
     canonical_hash_files,
     canonical_hash_gerber,
     canonical_hash_kicad_pcb,
+    canonicalize_board,
+    canonicalize_drc_json,
     canonicalize_drill,
     canonicalize_export,
     canonicalize_gerber,
     canonicalize_kicad_pcb,
     normalize_line_endings,
 )
-from .cli import KicadCliMode, KicadCliRunner, build_drc_args
+from .cli import KicadCliMode, KicadCliRunner, build_drc_args, get_kicad_cli_version
+from .runners import DockerKicadRunner, IKicadRunner, KicadRunResult
 from .sexpr import (
     SExprAtom,
     SExprList,
@@ -64,14 +69,23 @@ __all__ = [
     "KicadCliMode",
     "KicadCliRunner",
     "build_drc_args",
+    "get_kicad_cli_version",
+    # Runners
+    "DockerKicadRunner",
+    "IKicadRunner",
+    "KicadRunResult",
     # Canonicalization
+    "canonical_hash_board",
     "canonical_hash_drill",
+    "canonical_hash_drc_json",
     "canonical_hash_export",
     "canonical_hash_file",
     "canonical_hash_files",
     "canonical_hash_gerber",
     "canonical_hash_kicad_pcb",
+    "canonicalize_board",
     "canonicalize_drill",
+    "canonicalize_drc_json",
     "canonicalize_export",
     "canonicalize_gerber",
     "canonicalize_kicad_pcb",

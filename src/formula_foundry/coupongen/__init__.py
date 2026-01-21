@@ -52,6 +52,7 @@ from .fab_profiles import (
 )
 from .families import FAMILY_F0, FAMILY_F1, SUPPORTED_FAMILIES, validate_family
 from .hashing import (
+    canonical_drc_json,
     canonical_hash_export_text,
     canonical_hash_kicad_pcb_text,
     canonicalize_export_text,
@@ -59,6 +60,20 @@ from .hashing import (
     coupon_id_from_design_hash,
 )
 from .kicad import BackendA, IKiCadBackend, KicadCliMode, KicadCliRunner, build_drc_args, deterministic_uuid
+from .layer_validation import (
+    FamilyOverride,
+    LayerSetConfig,
+    LayerSetValidationError,
+    LayerValidationResult,
+    clear_layer_sets_cache,
+    extract_layers_from_exports,
+    get_family_override,
+    get_gerber_extension_map,
+    get_layer_set_for_copper_count,
+    layer_validation_payload,
+    validate_family_layer_requirements,
+    validate_layer_set,
+)
 from .manifest import ManifestPaths, build_manifest, load_manifest, toolchain_hash, write_manifest
 from .paths import FOOTPRINT_LIB_DIR, REPO_ROOT
 from .resolve import ResolvedDesign, design_hash, resolve, resolved_design_canonical_json
@@ -78,6 +93,18 @@ from .stackups import (
     list_available_stackups,
     load_stackup,
     load_stackup_from_dict,
+)
+from .toolchain import (
+    DEFAULT_LOCK_PATH,
+    ToolchainConfig,
+    ToolchainLoadError,
+    compute_toolchain_hash,
+    load_toolchain_lock,
+)
+from .toolchain_capture import (
+    ToolchainProvenance,
+    ToolchainProvenanceError,
+    capture_toolchain_provenance,
 )
 from .units import LengthNM, parse_length_nm
 
@@ -121,6 +148,11 @@ __all__ = [
     "DielectricProperties",
     "StackupLayer",
     "StackupProfile",
+    # Layer validation types
+    "FamilyOverride",
+    "LayerSetConfig",
+    "LayerSetValidationError",
+    "LayerValidationResult",
     # KiCad types
     "BackendA",
     "IKiCadBackend",
@@ -135,6 +167,7 @@ __all__ = [
     "build_coupon",
     "build_drc_args",
     "build_manifest",
+    "canonical_drc_json",
     "canonical_hash_export_text",
     "canonical_hash_kicad_pcb_text",
     "canonicalize_export_text",
@@ -181,4 +214,25 @@ __all__ = [
     "compute_cache_key",
     "is_cache_valid",
     "run_export_pipeline",
+    # Toolchain types
+    "ToolchainConfig",
+    "ToolchainLoadError",
+    # Toolchain constants
+    "DEFAULT_LOCK_PATH",
+    # Toolchain functions
+    "compute_toolchain_hash",
+    "load_toolchain_lock",
+    # Toolchain capture (CP-5.3)
+    "ToolchainProvenance",
+    "ToolchainProvenanceError",
+    "capture_toolchain_provenance",
+    # Layer validation functions
+    "clear_layer_sets_cache",
+    "extract_layers_from_exports",
+    "get_family_override",
+    "get_gerber_extension_map",
+    "get_layer_set_for_copper_count",
+    "layer_validation_payload",
+    "validate_family_layer_requirements",
+    "validate_layer_set",
 ]

@@ -1,0 +1,95 @@
+# Golden spec F1-004: Roundrect antipad F1 via transition
+# Parameters: 160um trace, 110um gap, roundrect antipads
+schema_version: 1
+coupon_family: F1_SINGLE_ENDED_VIA
+units: nm
+
+toolchain:
+  kicad:
+    version: "9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+
+fab_profile:
+  id: oshpark_4layer
+
+stackup:
+  copper_layers: 4
+  thicknesses_nm:
+    L1_to_L2: "170 um"
+    L2_to_L3: "1090 um"
+    L3_to_L4: "170 um"
+  materials:
+    er: 3.66
+    loss_tangent: 0.0095
+
+board:
+  outline:
+    width_nm: "12 mm"
+    length_nm: "32 mm"
+    corner_radius_nm: "500 um"
+  origin:
+    mode: EDGE_L_CENTER
+  text:
+    coupon_id: "F1-VIA-004"
+    include_manifest_hash: true
+
+connectors:
+  left:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["1 mm", "0 nm"]
+    rotation_deg: 0
+  right:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["31 mm", "0 nm"]
+    rotation_deg: 180
+
+transmission_line:
+  type: CPWG
+  layer: F.Cu
+  w_nm: "160 um"
+  gap_nm: "127 um"
+  length_left_nm: "15 mm"
+  # CP-2.2: length_right_nm is deprecated for F1 - derived from continuity formula
+
+discontinuity:
+  type: VIA_TRANSITION
+  signal_via:
+    drill_nm: "300 um"
+    diameter_nm: "500 um"
+    pad_diameter_nm: "700 um"
+  antipads:
+    L2:
+      shape: ROUNDRECT
+      rx_nm: "600 um"
+      ry_nm: "400 um"
+      corner_nm: "100 um"
+    L3:
+      shape: ROUNDRECT
+      rx_nm: "600 um"
+      ry_nm: "400 um"
+      corner_nm: "100 um"
+  return_vias:
+    pattern: QUAD
+    count: 4
+    radius_nm: "1100 um"
+    via:
+      drill_nm: "300 um"
+      diameter_nm: "500 um"
+
+constraints:
+  mode: REJECT
+  drc:
+    must_pass: true
+    severity: all
+  symmetry:
+    enforce: true
+  allow_unconnected_copper: false
+
+export:
+  gerbers:
+    enabled: true
+    format: gerbers
+  drill:
+    enabled: true
+    format: excellon
+  outputs_dir: "./outputs"

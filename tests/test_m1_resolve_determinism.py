@@ -135,13 +135,27 @@ def _example_spec_data_reordered() -> dict[str, object]:
 
 
 def test_resolve_emits_integer_nm_and_groups() -> None:
-    """Resolve must emit integer nanometer parameters and dimensionless groups."""
+    """Resolve must emit integer nanometer parameters and dimensionless groups.
+
+    Note: trace_total_length_nm is computed from the LayoutPlan, which derives
+    the actual geometry from port positions. For F1 coupons, length_right_nm is
+    derived from the continuity formula to ensure trace segments connect at the
+    discontinuity center. This may differ from the spec's length_right_nm value
+    if that value is inconsistent with the port geometry.
+
+    Per CP-2.4, the LayoutPlan is the single source of truth for all geometry.
+    """
     spec = CouponSpec.model_validate(_example_spec_data())
     resolved = resolve(spec)
 
     assert resolved.parameters_nm["board.outline.width_nm"] == 20000000
     assert resolved.derived_features["board_area_nm2"] == 20000000 * 80000000
-    assert resolved.derived_features["trace_total_length_nm"] == 50000000
+    # trace_total_length_nm is computed from LayoutPlan geometry:
+    # left signal pad X = 5M nm, right signal pad X = 75M nm
+    # length_left_nm = 25M nm, so discontinuity = 5M + 25M = 30M nm
+    # derived length_right_nm = 75M - 30M = 45M nm
+    # total = 25M + 45M = 70M nm
+    assert resolved.derived_features["trace_total_length_nm"] == 70000000
     assert resolved.dimensionless_groups["cpwg_w_over_gap"] == pytest.approx(300000 / 180000)
 
     for value in resolved.parameters_nm.values():

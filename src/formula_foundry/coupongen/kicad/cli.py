@@ -12,6 +12,7 @@ Satisfies REQ-M1-015 through REQ-M1-017:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -104,8 +105,65 @@ def build_drc_args(board_path: Path, report_path: Path) -> list[str]:
     ]
 
 
+def get_kicad_cli_version(runner: KicadCliRunner, workdir: Path | None = None) -> str:
+    """Get the kicad-cli version string.
+
+    This helper function executes `kicad-cli --version` and parses the output
+    to extract the version string. It works with both local and Docker runners.
+
+    Args:
+        runner: A KicadCliRunner instance (local or Docker mode).
+        workdir: Working directory for the command. If None, uses current directory.
+            Required for Docker mode to mount the volume.
+
+    Returns:
+        Version string (e.g., "9.0.7").
+
+    Raises:
+        RuntimeError: If version cannot be determined.
+
+    Example:
+        >>> runner = KicadCliRunner(mode="local")
+        >>> version = get_kicad_cli_version(runner)
+        >>> print(version)
+        '9.0.7'
+    """
+    if workdir is None:
+        workdir = Path.cwd()
+
+    result = runner.run(["--version"], workdir=workdir)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to get kicad-cli version: {result.stderr or result.stdout}"
+        )
+
+    return _parse_version_output(result.stdout)
+
+
+def _parse_version_output(version_output: str) -> str:
+    """Parse the version string from kicad-cli --version output.
+
+    Args:
+        version_output: Raw output from kicad-cli --version.
+
+    Returns:
+        Cleaned version string (e.g., "9.0.7").
+    """
+    output = version_output.strip()
+
+    # Try to extract version pattern (e.g., "9.0.7" or "9.0.7-1")
+    match = re.search(r"(\d+\.\d+\.\d+(?:-\d+)?)", output)
+    if match:
+        return match.group(1)
+
+    # Fall back to returning the full output if no pattern matches
+    return output
+
+
 __all__ = [
     "KicadCliMode",
     "KicadCliRunner",
     "build_drc_args",
+    "get_kicad_cli_version",
 ]

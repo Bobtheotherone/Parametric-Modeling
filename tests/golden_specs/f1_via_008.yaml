@@ -1,0 +1,102 @@
+# Golden spec F1-008: Generic profile F1 via transition with plane cutouts
+# Parameters: 155um trace, 105um gap, generic fab profile, plane cutouts
+schema_version: 1
+coupon_family: F1_SINGLE_ENDED_VIA
+units: nm
+
+toolchain:
+  kicad:
+    version: "9.0.7"
+    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+
+fab_profile:
+  id: generic
+
+stackup:
+  copper_layers: 4
+  thicknesses_nm:
+    L1_to_L2: "200 um"
+    L2_to_L3: "1000 um"
+    L3_to_L4: "200 um"
+  materials:
+    er: 4.5
+    loss_tangent: 0.02
+
+board:
+  outline:
+    width_nm: "12 mm"
+    length_nm: "30 mm"
+    corner_radius_nm: "500 um"
+  origin:
+    mode: EDGE_L_CENTER
+  text:
+    coupon_id: "F1-VIA-008"
+    include_manifest_hash: true
+
+connectors:
+  left:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["1 mm", "0 nm"]
+    rotation_deg: 0
+  right:
+    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
+    position_nm: ["29 mm", "0 nm"]
+    rotation_deg: 180
+
+transmission_line:
+  type: CPWG
+  layer: F.Cu
+  w_nm: "155 um"
+  gap_nm: "127 um"
+  length_left_nm: "14 mm"
+  # CP-2.2: length_right_nm is deprecated for F1 - derived from continuity formula
+
+discontinuity:
+  type: VIA_TRANSITION
+  signal_via:
+    drill_nm: "300 um"
+    diameter_nm: "500 um"
+    pad_diameter_nm: "700 um"
+  antipads:
+    L2:
+      shape: CIRCLE
+      r_nm: "480 um"
+    L3:
+      shape: CIRCLE
+      r_nm: "480 um"
+  return_vias:
+    pattern: QUAD
+    count: 4
+    radius_nm: "1000 um"
+    via:
+      drill_nm: "300 um"
+      diameter_nm: "500 um"
+  plane_cutouts:
+    L2:
+      shape: SLOT
+      length_nm: "1800 um"
+      width_nm: "400 um"
+      rotation_deg: 0
+    L3:
+      shape: SLOT
+      length_nm: "1800 um"
+      width_nm: "400 um"
+      rotation_deg: 0
+
+constraints:
+  mode: REJECT
+  drc:
+    must_pass: true
+    severity: all
+  symmetry:
+    enforce: true
+  allow_unconnected_copper: false
+
+export:
+  gerbers:
+    enabled: true
+    format: gerbers
+  drill:
+    enabled: true
+    format: excellon
+  outputs_dir: "./outputs"

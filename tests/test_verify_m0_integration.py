@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,19 @@ from tools import verify
 
 def _write_design_doc(path: Path, milestone_id: str) -> None:
     path.write_text(f"**Milestone:** {milestone_id} — test\n", encoding="utf-8")
+
+
+def _write_toolchain_lock(repo_root: Path) -> None:
+    toolchain_dir = repo_root / "toolchain"
+    toolchain_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = toolchain_dir / "kicad.lock.json"
+    lock_data = {
+        "schema_version": "1.0",
+        "kicad_version": "9.0.7",
+        "docker_image": "kicad/kicad:9.0.7",
+        "docker_digest": "sha256:" + "a" * 64,
+    }
+    lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
 
 
 def _has_m0_call(calls: list[dict[str, object]], command: str) -> bool:
@@ -45,6 +59,7 @@ def test_verify_runs_m0_gates_for_m0(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     calls.clear()
     _write_design_doc(design_doc, "M1")
+    _write_toolchain_lock(tmp_path)
     rc = verify.main(
         [
             "--project-root",

@@ -225,7 +225,9 @@ class TestBoardWriter:
 
         # Find segment elements
         segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 2  # left and right tracks
+        # F0 (calibration through-line) has a single continuous trace from
+        # left to right connector. This is correct per LayoutPlan model.
+        assert len(segments) == 1  # single through-line track for F0
 
     def test_writer_f1_includes_vias(self, f1_spec: CouponSpec) -> None:
         """F1 board should include signal and return vias."""

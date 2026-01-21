@@ -1,0 +1,359 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/manifest.v1.json",
+  "title": "CouponManifest",
+  "description": "Manifest schema for coupon builds with complete provenance (per Section 13.5.1) and layer set validation (per Section 13.5.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "coupon_family",
+    "design_hash",
+    "coupon_id",
+    "resolved_design",
+    "derived_features",
+    "dimensionless_groups",
+    "fab_profile",
+    "stackup",
+    "toolchain",
+    "toolchain_hash",
+    "exports",
+    "verification",
+    "lineage"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema version identifier"
+    },
+    "coupon_family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Coupon family identifier (e.g., F0_CALIBRATION_THRU, F1_SINGLE_ENDED_VIA)"
+    },
+    "design_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the canonical resolved design"
+    },
+    "coupon_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable identifier derived from design_hash"
+    },
+    "resolved_design": {
+      "type": "object",
+      "description": "Resolved design with all integer nm parameters",
+      "additionalProperties": true
+    },
+    "derived_features": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      },
+      "description": "Computed derived features from the resolved design"
+    },
+    "dimensionless_groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      },
+      "description": "Dimensionless group calculations"
+    },
+    "fab_profile": {
+      "$ref": "#/$defs/FabProfile"
+    },
+    "stackup": {
+      "type": "object",
+      "description": "Stackup configuration with nm thicknesses and material properties",
+      "additionalProperties": true
+    },
+    "toolchain": {
+      "$ref": "#/$defs/Toolchain"
+    },
+    "toolchain_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 hash of the toolchain metadata"
+    },
+    "exports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExportEntry"
+      },
+      "description": "List of exported files with their canonical hashes"
+    },
+    "verification": {
+      "$ref": "#/$defs/Verification"
+    },
+    "lineage": {
+      "$ref": "#/$defs/Lineage"
+    }
+  },
+  "$defs": {
+    "FabProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "limits"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Fabrication profile identifier"
+        },
+        "limits": {
+          "type": "object",
+          "description": "Resolved numeric limits from the fab profile",
+          "additionalProperties": true
+        }
+      }
+    },
+    "KicadToolchainInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "KiCad version (e.g., '9.0.7')"
+        },
+        "cli_version_output": {
+          "type": "string",
+          "description": "Full output of kicad-cli --version command"
+        }
+      }
+    },
+    "DockerToolchainInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_ref"],
+      "properties": {
+        "image_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Docker image reference with tag and optional digest (e.g., 'kicad/kicad:9.0.7@sha256:...')"
+        }
+      }
+    },
+    "GpuToolchainInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used"],
+      "description": "GPU toolchain info for batch filtering (CP-4.1/CP-4.2)",
+      "properties": {
+        "used": {
+          "type": "boolean",
+          "description": "Whether GPU acceleration was used for batch filtering"
+        },
+        "cupy_version": {
+          "type": ["string", "null"],
+          "description": "CuPy version if GPU was used (e.g., '13.0.0')"
+        },
+        "cuda_runtime_version": {
+          "type": ["string", "null"],
+          "description": "CUDA runtime version if GPU was used (e.g., '12010')"
+        }
+      }
+    },
+    "Toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kicad", "mode"],
+      "properties": {
+        "kicad": {
+          "$ref": "#/$defs/KicadToolchainInfo"
+        },
+        "docker": {
+          "$ref": "#/$defs/DockerToolchainInfo"
+        },
+        "gpu": {
+          "$ref": "#/$defs/GpuToolchainInfo",
+          "description": "GPU toolchain info when batch filtering with GPU (CP-4.2)"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["local", "docker"],
+          "description": "Execution mode for KiCad CLI"
+        },
+        "generator_git_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git SHA of the coupongen code that generated this manifest"
+        }
+      }
+    },
+    "ExportEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "hash"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative path to the exported file"
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 hash of the canonicalized export content"
+        }
+      }
+    },
+    "ConstraintVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed"],
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "Whether all constraints passed"
+        },
+        "failed_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of failed constraint IDs"
+        }
+      }
+    },
+    "DrcSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["violations", "warnings", "exclusions"],
+      "properties": {
+        "violations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of DRC violations"
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of DRC warnings"
+        },
+        "exclusions": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of excluded DRC checks"
+        }
+      }
+    },
+    "DrcVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["returncode", "report_path"],
+      "properties": {
+        "returncode": {
+          "type": "integer",
+          "description": "Return code from KiCad CLI DRC (0=clean, 5=violations)"
+        },
+        "report_path": {
+          "type": "string",
+          "description": "Path to the DRC JSON report file"
+        },
+        "summary": {
+          "$ref": "#/$defs/DrcSummary",
+          "description": "Summary of DRC results"
+        },
+        "canonical_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 hash of the canonicalized DRC report"
+        }
+      }
+    },
+    "LayerSetValidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "copper_layer_count", "family", "expected_layers", "actual_layers"],
+      "description": "Layer set validation result per Section 13.5.3",
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "Whether all required layers are present"
+        },
+        "copper_layer_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of copper layers in the design"
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Coupon family identifier"
+        },
+        "expected_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of required layers for this layer count (e.g., F.Cu, In1.Cu, In2.Cu, B.Cu, F.Mask, B.Mask, Edge.Cuts)"
+        },
+        "actual_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of layers found in exported gerber files"
+        },
+        "missing_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of required layers that were not found in exports"
+        },
+        "extra_layers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of unexpected layers found in exports"
+        }
+      }
+    },
+    "Verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["constraints", "drc"],
+      "properties": {
+        "constraints": {
+          "$ref": "#/$defs/ConstraintVerification"
+        },
+        "drc": {
+          "$ref": "#/$defs/DrcVerification"
+        },
+        "layer_set": {
+          "oneOf": [
+            { "$ref": "#/$defs/LayerSetValidation" },
+            { "type": "null" }
+          ],
+          "description": "Layer set validation result (per Section 13.5.3)"
+        }
+      }
+    },
+    "Lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git_sha", "timestamp_utc"],
+      "properties": {
+        "git_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Git commit SHA at build time"
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp of the build (ISO 8601 format)"
+        }
+      }
+    }
+  }
+}

@@ -838,6 +838,9 @@ def _get_git_info(cwd: Path) -> GitInfo | None:
     Returns:
         GitInfo if in a git repo, None otherwise.
     """
+    git_marker = cwd / ".git"
+    if not git_marker.exists():
+        return None
     try:
         # Get current commit SHA
         result = subprocess.run(

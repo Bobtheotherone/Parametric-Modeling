@@ -5,6 +5,8 @@ This module tests the GPU vectorized constraint checking for Tier 0-2 constraint
 - Feasibility mask generation
 - Constraint repair logic
 - Repair metadata tracking
+
+Updated for CP-4.1: Tests formal batch_filter API with mode, seed, and RepairMeta.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from formula_foundry.coupongen.constraints.gpu_filter import (
     FamilyF1ParameterSpace,
     GPUConstraintFilter,
     ParameterMapping,
+    RepairMeta,
     batch_filter,
     is_gpu_available,
 )
@@ -379,22 +382,165 @@ class TestGPUAvailability:
 
 
 class TestBatchFilterResult:
-    """Test BatchFilterResult properties."""
+    """Test BatchFilterResult properties per CP-4.1 API."""
 
     def test_properties(self) -> None:
         """BatchFilterResult should compute properties correctly."""
-        result = BatchFilterResult(
-            feasible_mask=np.array([True, True, False, True, False]),
-            repaired_u=np.random.rand(5, 19),
+        repair_meta = RepairMeta(
             repair_counts=np.array([0, 1, 2, 0, 3]),
             repair_distances=np.array([0.0, 0.1, 0.2, 0.0, 0.3]),
             tier_violations={"T0": np.array([0, 0, 1, 0, 1])},
             constraint_margins={},
+            seed=42,
+            mode="REPAIR",
+        )
+        result = BatchFilterResult(
+            mask=np.array([True, True, False, True, False]),
+            u_repaired=np.random.rand(5, 19),
+            repair_meta=repair_meta,
         )
 
         assert result.n_candidates == 5
         assert result.n_feasible == 3
         assert result.feasibility_rate == 0.6
+
+    def test_legacy_aliases(self) -> None:
+        """BatchFilterResult should provide legacy attribute aliases."""
+        repair_meta = RepairMeta(
+            repair_counts=np.array([1, 2]),
+            repair_distances=np.array([0.1, 0.2]),
+            tier_violations={"T0": np.array([1, 0])},
+            constraint_margins={"T0_TEST": np.array([10.0, 20.0])},
+            seed=123,
+            mode="REPAIR",
+        )
+        result = BatchFilterResult(
+            mask=np.array([True, False]),
+            u_repaired=np.array([[0.5] * 19, [0.6] * 19]),
+            repair_meta=repair_meta,
+        )
+
+        # Test legacy aliases
+        np.testing.assert_array_equal(result.feasible_mask, result.mask)
+        np.testing.assert_array_equal(result.repaired_u, result.u_repaired)
+        np.testing.assert_array_equal(result.repair_counts, repair_meta.repair_counts)
+        np.testing.assert_array_equal(result.repair_distances, repair_meta.repair_distances)
+        assert result.tier_violations == repair_meta.tier_violations
+        assert result.constraint_margins == repair_meta.constraint_margins
+
+
+class TestCP41FormalAPI:
+    """Test the formal CP-4.1 batch_filter API."""
+
+    def test_batch_filter_with_mode_reject(self) -> None:
+        """batch_filter with mode=REJECT should not repair violations."""
+        np.random.seed(42)
+        u_batch = np.random.rand(100, 19)
+
+        result = batch_filter(u_batch, mode="REJECT", seed=42, use_gpu=False)
+
+        assert isinstance(result, BatchFilterResult)
+        assert result.repair_meta.mode == "REJECT"
+        assert result.repair_meta.seed == 42
+        # In REJECT mode, repair counts should be zero
+        assert result.repair_meta.repair_counts.sum() == 0
+
+    def test_batch_filter_with_mode_repair(self) -> None:
+        """batch_filter with mode=REPAIR should attempt repairs."""
+        np.random.seed(42)
+        u_batch = np.random.rand(100, 19)
+
+        result = batch_filter(u_batch, mode="REPAIR", seed=42, use_gpu=False)
+
+        assert isinstance(result, BatchFilterResult)
+        assert result.repair_meta.mode == "REPAIR"
+        assert result.repair_meta.seed == 42
+        # REPAIR mode should have some repairs applied (with random data)
+        # Note: Some candidates may not need repairs
+
+    def test_batch_filter_seed_determinism(self) -> None:
+        """batch_filter with same seed should produce identical results."""
+        u_batch = np.random.rand(50, 19)
+
+        result1 = batch_filter(u_batch, mode="REPAIR", seed=12345, use_gpu=False)
+        result2 = batch_filter(u_batch, mode="REPAIR", seed=12345, use_gpu=False)
+
+        np.testing.assert_array_equal(result1.mask, result2.mask)
+        np.testing.assert_array_equal(result1.u_repaired, result2.u_repaired)
+        np.testing.assert_array_equal(result1.repair_meta.repair_counts, result2.repair_meta.repair_counts)
+
+    def test_batch_filter_profiles_as_dict(self) -> None:
+        """batch_filter should accept profiles as a dict."""
+        u_batch = np.random.rand(20, 19)
+        profiles = _default_fab_limits()
+
+        result = batch_filter(u_batch, profiles=profiles, mode="REPAIR", seed=0, use_gpu=False)
+
+        assert isinstance(result, BatchFilterResult)
+
+    def test_batch_filter_mask_attribute(self) -> None:
+        """batch_filter result should have mask attribute (CP-4.1 spec)."""
+        u_batch = np.random.rand(10, 19)
+
+        result = batch_filter(u_batch, mode="REPAIR", seed=0, use_gpu=False)
+
+        assert hasattr(result, "mask")
+        assert hasattr(result, "u_repaired")
+        assert hasattr(result, "repair_meta")
+        assert len(result.mask) == 10
+
+    def test_batch_filter_repair_meta_structure(self) -> None:
+        """batch_filter repair_meta should have required fields."""
+        u_batch = np.random.rand(10, 19)
+
+        result = batch_filter(u_batch, mode="REPAIR", seed=99, use_gpu=False)
+
+        meta = result.repair_meta
+        assert isinstance(meta, RepairMeta)
+        assert hasattr(meta, "repair_counts")
+        assert hasattr(meta, "repair_distances")
+        assert hasattr(meta, "tier_violations")
+        assert hasattr(meta, "constraint_margins")
+        assert hasattr(meta, "seed")
+        assert hasattr(meta, "mode")
+        assert meta.seed == 99
+        assert meta.mode == "REPAIR"
+
+    def test_legacy_parameter_compatibility(self) -> None:
+        """batch_filter should accept legacy parameters for backward compatibility."""
+        u_batch = np.random.rand(20, 19)
+        limits = _default_fab_limits()
+
+        # Test with legacy fab_limits parameter
+        result1 = batch_filter(u_batch, fab_limits=limits, use_gpu=False)
+        assert isinstance(result1, BatchFilterResult)
+
+        # Test with legacy repair parameter
+        result2 = batch_filter(u_batch, fab_limits=limits, repair=True, use_gpu=False)
+        assert result2.repair_meta.mode == "REPAIR"
+
+        result3 = batch_filter(u_batch, fab_limits=limits, repair=False, use_gpu=False)
+        assert result3.repair_meta.mode == "REJECT"
+
+    def test_reject_mode_no_modification(self) -> None:
+        """In REJECT mode, u_repaired should equal original u_batch."""
+        np.random.seed(42)
+        u_batch = np.random.rand(50, 19).astype(np.float64)
+
+        result = batch_filter(u_batch.copy(), mode="REJECT", seed=0, use_gpu=False)
+
+        # u_repaired should be the same as input (no repairs applied)
+        np.testing.assert_array_almost_equal(result.u_repaired, u_batch)
+
+    def test_repair_mode_increases_feasibility(self) -> None:
+        """REPAIR mode should increase or maintain feasibility vs REJECT."""
+        np.random.seed(42)
+        u_batch = np.random.rand(500, 19)
+
+        result_reject = batch_filter(u_batch, mode="REJECT", seed=0, use_gpu=False)
+        result_repair = batch_filter(u_batch, mode="REPAIR", seed=0, use_gpu=False)
+
+        assert result_repair.n_feasible >= result_reject.n_feasible
 
 
 class TestCustomFabLimits:

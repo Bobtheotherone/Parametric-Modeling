@@ -1,15 +1,17 @@
 """Constraint system for coupon generation.
 
 This package provides:
-1. Core constraint evaluation (backward compatible with existing API)
-2. Tiered constraint validation system with four tiers:
+1. Constraint primitives: Declarative constraint definitions with id, tier,
+   category, description, expr, severity, and must_pass fields (Section 13.3.1)
+2. Core constraint evaluation (backward compatible with existing API)
+3. Tiered constraint validation system with four tiers:
    - Tier 0: Parameter bounds (direct value checks against fab limits)
    - Tier 1: Derived scalar constraints (computed from multiple parameters)
    - Tier 2: Analytic spatial constraints (geometric relationships)
    - Tier 3: Exact geometry collision detection
-3. REPAIR mode that projects infeasible specs into feasible space with
+4. REPAIR mode that projects infeasible specs into feasible space with
    auditable repair_map, repair_reason, and repair_distance
-4. constraint_proof.json generation with per-constraint evaluations and
+5. constraint_proof.json generation with per-constraint evaluations and
    signed margins
 
 The system supports REJECT mode which fails with constraint IDs and reasons,
@@ -22,6 +24,16 @@ REQ-M1-011: constraint_proof.json with per-constraint evaluations and signed mar
 """
 
 # Re-export core constraint types and functions for backward compatibility
+# Export connectivity oracle (CP-2.5, Section 13.2.5)
+from .connectivity import (
+    ConnectivityChecker,
+    ConnectivityNode,
+    ConnectivityOracle,
+    NodeType,
+    UnionFind,
+    build_oracle_from_layout,
+    check_layout_connectivity,
+)
 from .core import (
     ConstraintEvaluation,
     ConstraintProof,
@@ -37,25 +49,58 @@ from .core import (
     resolve_fab_limits_from_profile,
 )
 
+# Export unified ConstraintEngine (CP-3.1, Section 13.3)
+from .engine import (
+    ConstraintEngine,
+    ConstraintEngineResult,
+    ConstraintMode,
+    SpecOrResolved,
+    create_constraint_engine,
+)
+
 # Export GPU-accelerated batch filtering (new in M1-GPU-FILTER)
+# Updated for CP-4.1 formal API with mode, seed, and RepairMeta
 from .gpu_filter import (
     BatchFilterResult,
+    FabProfiles,
     FamilyF1ParameterSpace,
     GPUConstraintFilter,
     ParameterMapping,
+    RepairMeta,
     batch_filter,
     is_gpu_available,
 )
 
+# Export constraint primitives (Section 13.3.1)
+from .primitives import (
+    Constraint,
+    ConstraintCategory,
+    ConstraintCategoryLiteral,
+    ConstraintContext,
+    ConstraintSeverity,
+    ConstraintSeverityLiteral,
+    ConstraintTierLiteral,
+    create_bool_constraint_result,
+    create_equality_constraint_result,
+    create_max_constraint_result,
+    create_min_constraint_result,
+)
+from .primitives import ConstraintResult as PrimitiveConstraintResult
+from .primitives import ConstraintTier as PrimitiveConstraintTier
+
 # Export REPAIR mode and constraint proof generation (new in M1-CONSTRAINTS-REPAIR)
+# CP-3.4: Enhanced with audit trail, L2/Linf metrics, design vectors
 from .repair import (
     ConstraintProofDocument,
+    DesignVector,
     RepairAction,
+    RepairDistanceMetrics,
     RepairEngine,
     RepairResult,
     generate_constraint_proof,
     repair_spec_tiered,
     write_constraint_proof,
+    write_repair_map,
 )
 
 # Import ConstraintResult from tiers as TieredConstraintResult to avoid name collision
@@ -98,19 +143,52 @@ __all__ = [
     "TieredConstraintResult",
     "TieredConstraintSystem",
     "evaluate_tiered_constraints",
-    # REPAIR mode and constraint proof generation (new)
+    # REPAIR mode and constraint proof generation (new, enhanced CP-3.4)
     "ConstraintProofDocument",
+    "DesignVector",
     "RepairAction",
+    "RepairDistanceMetrics",
     "RepairEngine",
     "RepairResult",
     "generate_constraint_proof",
     "repair_spec_tiered",
     "write_constraint_proof",
-    # GPU-accelerated batch filtering (new)
+    "write_repair_map",
+    # GPU-accelerated batch filtering (new, updated for CP-4.1)
     "BatchFilterResult",
+    "FabProfiles",
     "FamilyF1ParameterSpace",
     "GPUConstraintFilter",
     "ParameterMapping",
+    "RepairMeta",
     "batch_filter",
     "is_gpu_available",
+    # Constraint primitives (Section 13.3.1)
+    "Constraint",
+    "ConstraintCategory",
+    "ConstraintCategoryLiteral",
+    "ConstraintContext",
+    "ConstraintSeverity",
+    "ConstraintSeverityLiteral",
+    "ConstraintTierLiteral",
+    "PrimitiveConstraintResult",
+    "PrimitiveConstraintTier",
+    "create_bool_constraint_result",
+    "create_equality_constraint_result",
+    "create_max_constraint_result",
+    "create_min_constraint_result",
+    # Connectivity oracle (CP-2.5, Section 13.2.5)
+    "ConnectivityChecker",
+    "ConnectivityNode",
+    "ConnectivityOracle",
+    "NodeType",
+    "UnionFind",
+    "build_oracle_from_layout",
+    "check_layout_connectivity",
+    # Unified ConstraintEngine (CP-3.1, Section 13.3)
+    "ConstraintEngine",
+    "ConstraintEngineResult",
+    "ConstraintMode",
+    "SpecOrResolved",
+    "create_constraint_engine",
 ]

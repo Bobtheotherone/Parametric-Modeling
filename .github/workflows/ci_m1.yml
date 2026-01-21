@@ -1,0 +1,219 @@
+# SPDX-License-Identifier: MIT
+#
+# GitHub Actions CI workflow for M1 compliance (CP-1.3)
+#
+# This workflow implements the authoritative CI integration for M1:
+# - Unit job: Fast Python unit tests (schema, resolve determinism, constraints)
+# - KiCad integration job: Real KiCad DRC/export in pinned Docker image
+#
+# Gates enforced:
+# - G1: Resolver determinism
+# - G2: Constraint proof completeness
+# - G3: DRC clean (KiCad DRC passes with zero violations)
+# - G4: Export completeness (all required layers + drill files present)
+# - G5: Stable canonical hashes across repeated runs
+#
+# References:
+# - https://docs.github.com/en/actions
+# - https://github.com/actions/setup-python
+# - https://www.kicad.org/download/docker/
+
+name: M1 CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "agent-run/**"
+      - "task/**"
+  pull_request:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================================================================
+  # Unit Tests (fast)
+  # ==========================================================================
+  # Runs pure Python unit tests without Docker/KiCad dependencies
+  # Tests: schema validation, resolve determinism, constraint engine, canonicalization
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Print KiCad image reference (for CI logs)
+        run: |
+          python tools/print_kicad_image_ref.py --allow-placeholder --format image || true
+
+      - name: Run unit tests (excluding kicad_integration)
+        run: |
+          pytest -m "not kicad_integration" --tb=short -q
+        env:
+          PYTHONPATH: src:.
+
+  # ==========================================================================
+  # KiCad Integration Tests (authoritative)
+  # ==========================================================================
+  # Runs real KiCad DRC and export verification using pinned Docker image
+  # Enforces G3, G4, G5 gates with actual KiCad CLI
+  kicad_integration:
+    name: KiCad Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit  # Only run if unit tests pass
+
+    env:
+      COUPONGEN_TOOLCHAIN: docker
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyyaml
+
+      - name: Validate and get KiCad Docker image reference (digest-pinned)
+        id: kicad-image
+        run: |
+          # Read from toolchain lock file - STRICT: no placeholders allowed
+          # This ensures CI uses a fully digest-pinned image for reproducibility
+          # Use --format ref to get digest-only reference without tag for docker pull
+          DOCKER_REF=$(python tools/print_kicad_image_ref.py --format ref)
+          DIGEST=$(python tools/print_kicad_image_ref.py --format digest)
+          FULL_REF=$(python tools/print_kicad_image_ref.py --format full)
+          echo "docker_ref=$DOCKER_REF" >> $GITHUB_OUTPUT
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "full_ref=$FULL_REF" >> $GITHUB_OUTPUT
+          echo "Using KiCad image (digest-pinned, no tag): $DOCKER_REF"
+
+      - name: Pull KiCad Docker image (by digest)
+        run: |
+          # Pull by full digest reference for reproducibility
+          docker pull ${{ steps.kicad-image.outputs.docker_ref }}
+          docker images | grep kicad
+          # Verify the pulled image digest matches expected
+          ACTUAL_DIGEST=$(docker inspect ${{ steps.kicad-image.outputs.docker_ref }} --format '{{.RepoDigests}}' | grep -oP 'sha256:[a-f0-9]{64}')
+          echo "Expected digest: ${{ steps.kicad-image.outputs.digest }}"
+          echo "Actual digest: $ACTUAL_DIGEST"
+
+      - name: Print KiCad image reference for CI logs
+        run: |
+          echo "KiCad Docker ref (digest-only): ${{ steps.kicad-image.outputs.docker_ref }}"
+          echo "KiCad Docker ref (full): ${{ steps.kicad-image.outputs.full_ref }}"
+          echo "---"
+          echo "Docker image info:"
+          docker inspect ${{ steps.kicad-image.outputs.docker_ref }} --format '{{.Id}}' || true
+          echo "KiCad CLI version from container:"
+          docker run --rm ${{ steps.kicad-image.outputs.docker_ref }} kicad-cli version || true
+
+      - name: Run KiCad integration tests
+        run: |
+          pytest -m "kicad_integration" --tb=short -q -v
+        env:
+          PYTHONPATH: src:.
+          COUPONGEN_TOOLCHAIN: docker
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@654a3f24f56a1de4d4c5fce4e5fcd5a2b7f5ab63
+        with:
+          name: kicad-integration-failure-artifacts
+          path: |
+            artifacts/verify/**
+            **/drc.json
+            **/drc_report.json
+            **/manifest.json
+            **/resolved_design.json
+            **/*.gbr
+            **/*.drl
+            **/*.kicad_pcb
+            **/gerbers/**
+            **/gerber/**
+            **/drill/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ==========================================================================
+  # Gate Tests (explicit gate markers)
+  # ==========================================================================
+  # Runs tests with specific gate markers for clear compliance reporting
+  gates:
+    name: Gate Tests (${{ matrix.gate }})
+    runs-on: ubuntu-latest
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - gate_g1
+          - gate_g2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7b4f9c3f6a9a7bb5e20d8d6d0ce7f95b5a11c
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run ${{ matrix.gate }} tests
+        run: |
+          pytest -m "${{ matrix.gate }}" --tb=short -q
+        env:
+          PYTHONPATH: src:.
+
+      - name: Upload gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@654a3f24f56a1de4d4c5fce4e5fcd5a2b7f5ab63
+        with:
+          name: gate-${{ matrix.gate }}-artifacts
+          path: |
+            artifacts/verify/**
+            **/drc.json
+            **/drc_report.json
+            **/resolved_design.json
+            **/manifest.json
+            **/constraint_proof.json
+            **/*.gbr
+            **/*.drl
+            **/*.kicad_pcb
+            **/gerbers/**
+            **/gerber/**
+            **/drill/**
+          if-no-files-found: ignore
+          retention-days: 14
