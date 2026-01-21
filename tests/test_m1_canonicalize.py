@@ -16,8 +16,11 @@ import pytest
 
 from formula_foundry.coupongen.kicad import (
     canonical_hash_board,
+    canonical_hash_drill,
+    canonical_hash_gerber,
     canonical_hash_drc_json,
     canonicalize_board,
+    canonicalize_drill,
     canonicalize_drc_json,
     canonicalize_gerber,
 )
@@ -208,6 +211,55 @@ class TestCanonicalizeGerber:
         assert "X1000000Y0D01*" in canonical
         assert "M02*" in canonical
 
+    def test_strips_creation_date_attribute(self) -> None:
+        """Gerber canonicalization removes TF.CreationDate attributes."""
+        gerber = "%TF.CreationDate,2026-01-20T10:30:00*%\nX0Y0D02*\n"
+        canonical = canonicalize_gerber(gerber)
+
+        assert "CreationDate" not in canonical
+        assert "X0Y0D02*" in canonical
+
+    def test_hash_stability_across_timestamp_variations(self) -> None:
+        """Gerber canonical hash must be stable across timestamp variations."""
+        hashes = []
+        for day in range(1, 4):
+            gerber = f"%TF.CreationDate,2026-01-0{day}T10:30:00*%\nX0Y0D02*\n"
+            hashes.append(canonical_hash_gerber(gerber))
+
+        assert len(set(hashes)) == 1
+
+
+class TestCanonicalizeDrill:
+    """Tests for canonicalize_drill per Section 13.5.2."""
+
+    def test_strips_comment_lines(self) -> None:
+        """Drill canonicalization removes semicolon comment lines."""
+        drill = "M48\n; Excellon drill file\nT1C0.3\n%\nM30\n"
+        canonical = canonicalize_drill(drill)
+
+        assert "; Excellon drill file" not in canonical
+        assert "M48" in canonical
+        assert "T1C0.3" in canonical
+
+    def test_normalizes_line_endings(self) -> None:
+        """Drill canonicalization normalizes CRLF to LF."""
+        drill_crlf = "M48\r\n; Comment\r\nT1C0.3\r\nM30\r\n"
+        drill_lf = "M48\n; Comment\nT1C0.3\nM30\n"
+
+        canonical_crlf = canonicalize_drill(drill_crlf)
+        canonical_lf = canonicalize_drill(drill_lf)
+
+        assert canonical_crlf == canonical_lf
+
+    def test_hash_stability_across_comment_variations(self) -> None:
+        """Drill canonical hash must be stable across comment variations."""
+        hashes = []
+        for idx in range(3):
+            drill = f"M48\n; Build {idx}\nT1C0.3\n%\nM30\n"
+            hashes.append(canonical_hash_drill(drill))
+
+        assert len(set(hashes)) == 1
+
 
 class TestCanonicalizeDrcJson:
     """Tests for canonicalize_drc_json per Section 13.5.2."""
@@ -282,6 +334,14 @@ class TestCanonicalizeDrcJson:
 
         assert parsed["file"] == "board.kicad_pcb"
 
+    def test_normalizes_absolute_path_values(self) -> None:
+        """DRC JSON canonicalization normalizes absolute path values."""
+        drc = {"note": "/tmp/build/board.kicad_pcb", "violations": []}
+        canonical = canonicalize_drc_json(drc)
+        parsed = json.loads(canonical)
+
+        assert parsed["note"] == "board.kicad_pcb"
+
     def test_sorts_object_keys(self) -> None:
         """DRC JSON canonicalization sorts object keys alphabetically."""
         drc = {"zebra": 1, "alpha": 2, "mike": 3}
@@ -290,22 +350,19 @@ class TestCanonicalizeDrcJson:
         # Keys should be in sorted order in the output
         assert canonical == '{"alpha":2,"mike":3,"zebra":1}'
 
-    def test_preserves_list_order(self) -> None:
-        """DRC JSON canonicalization preserves list ordering."""
+    def test_sorts_list_order(self) -> None:
+        """DRC JSON canonicalization sorts list ordering for violations."""
         drc = {
             "violations": [
-                {"id": 3, "msg": "third"},
-                {"id": 1, "msg": "first"},
-                {"id": 2, "msg": "second"},
+                {"id": 3},
+                {"id": 1},
+                {"id": 2},
             ]
         }
         canonical = canonicalize_drc_json(drc)
         parsed = json.loads(canonical)
 
-        # List order should be preserved
-        assert parsed["violations"][0]["id"] == 3
-        assert parsed["violations"][1]["id"] == 1
-        assert parsed["violations"][2]["id"] == 2
+        assert [item["id"] for item in parsed["violations"]] == [1, 2, 3]
 
     def test_recursively_canonicalizes_nested_objects(self) -> None:
         """DRC JSON canonicalization handles nested structures."""
@@ -362,6 +419,16 @@ class TestCanonicalizeDrcJson:
             "file": "/tmp/other/board.kicad_pcb",
             "violations": [{"type": "clearance", "severity": "error"}],
         }
+
+        hash_a = canonical_hash_drc_json(drc_a)
+        hash_b = canonical_hash_drc_json(drc_b)
+
+        assert hash_a == hash_b
+
+    def test_hash_stability_across_violation_order(self) -> None:
+        """DRC hash must be stable across reordered violations."""
+        drc_a = {"violations": [{"id": 2}, {"id": 1}]}
+        drc_b = {"violations": [{"id": 1}, {"id": 2}]}
 
         hash_a = canonical_hash_drc_json(drc_a)
         hash_b = canonical_hash_drc_json(drc_b)
