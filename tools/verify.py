@@ -170,6 +170,35 @@ def _gate_m0_repro_check(project_root: Path, *, timeout_s: int) -> GateResult:
     return res
 
 
+def _gate_toolchain_lock(project_root: Path) -> GateResult:
+    try:
+        from formula_foundry.coupongen.toolchain import (
+            DEFAULT_LOCK_PATH,
+            ToolchainLoadError,
+            load_toolchain_lock,
+        )
+    except ImportError as exc:
+        return GateResult(
+            name="toolchain_lock",
+            passed=False,
+            stderr=f"Failed to import toolchain lock loader: {exc}",
+            note="import error",
+        )
+
+    lock_path = project_root / DEFAULT_LOCK_PATH
+    try:
+        load_toolchain_lock(lock_path=lock_path)
+    except ToolchainLoadError as exc:
+        return GateResult(
+            name="toolchain_lock",
+            passed=False,
+            stderr=str(exc),
+            note="invalid toolchain lock",
+        )
+
+    return GateResult(name="toolchain_lock", passed=True, note="ok")
+
+
 def _resolve_m0_timeout(args: argparse.Namespace) -> int:
     if isinstance(getattr(args, "m0_timeout_s", None), int):
         return int(args.m0_timeout_s)
@@ -590,6 +619,8 @@ def main(argv: list[str] | None = None) -> int:
         m0_timeout_s = _resolve_m0_timeout(args)
         results.append(_gate_m0_smoke(project_root, timeout_s=m0_timeout_s))
         results.append(_gate_m0_repro_check(project_root, timeout_s=m0_timeout_s))
+    if milestone_id == "M1":
+        results.append(_gate_toolchain_lock(project_root))
 
     if not args.skip_pytest:
         results.append(_gate_pytest(project_root))
