@@ -14,12 +14,13 @@ Board canonicalization (canonicalize_board):
 
 Gerber canonicalization (canonicalize_gerber):
     - Strip: comment lines starting with G04
-    - Normalize: CRLF -> LF, trailing spaces trimmed
+    - Strip: timestamp attributes (e.g., TF.CreationDate)
+    - Normalize: CRLF -> LF, trim leading/trailing whitespace, drop empty lines
 
 DRC JSON canonicalization (canonicalize_drc_json):
     - Remove/normalize: timestamps, absolute paths, tool invocation environment
     - Sort: object keys alphabetically
-    - Stable: list ordering where semantics allow
+    - Stable: sort list entries for order-insensitive keys (violations, unconnected_items)
 
 Satisfies REQ-M1-005.
 """
@@ -46,6 +47,9 @@ _GERBER_COMMENT_PREFIX = "G04"
 # Excellon drill file comment prefix
 _EXCELLON_COMMENT_PREFIX = ";"
 
+# Gerber attributes that include timestamps (strip for deterministic hashing)
+_GERBER_TIMESTAMP_RE = re.compile(r"creation\s*date|creation\s*time", re.IGNORECASE)
+
 # DRC JSON keys that contain nondeterministic values (to be removed or normalized)
 _DRC_NONDETERMINISTIC_KEYS = frozenset({
     "date",
@@ -66,6 +70,16 @@ _DRC_PATH_KEYS = frozenset({
     "source_file",
     "board_file",
 })
+
+# DRC list keys whose ordering is not semantically meaningful
+_DRC_SORTED_LIST_KEYS = frozenset({
+    "violations",
+    "unconnected_items",
+    "schematic_parity",
+})
+
+# Absolute path detection (POSIX, Windows drive, UNC)
+_ABS_PATH_RE = re.compile(r"^(?:/|[a-zA-Z]:\\\\|\\\\\\\\)")
 
 # Sentinel value to indicate a key should be removed (distinct from None)
 _REMOVE_KEY = object()
@@ -88,6 +102,7 @@ def canonicalize_gerber(text: str) -> str:
 
     Removes nondeterministic elements:
     - G04 comment lines (contain timestamps, tool info, etc.)
+    - TF.CreationDate attribute lines (timestamp metadata)
     - Trailing whitespace on each line
     - CRLF/CR line endings (normalized to LF)
 
@@ -101,11 +116,20 @@ def canonicalize_gerber(text: str) -> str:
     lines: list[str] = []
     for line in normalized.split("\n"):
         stripped = line.rstrip()
-        # Skip G04 comment lines (they contain timestamps/tool info)
-        if stripped.startswith(_GERBER_COMMENT_PREFIX):
+        trimmed = stripped.lstrip()
+        if not trimmed:
             continue
-        lines.append(stripped)
-    return "\n".join(lines)
+        # Skip G04 comment lines (they contain timestamps/tool info)
+        if trimmed.startswith(_GERBER_COMMENT_PREFIX):
+            continue
+        # Strip timestamp attributes like TF.CreationDate
+        if _GERBER_TIMESTAMP_RE.search(trimmed):
+            continue
+        lines.append(trimmed)
+    result = "\n".join(lines)
+    if result and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 def canonicalize_drill(text: str) -> str:
@@ -115,6 +139,7 @@ def canonicalize_drill(text: str) -> str:
     - Semicolon comment lines (contain timestamps, tool info)
     - Trailing whitespace on each line
     - CRLF/CR line endings (normalized to LF)
+    - Empty lines (normalization)
 
     Args:
         text: Raw Excellon drill file content.
@@ -126,11 +151,15 @@ def canonicalize_drill(text: str) -> str:
     lines: list[str] = []
     for line in normalized.split("\n"):
         stripped = line.rstrip()
-        # Skip semicolon comment lines
-        if stripped.startswith(_EXCELLON_COMMENT_PREFIX):
+        trimmed = stripped.lstrip()
+        # Skip empty or semicolon comment lines
+        if not trimmed or trimmed.startswith(_EXCELLON_COMMENT_PREFIX):
             continue
-        lines.append(stripped)
-    return "\n".join(lines)
+        lines.append(trimmed)
+    result = "\n".join(lines)
+    if result and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 def canonicalize_kicad_pcb(text: str) -> str:
@@ -230,11 +259,20 @@ def canonicalize_export(text: str) -> str:
     lines: list[str] = []
     for line in normalized.split("\n"):
         stripped = line.rstrip()
-        # Skip both Gerber G04 comments and Excellon semicolon comments
-        if stripped.startswith(_GERBER_COMMENT_PREFIX) or stripped.startswith(_EXCELLON_COMMENT_PREFIX):
+        trimmed = stripped.lstrip()
+        if not trimmed:
             continue
-        lines.append(stripped)
-    return "\n".join(lines)
+        # Skip both Gerber G04 comments and Excellon semicolon comments
+        if trimmed.startswith(_GERBER_COMMENT_PREFIX) or trimmed.startswith(_EXCELLON_COMMENT_PREFIX):
+            continue
+        # Strip timestamp attributes like TF.CreationDate (Gerber)
+        if _GERBER_TIMESTAMP_RE.search(trimmed):
+            continue
+        lines.append(trimmed)
+    result = "\n".join(lines)
+    if result and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 def _normalize_drc_value(key: str, value: Any) -> Any:
@@ -255,18 +293,20 @@ def _normalize_drc_value(key: str, value: Any) -> Any:
         return _REMOVE_KEY
 
     # Normalize path values to just filename (remove directory prefixes)
-    if key_lower in _DRC_PATH_KEYS and isinstance(value, str):
-        # Extract just the filename portion
-        if "/" in value:
-            return value.rsplit("/", 1)[-1]
-        if "\\" in value:
-            return value.rsplit("\\", 1)[-1]
-        return value
+    if isinstance(value, str):
+        key_is_path = key_lower in _DRC_PATH_KEYS or key_lower.endswith("_path") or key_lower.endswith("_file")
+        key_is_path = key_is_path or key_lower.startswith("path_") or key_lower.startswith("file_")
+        if key_is_path or _ABS_PATH_RE.match(value):
+            if "/" in value:
+                return value.rsplit("/", 1)[-1]
+            if "\\" in value:
+                return value.rsplit("\\", 1)[-1]
+            return value
 
     return value
 
 
-def _canonicalize_drc_object(obj: Any) -> Any:
+def _canonicalize_drc_object(obj: Any, *, parent_key: str | None = None) -> Any:
     """Recursively canonicalize a DRC JSON object.
 
     Args:
@@ -282,12 +322,17 @@ def _canonicalize_drc_object(obj: Any) -> Any:
             normalized = _normalize_drc_value(key, obj[key])
             if normalized is not _REMOVE_KEY:
                 # Recursively canonicalize nested structures
-                result[key] = _canonicalize_drc_object(normalized)
+                result[key] = _canonicalize_drc_object(normalized, parent_key=key)
         return result
     elif isinstance(obj, list):
         # Recursively canonicalize list items
-        # Note: We preserve list order as reordering violations could change semantics
-        return [_canonicalize_drc_object(item) for item in obj]
+        canonical_items = [_canonicalize_drc_object(item, parent_key=parent_key) for item in obj]
+        if parent_key in _DRC_SORTED_LIST_KEYS:
+            return sorted(
+                canonical_items,
+                key=lambda item: json.dumps(item, separators=(",", ":"), sort_keys=True),
+            )
+        return canonical_items
     else:
         # Primitives (including None) pass through unchanged
         return obj
@@ -312,9 +357,10 @@ def canonicalize_drc_json(data: str | dict[str, Any]) -> str:
        - Ensures deterministic JSON output
        - Nested objects are also sorted
 
-    4. Preserve list ordering:
-       - Violation lists maintain order (reordering could change semantics)
-       - Items within lists are recursively canonicalized
+    4. Stabilize list ordering where semantics allow:
+       - Violations, unconnected items, and schematic parity lists are sorted
+         deterministically after recursive canonicalization.
+       - Other lists preserve ordering.
 
     The output is compact JSON (no indentation) with sorted keys.
 

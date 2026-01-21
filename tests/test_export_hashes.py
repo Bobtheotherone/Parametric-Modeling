@@ -189,7 +189,11 @@ class TestCanonicalization:
 
     def test_canonicalize_export_removes_dates(self) -> None:
         """Canonicalization should remove date patterns."""
-        gerber = "G04 CreationDate: 2026-01-19 10:00:00*\nX0Y0D02*\n"
+        gerber = (
+            "%TF.CreationDate,2026-01-19T10:00:00*%\n"
+            "G04 CreationDate: 2026-01-19 10:00:00*\n"
+            "X0Y0D02*\n"
+        )
         canonical = canonicalize_export_text(gerber)
 
         assert "2026-01-19" not in canonical
