@@ -45,24 +45,50 @@ if TYPE_CHECKING:
 FabProfiles = Union[dict[str, int], "FabCapabilityProfile"]
 
 # Try to import CuPy, fall back to NumPy if unavailable
+# NOTE: We do NOT test GPU operations at import time to avoid triggering
+# NVRTC compilation or GPU memory allocation during test collection.
 try:
     import cupy as cp
+    _CUPY_IMPORTED = True
+except ImportError:
+    cp = None  # type: ignore[assignment]
+    _CUPY_IMPORTED = False
 
-    # Verify CUDA device is actually available and NVRTC works
+# Lazy-initialized flag: None = not yet checked, True/False = result
+_HAS_CUPY: bool | None = None
+
+
+def _check_cupy_available() -> bool:
+    """Lazily check if CuPy and CUDA are fully functional.
+
+    This function is called on first use (not at import time) to avoid
+    triggering GPU initialization during module import or test collection.
+
+    Returns:
+        True if CuPy is available and CUDA device is functional.
+    """
+    global _HAS_CUPY
+
+    # Return cached result if already checked
+    if _HAS_CUPY is not None:
+        return _HAS_CUPY
+
+    if not _CUPY_IMPORTED or cp is None:
+        _HAS_CUPY = False
+        return False
+
     try:
+        # Check CUDA device is available
         cp.cuda.Device(0).compute_capability
-        # Try a tiny kernel operation to verify NVRTC is available
-        # This will fail if libnvrtc.so is missing
+        # Verify NVRTC works with a minimal operation
         _test_arr = cp.array([1.0, 2.0])
         _ = _test_arr * 2.0  # This triggers NVRTC compilation
         del _test_arr
         _HAS_CUPY = True
-    except (cp.cuda.runtime.CUDARuntimeError, RuntimeError, OSError):
-        cp = None  # type: ignore[assignment]
+    except (cp.cuda.runtime.CUDARuntimeError, RuntimeError, OSError, Exception):
         _HAS_CUPY = False
-except ImportError:
-    cp = None  # type: ignore[assignment]
-    _HAS_CUPY = False
+
+    return _HAS_CUPY
 
 
 # Type alias for array module (either cupy or numpy)
@@ -78,14 +104,14 @@ def get_array_module(use_gpu: bool = True) -> ArrayModule:
     Returns:
         cupy if available and use_gpu=True, else numpy
     """
-    if use_gpu and _HAS_CUPY:
+    if use_gpu and _check_cupy_available():
         return cp
     return np
 
 
 def is_gpu_available() -> bool:
     """Check if GPU acceleration is available."""
-    return _HAS_CUPY
+    return _check_cupy_available()
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,7 +392,7 @@ class GPUConstraintFilter:
         """
         self.fab_limits = fab_limits
         self.param_space = param_space or FamilyF1ParameterSpace()
-        self.use_gpu = use_gpu and _HAS_CUPY
+        self.use_gpu = use_gpu and _check_cupy_available()
         self.xp = get_array_module(self.use_gpu)
 
         # Cache commonly used limits
@@ -885,7 +911,7 @@ class GPUConstraintFilter:
         # for future stochastic repairs and auditing
         if seed != 0:
             np.random.seed(seed)
-            if self.use_gpu and _HAS_CUPY:
+            if self.use_gpu and _check_cupy_available():
                 cp.random.seed(seed)
 
         # Transfer to device

@@ -404,7 +404,6 @@ __all__ = [
     "estimate_batch_time",
     "load_batch_result_summary",
     "write_batch_result",
-<<<<<<< HEAD
     # SimConfig validation (REQ-M2-003)
     "DEFAULT_MIN_CELLS_PER_WAVELENGTH",
     "DEFAULT_MIN_PML_WAVELENGTHS",
@@ -413,11 +412,14 @@ __all__ = [
     "SimConfigValidationReport",
     "ValidationResult",
     "ValidationStatus",
+    "compute_fdtd_timestep_limit_ps",
+    "load_sim_config",
     "load_sim_config_json",
     "validate_gpu_config",
     "validate_nyquist_compliance",
     "validate_pml_adequacy",
     "validate_sim_config",
+    "write_sim_config",
     "write_sim_config_json",
     "write_validation_report",
     # Simulation caching (REQ-M2-011)
@@ -432,16 +434,4 @@ __all__ = [
     "SolverVersion",
     "compute_sim_config_hash",
     "should_invalidate_cache",
-=======
-    # Simulation config validation (REQ-M2-003)
-    "SimConfigValidationReport",
-    "ValidationResult",
-    "ValidationStatus",
-    "compute_fdtd_timestep_limit_ps",
-    "load_sim_config",
-    "validate_nyquist_compliance",
-    "validate_pml_adequacy",
-    "validate_sim_config",
-    "write_sim_config",
->>>>>>> 65c0ed4 (Implement SimConfig schema validation (REQ-M2-003))
 ]
