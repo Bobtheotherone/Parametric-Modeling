@@ -12,6 +12,19 @@ from .api import (
     run_drc,
     validate_spec,
 )
+from .cache import (
+    CacheEntry,
+    CacheError,
+    CacheInvalidationError,
+    CacheStats,
+    StructuralCache,
+    should_invalidate_cache,
+    toolchain_hash_from_config,
+)
+# Note: CacheKey is imported from both cache.py and export.py
+# The export.py version is used for backward compatibility
+from .cache import CacheKey as StructuralCacheKey
+from .cache import compute_cache_key as compute_structural_cache_key
 from .constraints import (
     ConstraintEvaluation,
     ConstraintProof,
@@ -138,6 +151,13 @@ __all__ = [
     "PipelineProgress",
     "PipelineStage",
     "ResolvedDesign",
+    # Structural cache types (REQ-M1-020)
+    "CacheEntry",
+    "CacheError",
+    "CacheInvalidationError",
+    "CacheStats",
+    "StructuralCache",
+    "StructuralCacheKey",
     # Constraint types
     "ConstraintEvaluation",
     "ConstraintProof",
@@ -245,4 +265,8 @@ __all__ = [
     "layer_validation_payload",
     "validate_family_layer_requirements",
     "validate_layer_set",
+    # Structural cache functions (REQ-M1-020)
+    "compute_structural_cache_key",
+    "should_invalidate_cache",
+    "toolchain_hash_from_config",
 ]
