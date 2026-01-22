@@ -42,6 +42,7 @@ SCHEMA_VERSION = 1
 _CREATE_ARTIFACTS_TABLE = """
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
+    spec_id TEXT NOT NULL,
     artifact_type TEXT NOT NULL,
     content_hash_algorithm TEXT NOT NULL,
     content_hash_digest TEXT NOT NULL,
@@ -91,6 +92,7 @@ CREATE TABLE IF NOT EXISTS runs (
 
 # Indexes for fast queries
 _CREATE_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_artifacts_spec_id ON artifacts (spec_id);",
     "CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts (artifact_type);",
     "CREATE INDEX IF NOT EXISTS idx_artifacts_created ON artifacts (created_utc);",
     "CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts (run_id);",
@@ -114,6 +116,7 @@ class ArtifactRecord:
     """Record representing an artifact in the registry."""
 
     artifact_id: str
+    spec_id: str
     artifact_type: str
     content_hash_algorithm: str
     content_hash_digest: str
@@ -134,6 +137,7 @@ class ArtifactRecord:
         """Create an ArtifactRecord from a database row."""
         return cls(
             artifact_id=row["artifact_id"],
+            spec_id=row["spec_id"],
             artifact_type=row["artifact_type"],
             content_hash_algorithm=row["content_hash_algorithm"],
             content_hash_digest=row["content_hash_digest"],
@@ -340,14 +344,15 @@ class ArtifactRegistry:
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO artifacts (
-                    artifact_id, artifact_type, content_hash_algorithm,
+                    artifact_id, spec_id, artifact_type, content_hash_algorithm,
                     content_hash_digest, byte_size, created_utc, run_id,
                     stage_name, dataset_id, storage_path, media_type,
                     roles, tags, manifest_path, indexed_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     manifest.artifact_id,
+                    manifest.spec_id,
                     manifest.artifact_type,
                     manifest.content_hash.algorithm,
                     manifest.content_hash.digest,
@@ -631,9 +636,61 @@ class ArtifactRegistry:
 
         return RunRecord.from_row(row)
 
+    def get_artifact_by_spec_id(self, spec_id: str) -> ArtifactRecord:
+        """Get an artifact record by spec ID.
+
+        Note that spec_id is derived from the content hash and may not be
+        unique if the same content is stored multiple times with different
+        artifact IDs. This method returns the first matching record.
+
+        Args:
+            spec_id: The spec ID to look up.
+
+        Returns:
+            The first matching artifact record.
+
+        Raises:
+            ArtifactNotIndexedError: If no artifact with the spec_id is found.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM artifacts WHERE spec_id = ? LIMIT 1;",
+            (spec_id,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+
+        if row is None:
+            raise ArtifactNotIndexedError(f"Artifact not indexed with spec_id: {spec_id}")
+
+        return ArtifactRecord.from_row(row)
+
+    def get_artifacts_by_spec_id(self, spec_id: str) -> list[ArtifactRecord]:
+        """Get all artifact records with a given spec ID.
+
+        Since spec_id is derived from content hash, multiple artifacts may
+        share the same spec_id if they have identical content.
+
+        Args:
+            spec_id: The spec ID to look up.
+
+        Returns:
+            List of artifact records with matching spec_id.
+        """
+        conn = self._get_connection()
+        cursor = conn.execute(
+            "SELECT * FROM artifacts WHERE spec_id = ?;",
+            (spec_id,),
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+
+        return [ArtifactRecord.from_row(row) for row in rows]
+
     def query_artifacts(
         self,
         artifact_type: str | None = None,
+        spec_id: str | None = None,
         run_id: str | None = None,
         dataset_id: str | None = None,
         created_after: str | None = None,
@@ -648,6 +705,7 @@ class ArtifactRegistry:
 
         Args:
             artifact_type: Filter by artifact type.
+            spec_id: Filter by spec ID.
             run_id: Filter by run ID.
             dataset_id: Filter by dataset ID.
             created_after: Filter to artifacts created after this timestamp.
@@ -667,6 +725,10 @@ class ArtifactRegistry:
         if artifact_type is not None:
             conditions.append("artifact_type = ?")
             params.append(artifact_type)
+
+        if spec_id is not None:
+            conditions.append("spec_id = ?")
+            params.append(spec_id)
 
         if run_id is not None:
             conditions.append("run_id = ?")
