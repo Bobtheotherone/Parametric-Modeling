@@ -41,5 +41,4 @@ venv/
 mlflow.db
 
 # MLflow local state
-mlflow.db
 mlruns/
