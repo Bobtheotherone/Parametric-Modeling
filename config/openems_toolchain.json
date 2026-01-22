@@ -1,4 +1,4 @@
 {
   "version": "0.0.35",
-  "docker_image": "ghcr.io/thliebig/openems:0.0.35@sha256:4c8e6c9b0d9e1ce1f8a6d94fb5b0b6fb2c7f59a1f9e7b93b5f4a9d4d1a2b3c4d"
+  "docker_image": "formula-foundry-openems:0.0.35"
 }
