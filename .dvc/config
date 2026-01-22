@@ -23,10 +23,58 @@
     # Enable Hydra integration for parameter management
     enabled = false
 
-# Remote storage configuration (optional - uncomment to enable)
-# [remote "local_backup"]
-#     url = /path/to/backup/storage
+# =============================================================================
+# Remote Storage Configuration
+# =============================================================================
+# Uncomment and configure one or more remotes as needed.
+# Design doc reference: Section 18.5 - Optional remote configuration
 #
+# The primary use cases for remotes are:
+# 1. Team collaboration (shared S3/GCS bucket)
+# 2. CI/CD pipelines (artifact caching)
+# 3. Local backup (external drive or NAS)
+# 4. Archival (cold storage for old experiments)
+
+# -----------------------------------------------------------------------------
+# Local backup remote (recommended for laptop development)
+# -----------------------------------------------------------------------------
+# [remote "local_backup"]
+#     url = /mnt/backup/formula-foundry-dvc
+#     # For external drives, use absolute paths
+
+# -----------------------------------------------------------------------------
+# AWS S3 remote (recommended for team collaboration)
+# -----------------------------------------------------------------------------
 # [remote "s3"]
-#     url = s3://bucket/formula-foundry
+#     url = s3://formula-foundry-dvc/cache
 #     region = us-west-2
+#     # Authentication: uses AWS credentials from environment or ~/.aws/credentials
+#     # For cross-account access, add:
+#     # profile = formula-foundry-dev
+
+# -----------------------------------------------------------------------------
+# Google Cloud Storage remote
+# -----------------------------------------------------------------------------
+# [remote "gcs"]
+#     url = gs://formula-foundry-dvc/cache
+#     # Authentication: uses GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
+
+# -----------------------------------------------------------------------------
+# Azure Blob Storage remote
+# -----------------------------------------------------------------------------
+# [remote "azure"]
+#     url = azure://formula-foundry-dvc/cache
+#     # Set connection string via AZURE_STORAGE_CONNECTION_STRING env var
+
+# -----------------------------------------------------------------------------
+# SSH remote (for self-hosted servers)
+# -----------------------------------------------------------------------------
+# [remote "ssh"]
+#     url = ssh://user@server.example.com/path/to/dvc-cache
+#     # Uses SSH key from ~/.ssh/ or SSH agent
+
+# -----------------------------------------------------------------------------
+# Default remote (set after configuring a remote above)
+# -----------------------------------------------------------------------------
+# [core]
+#     remote = s3

@@ -704,3 +704,330 @@ class TestMainWithRunCommand:
         assert args.force is True
         assert args.quiet is True
         assert args.tags == ["env=test"]
+
+
+class TestDVCLockHash:
+    """Tests for DVC lock hash computation."""
+
+    def test_get_dvc_lock_hash_with_lock_file(self, tmp_path: Path) -> None:
+        """Should compute SHA256 hash of dvc.lock file."""
+        from formula_foundry.m3.cli_main import _get_dvc_lock_hash
+
+        # Create a dvc.lock file
+        lock_content = "schema: '2.0'\nstages:\n  test:\n    cmd: echo hello\n"
+        (tmp_path / "dvc.lock").write_text(lock_content)
+
+        hash_result = _get_dvc_lock_hash(tmp_path)
+
+        assert hash_result is not None
+        assert len(hash_result) == 64  # SHA256 hex digest
+        assert all(c in "0123456789abcdef" for c in hash_result)
+
+    def test_get_dvc_lock_hash_no_lock_file(self, tmp_path: Path) -> None:
+        """Should return None when dvc.lock doesn't exist."""
+        from formula_foundry.m3.cli_main import _get_dvc_lock_hash
+
+        hash_result = _get_dvc_lock_hash(tmp_path)
+
+        assert hash_result is None
+
+    def test_get_dvc_lock_hash_deterministic(self, tmp_path: Path) -> None:
+        """Same lock file should produce same hash."""
+        from formula_foundry.m3.cli_main import _get_dvc_lock_hash
+
+        lock_content = "schema: '2.0'\nstages:\n  test:\n    cmd: echo hello\n"
+        (tmp_path / "dvc.lock").write_text(lock_content)
+
+        hash1 = _get_dvc_lock_hash(tmp_path)
+        hash2 = _get_dvc_lock_hash(tmp_path)
+
+        assert hash1 == hash2
+
+
+class TestEnvironmentStamp:
+    """Tests for environment stamp capture."""
+
+    def test_get_environment_stamp_captures_relevant_vars(self) -> None:
+        """Should capture relevant environment variables when set."""
+        import os
+
+        from formula_foundry.m3.cli_main import _get_environment_stamp
+
+        # Set a relevant environment variable
+        original_value = os.environ.get("PYTHONHASHSEED")
+        os.environ["PYTHONHASHSEED"] = "42"
+
+        try:
+            stamp = _get_environment_stamp()
+            assert "PYTHONHASHSEED" in stamp
+            assert stamp["PYTHONHASHSEED"] == "42"
+        finally:
+            # Restore original
+            if original_value is None:
+                del os.environ["PYTHONHASHSEED"]
+            else:
+                os.environ["PYTHONHASHSEED"] = original_value
+
+    def test_get_environment_stamp_ignores_unset_vars(self) -> None:
+        """Should not include variables that are not set."""
+        import os
+
+        from formula_foundry.m3.cli_main import _get_environment_stamp
+
+        # Ensure a variable is not set
+        if "TORCH_CUDA_ARCH_LIST" in os.environ:
+            del os.environ["TORCH_CUDA_ARCH_LIST"]
+
+        stamp = _get_environment_stamp()
+        assert "TORCH_CUDA_ARCH_LIST" not in stamp
+
+
+class TestWriteRunJson:
+    """Tests for run.json file writing."""
+
+    def test_write_run_json_creates_directory(self, tmp_path: Path) -> None:
+        """Should create run directory if it doesn't exist."""
+        from formula_foundry.m3.cli_main import (
+            RunInputs,
+            RunMetadata,
+            RunOutputs,
+            RunProvenance,
+            _write_run_json,
+        )
+
+        run_dir = tmp_path / "data" / "runs" / "run-test"
+        provenance = RunProvenance(hostname="test", git_commit="a" * 40)
+        metadata = RunMetadata(
+            run_id="run-test",
+            run_type="other",
+            status="running",
+            started_utc="2026-01-20T12:00:00Z",
+            provenance=provenance,
+            inputs=RunInputs(),
+            outputs=RunOutputs(),
+        )
+
+        run_json_path = _write_run_json(run_dir, metadata, quiet=True)
+
+        assert run_dir.exists()
+        assert run_json_path.exists()
+        assert run_json_path.name == "run.json"
+
+    def test_write_run_json_content(self, tmp_path: Path) -> None:
+        """Should write valid JSON with all metadata fields."""
+        from formula_foundry.m3.cli_main import (
+            RunInputs,
+            RunMetadata,
+            RunOutputs,
+            RunProvenance,
+            _write_run_json,
+        )
+
+        run_dir = tmp_path / "run-test"
+        provenance = RunProvenance(
+            hostname="test-host",
+            git_commit="a" * 40,
+            git_branch="main",
+        )
+        metadata = RunMetadata(
+            run_id="run-test-123",
+            run_type="em_simulation",
+            status="running",
+            started_utc="2026-01-20T12:00:00Z",
+            provenance=provenance,
+            inputs=RunInputs(),
+            outputs=RunOutputs(),
+            dvc_stage_hash="b" * 64,
+            tags={"env": "test"},
+        )
+
+        run_json_path = _write_run_json(run_dir, metadata, quiet=True)
+
+        content = json.loads(run_json_path.read_text())
+
+        assert content["run_id"] == "run-test-123"
+        assert content["run_type"] == "em_simulation"
+        assert content["status"] == "running"
+        assert content["dvc_stage_hash"] == "b" * 64
+        assert content["tags"]["env"] == "test"
+        assert content["provenance"]["hostname"] == "test-host"
+
+    def test_write_run_json_overwrites_existing(self, tmp_path: Path) -> None:
+        """Should overwrite existing run.json on update."""
+        from formula_foundry.m3.cli_main import (
+            RunInputs,
+            RunMetadata,
+            RunOutputs,
+            RunProvenance,
+            _write_run_json,
+        )
+
+        run_dir = tmp_path / "run-test"
+        provenance = RunProvenance(hostname="test", git_commit="a" * 40)
+
+        # Write initial version
+        metadata1 = RunMetadata(
+            run_id="run-test",
+            run_type="other",
+            status="running",
+            started_utc="2026-01-20T12:00:00Z",
+            provenance=provenance,
+            inputs=RunInputs(),
+            outputs=RunOutputs(),
+        )
+        _write_run_json(run_dir, metadata1, quiet=True)
+
+        # Write updated version
+        metadata2 = RunMetadata(
+            run_id="run-test",
+            run_type="other",
+            status="completed",
+            started_utc="2026-01-20T12:00:00Z",
+            finished_utc="2026-01-20T12:05:00Z",
+            provenance=provenance,
+            inputs=RunInputs(),
+            outputs=RunOutputs(),
+        )
+        _write_run_json(run_dir, metadata2, quiet=True)
+
+        # Verify updated content
+        content = json.loads((run_dir / "run.json").read_text())
+        assert content["status"] == "completed"
+        assert content["finished_utc"] == "2026-01-20T12:05:00Z"
+
+
+class TestCmdRunWithRunJson:
+    """Tests for cmd_run creating runs/<run_id>/run.json."""
+
+    def _setup_test_env(self, tmp_path: Path) -> None:
+        """Set up a minimal test environment with git and M3."""
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+        (tmp_path / "test.txt").write_text("test")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, check=True, capture_output=True)
+        cmd_init(root=tmp_path, force=False, quiet=True)
+        (tmp_path / "dvc.yaml").write_text("stages:\n  test_stage:\n    cmd: echo hello")
+        # Create a dvc.lock for hash testing
+        (tmp_path / "dvc.lock").write_text("schema: '2.0'\nstages:\n  test_stage:\n    cmd: echo hello\n")
+
+    @patch("formula_foundry.m3.cli_main._run_dvc_stage")
+    @patch("formula_foundry.m3.cli_main.shutil.which")
+    def test_run_creates_run_json(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
+        """Run should create runs/<run_id>/run.json."""
+        self._setup_test_env(tmp_path)
+        mock_which.return_value = "/usr/bin/dvc"
+        mock_dvc.return_value = (0, "Completed", "", False)
+
+        cmd_run(
+            stage="test_stage",
+            root=tmp_path,
+            run_type=None,
+            dry_run=False,
+            force=False,
+            quiet=True,
+            tags=[],
+        )
+
+        # Find the run directory
+        runs_dir = tmp_path / "data" / "runs"
+        run_dirs = list(runs_dir.glob("run-*"))
+        assert len(run_dirs) >= 1
+
+        # Check run.json exists
+        run_json = run_dirs[-1] / "run.json"
+        assert run_json.exists()
+
+        # Verify content
+        content = json.loads(run_json.read_text())
+        assert content["status"] == "completed"
+        assert content["schema_version"] == 1
+        assert "stages" in content
+        assert len(content["stages"]) == 1
+
+    @patch("formula_foundry.m3.cli_main._run_dvc_stage")
+    @patch("formula_foundry.m3.cli_main.shutil.which")
+    def test_run_includes_dvc_lock_hash(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
+        """Run should include DVC lock hash in metadata."""
+        self._setup_test_env(tmp_path)
+        mock_which.return_value = "/usr/bin/dvc"
+        mock_dvc.return_value = (0, "Completed", "", False)
+
+        cmd_run(
+            stage="test_stage",
+            root=tmp_path,
+            run_type=None,
+            dry_run=False,
+            force=False,
+            quiet=True,
+            tags=[],
+        )
+
+        # Find and read run.json
+        runs_dir = tmp_path / "data" / "runs"
+        run_dirs = list(runs_dir.glob("run-*"))
+        run_json = run_dirs[-1] / "run.json"
+        content = json.loads(run_json.read_text())
+
+        # Should have dvc_stage_hash
+        assert "dvc_stage_hash" in content
+        assert content["dvc_stage_hash"] is not None
+        assert len(content["dvc_stage_hash"]) == 64  # SHA256 hex
+
+    @patch("formula_foundry.m3.cli_main._run_dvc_stage")
+    @patch("formula_foundry.m3.cli_main.shutil.which")
+    def test_run_includes_log_paths(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
+        """Run should include log_paths in metadata."""
+        self._setup_test_env(tmp_path)
+        mock_which.return_value = "/usr/bin/dvc"
+        mock_dvc.return_value = (0, "Completed", "", False)
+
+        cmd_run(
+            stage="test_stage",
+            root=tmp_path,
+            run_type=None,
+            dry_run=False,
+            force=False,
+            quiet=True,
+            tags=[],
+        )
+
+        # Find and read run.json
+        runs_dir = tmp_path / "data" / "runs"
+        run_dirs = list(runs_dir.glob("run-*"))
+        run_json = run_dirs[-1] / "run.json"
+        content = json.loads(run_json.read_text())
+
+        # Should have log_paths with the run.json path
+        assert "log_paths" in content
+        assert len(content["log_paths"]) >= 1
+        assert "run.json" in content["log_paths"][0]
+
+    @patch("formula_foundry.m3.cli_main._run_dvc_stage")
+    @patch("formula_foundry.m3.cli_main.shutil.which")
+    def test_failed_run_updates_run_json(self, mock_which: MagicMock, mock_dvc: MagicMock, tmp_path: Path) -> None:
+        """Failed run should update run.json with error status."""
+        self._setup_test_env(tmp_path)
+        mock_which.return_value = "/usr/bin/dvc"
+        mock_dvc.return_value = (1, "", "Error: Stage failed", False)
+
+        cmd_run(
+            stage="test_stage",
+            root=tmp_path,
+            run_type=None,
+            dry_run=False,
+            force=False,
+            quiet=True,
+            tags=[],
+        )
+
+        # Find and read run.json
+        runs_dir = tmp_path / "data" / "runs"
+        run_dirs = list(runs_dir.glob("run-*"))
+        run_json = run_dirs[-1] / "run.json"
+        content = json.loads(run_json.read_text())
+
+        assert content["status"] == "failed"
+        assert "error" in content
+        assert content["error"]["error_type"] == "DVCError"

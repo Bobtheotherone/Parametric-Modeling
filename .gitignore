@@ -10,25 +10,20 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
 # Virtualenv
 .venv/
 venv/
-
 # OS/editor
 .DS_Store
 .vscode/
 .idea/
-
 # Secrets
 .env
 .env.*
-
 # Misc
 *.log
 .verify*
 *.egg-info/
-
 # DVC (M3)
 # Note: .dvc/ directory is tracked, dvc.lock and *.dvc files are not
 /dvc.lock
@@ -37,4 +32,15 @@ venv/
 /.dvc/cache/
 /.dvc/tmp/
 /artifacts/
-/data/
+# Data directory (except .gitkeep files for directory structure)
+/data/**
+!/data/
+!/data/**/
+!/data/**/.gitkeep
+# SQLite databases (derived, rebuildable)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+mlflow.db
+# MLflow local state
+mlruns/

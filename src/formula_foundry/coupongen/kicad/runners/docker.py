@@ -3,10 +3,11 @@
 This module provides DockerKicadRunner, which executes kicad-cli commands
 inside a pinned Docker container (e.g., kicad/kicad:9.0.7).
 
-Satisfies CP-1.2 requirements:
+Satisfies CP-1.2 and REQ-M1-015 requirements:
 - Executes kicad-cli inside pinned Docker container
 - Handles DRC with --severity-all --exit-code-violations --format json
 - Provides kicad_cli_version() for toolchain provenance
+- Supports timeout handling and --define-var variable injection
 
 See Section 13.1.2 of the design document.
 """
@@ -23,6 +24,57 @@ from .protocol import IKicadRunner, KicadRunResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+# Default timeout for Docker kicad-cli operations (5 minutes)
+DEFAULT_DOCKER_TIMEOUT_SEC: float = 300.0
+
+
+class DockerKicadTimeoutError(RuntimeError):
+    """Raised when a Docker kicad-cli command exceeds the timeout."""
+
+    def __init__(
+        self,
+        timeout_sec: float,
+        command: list[str] | None = None,
+    ) -> None:
+        self.timeout_sec = timeout_sec
+        self.command = command or []
+        super().__init__(
+            f"Docker kicad-cli command timed out after {timeout_sec} seconds"
+        )
+
+
+def build_define_var_args(variables: Mapping[str, str] | None) -> list[str]:
+    """Build --define-var arguments for kicad-cli.
+
+    KiCad supports text variable substitution via --define-var NAME=VALUE.
+    These can be used in board text elements like ${COUPON_ID}.
+
+    Args:
+        variables: Mapping of variable names to values. If None or empty,
+            returns an empty list.
+
+    Returns:
+        List of command-line arguments (e.g., ["--define-var", "COUPON_ID=test-001"]).
+
+    Example:
+        >>> build_define_var_args({"COUPON_ID": "test-001", "VERSION": "1.0"})
+        ['--define-var', 'COUPON_ID=test-001', '--define-var', 'VERSION=1.0']
+    """
+    if not variables:
+        return []
+
+    args: list[str] = []
+    for name, value in variables.items():
+        # Validate variable name (alphanumeric and underscores only)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise ValueError(
+                f"Invalid variable name '{name}': must start with a letter or underscore "
+                "and contain only alphanumeric characters and underscores"
+            )
+        args.extend(["--define-var", f"{name}={value}"])
+
+    return args
 
 # Default path to the toolchain lock file
 DEFAULT_LOCK_FILE = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "toolchain" / "kicad.lock.json"
@@ -143,6 +195,7 @@ class DockerKicadRunner(IKicadRunner):
     Attributes:
         docker_image: Docker image reference (tag or tag@digest).
         kicad_bin: Name of the kicad-cli binary inside the container.
+        default_timeout: Default timeout in seconds for commands.
 
     Example:
         >>> runner = DockerKicadRunner.from_lock_file()
@@ -154,15 +207,19 @@ class DockerKicadRunner(IKicadRunner):
         self,
         docker_image: str,
         kicad_bin: str = "kicad-cli",
+        default_timeout: float | None = DEFAULT_DOCKER_TIMEOUT_SEC,
     ) -> None:
         """Initialize the Docker runner.
 
         Args:
             docker_image: Docker image reference (e.g., "kicad/kicad:9.0.7").
             kicad_bin: Name of the kicad-cli binary. Defaults to "kicad-cli".
+            default_timeout: Default timeout in seconds for commands.
+                Set to None or 0 for no timeout.
         """
         self._docker_image = docker_image
         self._kicad_bin = kicad_bin
+        self._default_timeout = default_timeout
 
     @classmethod
     def from_lock_file(cls, lock_file: Path | None = None) -> DockerKicadRunner:
@@ -186,6 +243,11 @@ class DockerKicadRunner(IKicadRunner):
     def kicad_bin(self) -> str:
         """Return the kicad-cli binary name."""
         return self._kicad_bin
+
+    @property
+    def default_timeout(self) -> float | None:
+        """Return the default timeout in seconds."""
+        return self._default_timeout
 
     def _build_docker_command(
         self,
@@ -442,6 +504,8 @@ class DockerKicadRunner(IKicadRunner):
         cwd: Path,
         env: Mapping[str, str] | None = None,
         *,
+        timeout: float | None = None,
+        variables: Mapping[str, str] | None = None,
         verify_mount: bool = False,
         expected_file: str | None = None,
         drc_report_path: Path | None = None,
@@ -452,6 +516,10 @@ class DockerKicadRunner(IKicadRunner):
             args: Command arguments to pass to kicad-cli (e.g., ["pcb", "drc", ...]).
             cwd: Working directory to mount into the container at /workspace.
             env: Optional environment variables to set in the container.
+            timeout: Timeout in seconds. If None, uses default_timeout.
+                Set to 0 or negative for no timeout.
+            variables: Optional mapping of text variables to inject via
+                --define-var. Used for board text substitution (e.g., ${COUPON_ID}).
             verify_mount: If True, verify bind mount visibility before running.
             expected_file: File expected to exist in /workspace (for mount verification).
             drc_report_path: Path to DRC JSON report (for violation summary on rc=5).
@@ -461,19 +529,48 @@ class DockerKicadRunner(IKicadRunner):
 
         Raises:
             DockerMountError: If verify_mount=True and mount verification fails.
+            DockerKicadTimeoutError: If the command exceeds the timeout.
+
+        Example:
+            >>> runner = DockerKicadRunner.from_lock_file()
+            >>> result = runner.run(
+            ...     ["pcb", "export", "gerbers", "board.kicad_pcb"],
+            ...     cwd=Path("/project"),
+            ...     timeout=60,
+            ...     variables={"COUPON_ID": "test-001"},
+            ... )
         """
         # Optionally verify mount before running
         if verify_mount:
             self._verify_mount(cwd, expected_file)
 
-        cmd = self._build_docker_command(args, cwd, env)
+        # Build define-var arguments if variables provided
+        var_args = build_define_var_args(variables)
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
+        # Combine variable args with command args
+        full_args = [*var_args, *args]
+        cmd = self._build_docker_command(full_args, cwd, env)
+
+        # Determine effective timeout
+        effective_timeout: float | None = (
+            timeout if timeout is not None else self._default_timeout
         )
+        if effective_timeout is not None and effective_timeout <= 0:
+            effective_timeout = None
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=effective_timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise DockerKicadTimeoutError(
+                timeout_sec=effective_timeout or 0,
+                command=cmd,
+            ) from e
 
         stderr = result.stderr or ""
 
@@ -542,8 +639,15 @@ def parse_kicad_version(version_output: str) -> str:
 
 
 __all__ = [
-    "DockerKicadRunner",
+    # Constants
+    "DEFAULT_DOCKER_TIMEOUT_SEC",
+    # Exceptions
+    "DockerKicadTimeoutError",
     "DockerMountError",
+    # Classes
+    "DockerKicadRunner",
+    # Functions
+    "build_define_var_args",
     "load_docker_image_ref",
     "parse_kicad_version",
 ]

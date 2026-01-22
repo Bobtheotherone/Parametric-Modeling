@@ -33,6 +33,10 @@
       "$ref": "#/$defs/ArtifactType",
       "description": "Type classification of the artifact"
     },
+    "determinism_class": {
+      "$ref": "#/$defs/DeterminismClass",
+      "description": "Classification of how deterministically reproducible this artifact is"
+    },
     "content_hash": {
       "$ref": "#/$defs/ContentHash",
       "description": "Cryptographic hash of the artifact content"
@@ -99,6 +103,17 @@
     }
   },
   "$defs": {
+    "DeterminismClass": {
+      "type": "string",
+      "enum": [
+        "deterministic",
+        "quasi_deterministic",
+        "nondeterministic",
+        "external",
+        "unknown"
+      ],
+      "description": "Classification of artifact reproducibility: 'deterministic' means same inputs always produce byte-identical output; 'quasi_deterministic' means semantically equivalent but may have trivial differences (timestamps, UUIDs); 'nondeterministic' means output varies between runs; 'external' means artifact comes from external source; 'unknown' for unclassified artifacts"
+    },
     "ArtifactType": {
       "type": "string",
       "enum": [

@@ -866,3 +866,255 @@ class LineageGraph:
             JSON string representation of the graph.
         """
         return json.dumps(self.export_to_dict(), indent=indent, sort_keys=True)
+
+    def find_ancestors_by_type(
+        self,
+        artifact_id: str,
+        artifact_type: str,
+        max_depth: int | None = None,
+    ) -> list[LineageNode]:
+        """Find all ancestors of an artifact that match a given type.
+
+        This supports queries like "which geometry produced this S-param?"
+        by filtering the ancestor graph to only include nodes of the
+        specified type.
+
+        Args:
+            artifact_id: The artifact ID to trace from.
+            artifact_type: The artifact type to filter for (e.g., "resolved_design",
+                          "coupon_spec", "touchstone").
+            max_depth: Optional maximum traversal depth.
+
+        Returns:
+            List of ancestor nodes matching the specified type.
+
+        Raises:
+            NodeNotFoundError: If the starting node is not found.
+
+        Example:
+            # Find the geometry that produced an S-parameter file
+            geometries = graph.find_ancestors_by_type(
+                "touchstone-001", "resolved_design"
+            )
+        """
+        subgraph = self.get_ancestors(artifact_id, max_depth=max_depth)
+        return [
+            node
+            for node in subgraph.nodes.values()
+            if node.artifact_type == artifact_type
+        ]
+
+    def find_descendants_by_type(
+        self,
+        artifact_id: str,
+        artifact_type: str,
+        max_depth: int | None = None,
+    ) -> list[LineageNode]:
+        """Find all descendants of an artifact that match a given type.
+
+        This supports queries like "which S-params were derived from this geometry?"
+
+        Args:
+            artifact_id: The artifact ID to trace from.
+            artifact_type: The artifact type to filter for.
+            max_depth: Optional maximum traversal depth.
+
+        Returns:
+            List of descendant nodes matching the specified type.
+
+        Raises:
+            NodeNotFoundError: If the starting node is not found.
+        """
+        subgraph = self.get_descendants(artifact_id, max_depth=max_depth)
+        return [
+            node
+            for node in subgraph.nodes.values()
+            if node.artifact_type == artifact_type
+        ]
+
+    def find_ancestors_by_role(
+        self,
+        artifact_id: str,
+        role: str,
+        store: ArtifactStore | None = None,
+    ) -> list[LineageNode]:
+        """Find all ancestors of an artifact that have a specific role.
+
+        This requires access to the artifact store to retrieve role information
+        from manifests, since roles are not stored in the lineage graph nodes.
+
+        Args:
+            artifact_id: The artifact ID to trace from.
+            role: The role to filter for (e.g., "geometry", "config", "oracle_output").
+            store: The artifact store to retrieve manifests from.
+
+        Returns:
+            List of ancestor nodes that have the specified role.
+
+        Raises:
+            NodeNotFoundError: If the starting node is not found.
+            ValueError: If store is not provided.
+
+        Example:
+            # Find all geometry artifacts in the lineage
+            geometries = graph.find_ancestors_by_role(
+                "touchstone-001", "geometry", store=artifact_store
+            )
+        """
+        if store is None:
+            raise ValueError("store parameter is required to query by role")
+
+        subgraph = self.get_ancestors(artifact_id)
+        result = []
+
+        for node in subgraph.nodes.values():
+            try:
+                manifest = store.get_manifest(node.artifact_id)
+                if role in manifest.roles:
+                    result.append(node)
+            except Exception:
+                # Skip nodes whose manifests can't be retrieved
+                continue
+
+        return result
+
+    def get_artifact_run_info(
+        self,
+        artifact_id: str,
+        store: ArtifactStore | None = None,
+    ) -> dict[str, Any]:
+        """Get comprehensive run/provenance info for an artifact.
+
+        This answers the question "Which commit created this artifact?"
+        by returning the run_id, stage_name, and any provenance information
+        available from the manifest.
+
+        Args:
+            artifact_id: The artifact ID to look up.
+            store: Optional artifact store for retrieving full manifest info.
+
+        Returns:
+            Dictionary containing:
+            - artifact_id: The artifact ID
+            - run_id: The run that produced this artifact
+            - stage_name: The pipeline stage (if available)
+            - created_utc: Creation timestamp
+            - provenance: Full provenance dict (if store provided)
+
+        Raises:
+            NodeNotFoundError: If the artifact is not found in the graph.
+
+        Example:
+            info = graph.get_artifact_run_info("touchstone-001", store=artifact_store)
+            print(f"Created by run {info['run_id']} at {info['created_utc']}")
+        """
+        node = self.get_node(artifact_id)
+
+        result: dict[str, Any] = {
+            "artifact_id": node.artifact_id,
+            "artifact_type": node.artifact_type,
+            "content_hash_digest": node.content_hash_digest,
+            "run_id": node.run_id,
+            "stage_name": node.stage_name,
+            "created_utc": node.created_utc,
+        }
+
+        if store is not None:
+            try:
+                manifest = store.get_manifest(artifact_id)
+                result["provenance"] = manifest.provenance.to_dict()
+            except Exception:
+                pass
+
+        return result
+
+    def trace_sparam_to_geometry(
+        self,
+        sparam_artifact_id: str,
+    ) -> list[LineageNode]:
+        """Trace an S-parameter artifact back to its source geometry.
+
+        This is a convenience method for the common query "which geometry
+        produced this S-param?" It finds all ancestors of type "resolved_design"
+        or "coupon_spec" in the lineage chain.
+
+        Args:
+            sparam_artifact_id: The artifact ID of the touchstone/sparam artifact.
+
+        Returns:
+            List of geometry-related ancestor nodes (resolved_design, coupon_spec).
+
+        Raises:
+            NodeNotFoundError: If the S-param artifact is not found.
+
+        Example:
+            geometries = graph.trace_sparam_to_geometry("touchstone-001")
+            for g in geometries:
+                print(f"Geometry: {g.artifact_id} ({g.artifact_type})")
+        """
+        geometry_types = {"resolved_design", "coupon_spec"}
+        subgraph = self.get_ancestors(sparam_artifact_id)
+
+        return [
+            node
+            for node in subgraph.nodes.values()
+            if node.artifact_type in geometry_types
+        ]
+
+    def get_full_lineage_chain(
+        self,
+        artifact_id: str,
+        store: ArtifactStore | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get the complete lineage chain from roots to the given artifact.
+
+        Returns an ordered list of artifacts from root inputs to the target,
+        with full manifest info if a store is provided.
+
+        Args:
+            artifact_id: The artifact ID to trace.
+            store: Optional artifact store for retrieving full manifests.
+
+        Returns:
+            List of dicts representing artifacts in topological order,
+            from roots to the target artifact.
+
+        Raises:
+            NodeNotFoundError: If the artifact is not found.
+        """
+        subgraph = self.get_ancestors(artifact_id)
+
+        # Build adjacency list for topological sort
+        children: dict[str, list[str]] = {n: [] for n in subgraph.nodes}
+        in_degree: dict[str, int] = {n: 0 for n in subgraph.nodes}
+
+        for edge in subgraph.edges:
+            if edge.source_id in children and edge.target_id in subgraph.nodes:
+                children[edge.source_id].append(edge.target_id)
+                in_degree[edge.target_id] += 1
+
+        # Kahn's algorithm for topological sort
+        queue = deque([n for n, d in in_degree.items() if d == 0])
+        result: list[dict[str, Any]] = []
+
+        while queue:
+            node_id = queue.popleft()
+            node = subgraph.nodes[node_id]
+
+            node_info: dict[str, Any] = node.to_dict()
+            if store is not None:
+                try:
+                    manifest = store.get_manifest(node_id)
+                    node_info["roles"] = list(manifest.roles)
+                    node_info["provenance"] = manifest.provenance.to_dict()
+                except Exception:
+                    pass
+
+            result.append(node_info)
+
+            for child_id in children[node_id]:
+                in_degree[child_id] -= 1
+                if in_degree[child_id] == 0:
+                    queue.append(child_id)
+
+        return result

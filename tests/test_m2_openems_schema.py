@@ -386,6 +386,51 @@ class TestExcitationSpec:
         assert exc.type == "sinusoidal"
 
 
+class TestEngineSpec:
+    """Tests for engine specification including GPU flags (REQ-M2-003)."""
+
+    def test_engine_defaults(self) -> None:
+        """Default engine should be multithreaded without GPU."""
+        from formula_foundry.openems import EngineSpec
+
+        engine = EngineSpec()
+        assert engine.type == "multithreaded"
+        assert engine.use_gpu is False
+        assert engine.gpu_device_id is None
+        assert engine.gpu_memory_limit_mb is None
+
+    def test_gpu_enabled(self) -> None:
+        """GPU can be enabled with device ID and memory limit."""
+        from formula_foundry.openems import EngineSpec
+
+        engine = EngineSpec(use_gpu=True, gpu_device_id=0, gpu_memory_limit_mb=4096)
+        assert engine.use_gpu is True
+        assert engine.gpu_device_id == 0
+        assert engine.gpu_memory_limit_mb == 4096
+
+    def test_gpu_device_id_must_be_non_negative(self) -> None:
+        """GPU device ID must be >= 0."""
+        from formula_foundry.openems import EngineSpec
+
+        with pytest.raises(ValidationError, match="greater than or equal to 0"):
+            EngineSpec(use_gpu=True, gpu_device_id=-1)
+
+    def test_gpu_memory_minimum(self) -> None:
+        """GPU memory limit must be at least 256 MB."""
+        from formula_foundry.openems import EngineSpec
+
+        with pytest.raises(ValidationError, match="greater than or equal to 256"):
+            EngineSpec(use_gpu=True, gpu_memory_limit_mb=100)
+
+    def test_engine_types_valid(self) -> None:
+        """All engine types should be valid."""
+        from formula_foundry.openems import EngineSpec
+
+        for engine_type in ["basic", "sse", "sse-compressed", "multithreaded"]:
+            engine = EngineSpec(type=engine_type)
+            assert engine.type == engine_type
+
+
 class TestGeometryRef:
     """Tests for geometry reference."""
 

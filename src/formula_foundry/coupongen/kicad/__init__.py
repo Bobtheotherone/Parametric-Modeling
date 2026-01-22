@@ -37,8 +37,29 @@ from .canonicalize import (
     canonicalize_kicad_pcb,
     normalize_line_endings,
 )
-from .cli import KicadCliMode, KicadCliRunner, build_drc_args, get_kicad_cli_version
-from .runners import DockerKicadRunner, IKicadRunner, KicadRunResult
+from .cli import (
+    DEFAULT_TIMEOUT_SEC,
+    KicadCliError,
+    KicadCliMode,
+    KicadCliRunner,
+    KicadCliTimeoutError,
+    KicadErrorCode,
+    ParsedKicadError,
+    build_define_var_args,
+    build_drc_args,
+    get_kicad_cli_version,
+    parse_kicad_error,
+)
+from .runners import (
+    DEFAULT_DOCKER_TIMEOUT_SEC,
+    DockerKicadRunner,
+    DockerKicadTimeoutError,
+    DockerMountError,
+    IKicadRunner,
+    KicadRunResult,
+    load_docker_image_ref,
+    parse_kicad_version,
+)
 from .sexpr import (
     SExprAtom,
     SExprList,
@@ -65,15 +86,34 @@ __all__ = [
     "deterministic_uuid",
     "deterministic_uuid_indexed",
     "write_board",
-    # CLI
+    # CLI - Constants
+    "DEFAULT_TIMEOUT_SEC",
+    # CLI - Types and Enums
     "KicadCliMode",
+    "KicadErrorCode",
+    # CLI - Exceptions
+    "KicadCliError",
+    "KicadCliTimeoutError",
+    # CLI - Data classes
+    "ParsedKicadError",
     "KicadCliRunner",
+    # CLI - Functions
+    "build_define_var_args",
     "build_drc_args",
     "get_kicad_cli_version",
-    # Runners
+    "parse_kicad_error",
+    # Runners - Constants
+    "DEFAULT_DOCKER_TIMEOUT_SEC",
+    # Runners - Exceptions
+    "DockerKicadTimeoutError",
+    "DockerMountError",
+    # Runners - Classes
     "DockerKicadRunner",
     "IKicadRunner",
     "KicadRunResult",
+    # Runners - Functions
+    "load_docker_image_ref",
+    "parse_kicad_version",
     # Canonicalization
     "canonical_hash_board",
     "canonical_hash_drill",

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "openems_version": "0.0.35",
+  "csxcad_version": "0.6.3",
+  "appcsxcad_version": "0.2.3",
+  "base_image": "ubuntu:22.04",
+  "base_image_digest": "sha256:77906da86b60585ce12215807090eb327e7386c8fafb5402369e421f44eff17e",
+  "docker_image": "formula-foundry-openems:0.0.35",
+  "docker_image_note": "Built locally from tools/m2/docker/Dockerfile. No official upstream ghcr.io image available.",
+  "toolchain_hash": "7618c2a6c54d008eafb28b24b6022dde9502e42b4dfa2a9f87824483008d88ed",
+  "source_repos": {
+    "openems": "https://github.com/thliebig/openEMS",
+    "csxcad": "https://github.com/thliebig/CSXCAD",
+    "appcsxcad": "https://github.com/thliebig/AppCSXCAD"
+  }
+}

@@ -10,6 +10,13 @@ The manifest provides complete provenance information for simulation results inc
 - Toolchain versions (openEMS version, Docker image)
 - Lineage information (git SHA, timestamp, M1 manifest reference)
 
+REQ-M2-008 extensions for EM simulation provenance:
+- sim_config_hash: Hash of the simulation configuration for provenance tracking
+- solver_version: openEMS and CSXCAD version metadata from runner
+- gpu_device_info: GPU device information if GPU acceleration was used
+- sparam_file_hashes: Individual SHA256 hashes for S-parameter output files
+- design_hash: Links to upstream M1 geometry manifest (already present in geometry)
+
 The manifest follows the same canonical JSON serialization patterns as M1
 to ensure deterministic hashing and provenance tracking.
 """
@@ -170,6 +177,113 @@ class ConvergenceMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class SolverVersionInfo:
+    """Solver version information for provenance tracking.
+
+    Captures openEMS and CSXCAD version information from the solver runtime.
+    This is essential for reproducibility and debugging simulation differences.
+
+    Attributes:
+        openems_version: openEMS version string (e.g., "0.0.35").
+        csxcad_version: CSXCAD version string (if available).
+        mode: Execution mode ("local" or "docker").
+        docker_image: Docker image reference if docker mode.
+
+    REQ-M2-008: Solver version metadata for EM simulation provenance.
+    """
+
+    openems_version: str | None
+    csxcad_version: str | None = None
+    mode: str = "local"
+    docker_image: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {
+            "openems_version": self.openems_version,
+            "mode": self.mode,
+        }
+        if self.csxcad_version is not None:
+            result["csxcad_version"] = self.csxcad_version
+        if self.docker_image is not None:
+            result["docker_image"] = self.docker_image
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class GPUDeviceInfo:
+    """GPU device information for simulation provenance.
+
+    Captures GPU device metadata when GPU acceleration is used for simulations.
+    This is critical for reproducibility tracking on heterogeneous compute environments.
+
+    Attributes:
+        device_id: CUDA device ID (0-indexed).
+        device_name: GPU device name (e.g., "NVIDIA A100").
+        compute_capability: CUDA compute capability (e.g., "8.0").
+        memory_total_mb: Total GPU memory in megabytes.
+        driver_version: NVIDIA driver version.
+        cuda_version: CUDA runtime version.
+
+    REQ-M2-008: GPU device info for EM simulation provenance.
+    """
+
+    device_id: int
+    device_name: str
+    compute_capability: str | None = None
+    memory_total_mb: int | None = None
+    driver_version: str | None = None
+    cuda_version: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {
+            "device_id": self.device_id,
+            "device_name": self.device_name,
+        }
+        if self.compute_capability is not None:
+            result["compute_capability"] = self.compute_capability
+        if self.memory_total_mb is not None:
+            result["memory_total_mb"] = self.memory_total_mb
+        if self.driver_version is not None:
+            result["driver_version"] = self.driver_version
+        if self.cuda_version is not None:
+            result["cuda_version"] = self.cuda_version
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class SParamFileHashes:
+    """Hashes of S-parameter output files for provenance.
+
+    Provides individual SHA256 hashes for each S-parameter output file,
+    enabling verification of file integrity and change detection.
+
+    Attributes:
+        touchstone_hash: SHA256 hash of Touchstone (.sNp) file if present.
+        csv_hash: SHA256 hash of CSV export if present.
+        additional_files: Dictionary of additional file paths to hashes.
+
+    REQ-M2-008: S-parameter file hashes for EM simulation provenance.
+    """
+
+    touchstone_hash: str | None = None
+    csv_hash: str | None = None
+    additional_files: dict[str, str] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {}
+        if self.touchstone_hash is not None:
+            result["touchstone_hash"] = self.touchstone_hash
+        if self.csv_hash is not None:
+            result["csv_hash"] = self.csv_hash
+        if self.additional_files:
+            result["additional_files"] = dict(sorted(self.additional_files.items()))
+        return result
+
+
+@dataclass(frozen=True, slots=True)
 class PortConfiguration:
     """Configuration for a simulation port.
 
@@ -225,6 +339,9 @@ class M2ManifestBuilder:
         convergence_metrics: Convergence-related metrics.
         extraction_result: S-parameter extraction result (optional).
         m1_manifest_hash: Hash of the M1 coupon manifest (optional).
+        solver_version: openEMS solver version info (REQ-M2-008).
+        gpu_device_info: GPU device info if GPU used (REQ-M2-008).
+        sparam_file_hashes: Hashes of S-param files (REQ-M2-008).
         git_sha: Git commit SHA (auto-detected if not provided).
         timestamp_utc: UTC timestamp (auto-generated if not provided).
     """
@@ -236,6 +353,9 @@ class M2ManifestBuilder:
     convergence_metrics: ConvergenceMetrics | None = None
     extraction_result: ExtractionResult | None = None
     m1_manifest_hash: str | None = None
+    solver_version: SolverVersionInfo | None = None
+    gpu_device_info: GPUDeviceInfo | None = None
+    sparam_file_hashes: SParamFileHashes | None = None
     git_sha: str | None = None
     timestamp_utc: str | None = None
 
@@ -267,6 +387,61 @@ class M2ManifestBuilder:
     def with_m1_manifest(self, manifest_hash: str) -> M2ManifestBuilder:
         """Add M1 manifest hash for lineage tracking."""
         self.m1_manifest_hash = manifest_hash
+        return self
+
+    def with_solver_version(self, solver_version: SolverVersionInfo) -> M2ManifestBuilder:
+        """Add solver version information (REQ-M2-008).
+
+        Args:
+            solver_version: openEMS solver version metadata.
+
+        Returns:
+            Self for method chaining.
+        """
+        self.solver_version = solver_version
+        return self
+
+    def with_solver_version_from_metadata(
+        self, version_metadata: Mapping[str, Any]
+    ) -> M2ManifestBuilder:
+        """Add solver version from runner version_metadata() output (REQ-M2-008).
+
+        Args:
+            version_metadata: Dictionary from OpenEMSRunner.version_metadata().
+
+        Returns:
+            Self for method chaining.
+        """
+        self.solver_version = SolverVersionInfo(
+            openems_version=version_metadata.get("openems_version"),
+            csxcad_version=version_metadata.get("csxcad_version"),
+            mode=version_metadata.get("mode", "local"),
+            docker_image=version_metadata.get("docker_image"),
+        )
+        return self
+
+    def with_gpu_device_info(self, gpu_info: GPUDeviceInfo) -> M2ManifestBuilder:
+        """Add GPU device information (REQ-M2-008).
+
+        Args:
+            gpu_info: GPU device metadata.
+
+        Returns:
+            Self for method chaining.
+        """
+        self.gpu_device_info = gpu_info
+        return self
+
+    def with_sparam_file_hashes(self, hashes: SParamFileHashes) -> M2ManifestBuilder:
+        """Add S-parameter file hashes (REQ-M2-008).
+
+        Args:
+            hashes: S-parameter file hash information.
+
+        Returns:
+            Self for method chaining.
+        """
+        self.sparam_file_hashes = hashes
         return self
 
     def with_git_sha(self, sha: str) -> M2ManifestBuilder:
@@ -403,6 +578,24 @@ class M2ManifestBuilder:
         if self.simulation_result.sparam_path is not None:
             manifest["sparam_path"] = str(self.simulation_result.sparam_path.relative_to(self.simulation_result.output_dir))
 
+        # REQ-M2-008: Add sim_config_hash for simulation provenance
+        # This is the same as spec_hash but explicitly named for clarity
+        manifest["sim_config_hash"] = spec_hash
+
+        # REQ-M2-008: Add solver version information
+        if self.solver_version is not None:
+            manifest["solver_version"] = self.solver_version.to_dict()
+
+        # REQ-M2-008: Add GPU device information if GPU was used
+        if self.gpu_device_info is not None:
+            manifest["gpu_device_info"] = self.gpu_device_info.to_dict()
+
+        # REQ-M2-008: Add S-parameter file hashes
+        if self.sparam_file_hashes is not None:
+            sparam_hashes = self.sparam_file_hashes.to_dict()
+            if sparam_hashes:  # Only add if non-empty
+                manifest["sparam_file_hashes"] = sparam_hashes
+
         return manifest
 
 
@@ -414,6 +607,9 @@ def build_m2_manifest(
     mesh_spec: MeshSpec | None = None,
     extraction_result: ExtractionResult | None = None,
     m1_manifest_hash: str | None = None,
+    solver_version: SolverVersionInfo | None = None,
+    gpu_device_info: GPUDeviceInfo | None = None,
+    sparam_file_hashes: SParamFileHashes | None = None,
     git_sha: str | None = None,
     timestamp_utc: str | None = None,
 ) -> dict[str, Any]:
@@ -429,6 +625,9 @@ def build_m2_manifest(
         mesh_spec: Mesh specification for computing statistics (optional).
         extraction_result: S-parameter extraction result (optional).
         m1_manifest_hash: Hash of the M1 coupon manifest (optional).
+        solver_version: openEMS solver version info (REQ-M2-008, optional).
+        gpu_device_info: GPU device info if GPU used (REQ-M2-008, optional).
+        sparam_file_hashes: Hashes of S-param files (REQ-M2-008, optional).
         git_sha: Git commit SHA (auto-detected if not provided).
         timestamp_utc: UTC timestamp (auto-generated if not provided).
 
@@ -442,6 +641,7 @@ def build_m2_manifest(
         ...     simulation_result=result,
         ...     mesh_spec=mesh_spec,
         ...     extraction_result=extraction,
+        ...     solver_version=SolverVersionInfo(openems_version="0.0.35"),
         ... )
         >>> write_m2_manifest(Path("manifest.json"), manifest)
     """
@@ -467,6 +667,18 @@ def build_m2_manifest(
     # Add M1 manifest hash
     if m1_manifest_hash is not None:
         builder.with_m1_manifest(m1_manifest_hash)
+
+    # REQ-M2-008: Add solver version info
+    if solver_version is not None:
+        builder.with_solver_version(solver_version)
+
+    # REQ-M2-008: Add GPU device info
+    if gpu_device_info is not None:
+        builder.with_gpu_device_info(gpu_device_info)
+
+    # REQ-M2-008: Add S-parameter file hashes
+    if sparam_file_hashes is not None:
+        builder.with_sparam_file_hashes(sparam_file_hashes)
 
     return builder.build()
 
@@ -541,6 +753,7 @@ def validate_m2_manifest(manifest: Mapping[str, Any]) -> list[str]:
         "ports",
         "outputs",
         "lineage",
+        "sim_config_hash",  # REQ-M2-008: Required for provenance tracking
     ]
 
     for field in required_fields:
@@ -557,6 +770,11 @@ def validate_m2_manifest(manifest: Mapping[str, Any]) -> list[str]:
     if "simulation_hash" in manifest:
         if not isinstance(manifest["simulation_hash"], str) or len(manifest["simulation_hash"]) != 64:
             errors.append("simulation_hash must be a 64-character hex string")
+
+    # REQ-M2-008: Validate sim_config_hash
+    if "sim_config_hash" in manifest:
+        if not isinstance(manifest["sim_config_hash"], str) or len(manifest["sim_config_hash"]) != 64:
+            errors.append("sim_config_hash must be a 64-character hex string")
 
     if "lineage" in manifest:
         lineage = manifest["lineage"]
@@ -576,6 +794,38 @@ def validate_m2_manifest(manifest: Mapping[str, Any]) -> list[str]:
 
     if "outputs" in manifest and not isinstance(manifest["outputs"], list):
         errors.append("outputs must be a list")
+
+    # REQ-M2-008: Validate optional solver_version structure
+    if "solver_version" in manifest:
+        solver_ver = manifest["solver_version"]
+        if not isinstance(solver_ver, dict):
+            errors.append("solver_version must be a dictionary")
+        else:
+            if "mode" not in solver_ver:
+                errors.append("solver_version.mode is required")
+
+    # REQ-M2-008: Validate optional gpu_device_info structure
+    if "gpu_device_info" in manifest:
+        gpu_info = manifest["gpu_device_info"]
+        if not isinstance(gpu_info, dict):
+            errors.append("gpu_device_info must be a dictionary")
+        else:
+            if "device_id" not in gpu_info:
+                errors.append("gpu_device_info.device_id is required")
+            if "device_name" not in gpu_info:
+                errors.append("gpu_device_info.device_name is required")
+
+    # REQ-M2-008: Validate optional sparam_file_hashes structure
+    if "sparam_file_hashes" in manifest:
+        sparam_hashes = manifest["sparam_file_hashes"]
+        if not isinstance(sparam_hashes, dict):
+            errors.append("sparam_file_hashes must be a dictionary")
+        else:
+            # Validate hash format for touchstone and csv if present
+            for key in ["touchstone_hash", "csv_hash"]:
+                if key in sparam_hashes:
+                    if not isinstance(sparam_hashes[key], str) or len(sparam_hashes[key]) != 64:
+                        errors.append(f"sparam_file_hashes.{key} must be a 64-character hex string")
 
     return errors
 

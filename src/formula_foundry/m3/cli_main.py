@@ -3,11 +3,22 @@
 This module provides the `m3` command-line interface for initializing and
 managing the Formula Foundry data provenance system.
 
-Commands:
+Commands (REQ-M3-011):
     init: Initialize data directory structure, DVC, MLflow config, and registry.
+    artifact show: Display detailed information about an artifact.
+    artifact list: List artifacts in the store with optional filtering.
+    dataset show: Display detailed information about a dataset snapshot.
+    dataset diff: Compare two dataset versions and show differences.
+    dataset list: List all dataset snapshots in the store.
     run: Execute a DVC stage with metadata stamping and artifact tracking.
+    verify: Verify artifact integrity: hashes, lineage, and metadata.
     gc: Garbage collect old artifacts with configurable retention policies.
+    gc-pin: Pin an artifact to protect it from garbage collection.
+    gc-unpin: Unpin an artifact to allow garbage collection.
+    gc-estimate: Estimate space savings from garbage collection.
     audit: Generate deterministic provenance reports for artifacts.
+
+All commands support JSON output mode via --json or --format json flag.
 """
 
 from __future__ import annotations
@@ -66,6 +77,12 @@ def build_parser() -> argparse.ArgumentParser:
         "-q",
         action="store_true",
         help="Suppress non-error output",
+    )
+    init_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output result as JSON",
     )
 
     # dataset subcommand
@@ -148,6 +165,50 @@ def build_parser() -> argparse.ArgumentParser:
         "-q",
         action="store_true",
         help="Suppress non-error output",
+    )
+
+    # dataset list subcommand
+    dataset_list_parser = dataset_subparsers.add_parser(
+        "list",
+        help="List all dataset snapshots in the store",
+    )
+    dataset_list_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory (defaults to auto-detect)",
+    )
+    dataset_list_parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Filter by dataset name (prefix match)",
+    )
+    dataset_list_parser.add_argument(
+        "--limit",
+        "-n",
+        type=int,
+        default=None,
+        help="Maximum number of datasets to show",
+    )
+    dataset_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output as JSON instead of formatted table",
+    )
+    dataset_list_parser.add_argument(
+        "--long",
+        "-l",
+        action="store_true",
+        dest="long_format",
+        help="Show detailed information for each dataset",
+    )
+    dataset_list_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress non-error output (only show dataset IDs)",
     )
 
     # artifact subcommand
@@ -335,6 +396,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="tags",
         metavar="KEY=VALUE",
         help="Add a tag (can be specified multiple times)",
+    )
+    run_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output run metadata as JSON",
     )
 
     # gc subcommand
@@ -579,9 +646,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify registry consistency (ensure registry matches manifests)",
     )
     verify_parser.add_argument(
+        "--store",
+        action="store_true",
+        dest="check_store",
+        help="Verify store integrity (directory structure, file sizes)",
+    )
+    verify_parser.add_argument(
+        "--orphans",
+        action="store_true",
+        dest="check_orphans",
+        help="Detect orphan artifacts (not referenced by any dataset or pinned)",
+    )
+    verify_parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        dest="check_pipeline",
+        help="Verify pipeline cache validity (requires DVC)",
+    )
+    verify_parser.add_argument(
+        "--gc-check",
+        action="store_true",
+        dest="check_gc",
+        help="Run GC dry-run and verify pinned objects are preserved",
+    )
+    verify_parser.add_argument(
         "--full",
         action="store_true",
-        help="Run all verification checks (hash, lineage, manifest, registry)",
+        help="Run all verification checks (hash, lineage, manifest, registry, store, orphans)",
     )
     verify_parser.add_argument(
         "--repair",
@@ -939,6 +1030,109 @@ def _get_container_digest() -> str | None:
     return None
 
 
+def _get_dvc_lock_hash(cwd: Path) -> str | None:
+    """Compute hash of dvc.lock file for provenance tracking.
+
+    The dvc.lock file captures the complete pipeline state including
+    all dependencies, parameters, and output hashes. Hashing it provides
+    a single value that represents the entire pipeline reproducibility.
+
+    Args:
+        cwd: Working directory containing dvc.lock.
+
+    Returns:
+        SHA256 hash of dvc.lock content, or None if file doesn't exist.
+    """
+    import hashlib
+
+    lock_path = cwd / "dvc.lock"
+    if not lock_path.exists():
+        return None
+
+    try:
+        content = lock_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()
+    except (OSError, PermissionError):
+        return None
+
+
+def _get_environment_stamp() -> dict[str, Any]:
+    """Capture environment variables relevant for reproducibility.
+
+    Returns a dictionary of environment variables that affect pipeline
+    execution, excluding sensitive values like API keys.
+    """
+    # Variables relevant for reproducibility
+    relevant_vars = [
+        "PYTHONHASHSEED",
+        "PYTHONDONTWRITEBYTECODE",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "CUDA_VISIBLE_DEVICES",
+        "TF_CPP_MIN_LOG_LEVEL",
+        "TORCH_CUDA_ARCH_LIST",
+        "MLFLOW_TRACKING_URI",
+        "DVC_NO_ANALYTICS",
+    ]
+
+    env_stamp: dict[str, Any] = {}
+    for var in relevant_vars:
+        value = os.environ.get(var)
+        if value is not None:
+            env_stamp[var] = value
+
+    return env_stamp
+
+
+def _write_run_json(
+    run_dir: Path,
+    metadata: RunMetadata,
+    quiet: bool = False,
+) -> Path:
+    """Write run metadata to runs/<run_id>/run.json.
+
+    This function creates the run directory and writes the metadata file.
+    It's called both at the start of a run (for resumability) and at the
+    end (with final status).
+
+    Args:
+        run_dir: Directory for this run (typically data/runs/<run_id>).
+        metadata: RunMetadata to serialize.
+        quiet: If True, suppress logging.
+
+    Returns:
+        Path to the written run.json file.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_json_path = run_dir / "run.json"
+
+    # Write atomically using temp file + rename
+    import tempfile
+
+    fd, tmp_path_str = tempfile.mkstemp(
+        suffix=".tmp",
+        prefix="run.json.",
+        dir=run_dir,
+    )
+    tmp_path = Path(tmp_path_str)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(metadata.to_json())
+            f.flush()
+            os.fsync(f.fileno())
+
+        # Atomic rename
+        tmp_path.rename(run_json_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+    _log(f"Wrote run metadata to {run_json_path}", quiet)
+    return run_json_path
+
+
 def _infer_run_type(stage: str) -> str:
     """Infer run type from stage name.
 
@@ -1033,7 +1227,7 @@ def _run_dvc_stage(
     return result.returncode, result.stdout, result.stderr, was_cached
 
 
-def cmd_init(root: Path | None, force: bool, quiet: bool) -> int:
+def cmd_init(root: Path | None, force: bool, quiet: bool, output_json: bool = False) -> int:
     """Initialize the M3 data directory structure.
 
     Creates:
@@ -1048,6 +1242,7 @@ def cmd_init(root: Path | None, force: bool, quiet: bool) -> int:
         root: Project root directory (defaults to cwd).
         force: If True, reinitialize even if already initialized.
         quiet: If True, suppress non-error output.
+        output_json: If True, output result as JSON.
 
     Returns:
         0 on success, 2 on error.
@@ -1058,68 +1253,124 @@ def cmd_init(root: Path | None, force: bool, quiet: bool) -> int:
     if not root:
         project_root = _find_project_root(project_root)
 
-    _log(f"Initializing M3 in {project_root}", quiet)
+    # Suppress text output when JSON mode is requested
+    suppress_log = quiet or output_json
+
+    _log(f"Initializing M3 in {project_root}", suppress_log)
+
+    # Collect init result info
+    init_result: dict[str, Any] = {
+        "status": "success",
+        "project_root": str(project_root),
+        "data_dir": str(project_root / "data"),
+        "steps_completed": [],
+        "warnings": [],
+    }
 
     # Check if already initialized
     data_dir = project_root / "data"
     registry_db = data_dir / "registry.db"
     if registry_db.exists() and not force:
-        _log("Already initialized. Use --force to reinitialize.", quiet)
+        init_result["status"] = "already_initialized"
+        init_result["message"] = "Already initialized. Use --force to reinitialize."
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            _log("Already initialized. Use --force to reinitialize.", quiet)
         return 0
 
     # Step 1: Create data directory structure
-    _log("Creating data directory structure...", quiet)
+    _log("Creating data directory structure...", suppress_log)
     try:
         _create_data_directories(data_dir)
+        init_result["steps_completed"].append("create_directories")
     except OSError as e:
-        sys.stderr.write(f"Error creating directories: {e}\n")
+        init_result["status"] = "error"
+        init_result["error"] = f"Error creating directories: {e}"
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            sys.stderr.write(f"Error creating directories: {e}\n")
         return 2
 
     # Step 2: Initialize artifact store (ensures directories exist)
-    _log("Initializing artifact store...", quiet)
+    _log("Initializing artifact store...", suppress_log)
     try:
         _init_artifact_store(data_dir)
+        init_result["steps_completed"].append("init_artifact_store")
     except Exception as e:
-        sys.stderr.write(f"Error initializing artifact store: {e}\n")
+        init_result["status"] = "error"
+        init_result["error"] = f"Error initializing artifact store: {e}"
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            sys.stderr.write(f"Error initializing artifact store: {e}\n")
         return 2
 
     # Step 3: Load and validate MLflow config, ensure directories
-    _log("Configuring MLflow tracking...", quiet)
+    _log("Configuring MLflow tracking...", suppress_log)
     try:
         _init_mlflow_config(project_root)
+        init_result["steps_completed"].append("configure_mlflow")
     except Exception as e:
-        sys.stderr.write(f"Error configuring MLflow: {e}\n")
+        init_result["status"] = "error"
+        init_result["error"] = f"Error configuring MLflow: {e}"
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            sys.stderr.write(f"Error configuring MLflow: {e}\n")
         return 2
 
     # Step 4: Initialize registry
-    _log("Initializing artifact registry...", quiet)
+    _log("Initializing artifact registry...", suppress_log)
     try:
         _init_registry(registry_db)
+        init_result["steps_completed"].append("init_registry")
+        init_result["registry_db"] = str(registry_db)
     except Exception as e:
-        sys.stderr.write(f"Error initializing registry: {e}\n")
+        init_result["status"] = "error"
+        init_result["error"] = f"Error initializing registry: {e}"
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            sys.stderr.write(f"Error initializing registry: {e}\n")
         return 2
 
     # Step 5: Verify DVC configuration exists
-    _log("Verifying DVC configuration...", quiet)
+    _log("Verifying DVC configuration...", suppress_log)
     dvc_dir = project_root / ".dvc"
     if not dvc_dir.exists():
-        _log("Warning: DVC not initialized. Run 'dvc init' to set up DVC.", quiet)
+        init_result["warnings"].append("DVC not initialized. Run 'dvc init' to set up DVC.")
+        init_result["dvc_initialized"] = False
+        _log("Warning: DVC not initialized. Run 'dvc init' to set up DVC.", suppress_log)
     else:
-        _log("DVC configuration found.", quiet)
+        init_result["dvc_initialized"] = True
+        _log("DVC configuration found.", suppress_log)
 
     # Step 6: Record initialization
-    _log("Recording initialization...", quiet)
+    _log("Recording initialization...", suppress_log)
     try:
         _record_init_run(data_dir, project_root)
+        init_result["steps_completed"].append("record_init")
     except Exception as e:
-        sys.stderr.write(f"Error recording initialization: {e}\n")
+        init_result["status"] = "error"
+        init_result["error"] = f"Error recording initialization: {e}"
+        if output_json:
+            sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+        else:
+            sys.stderr.write(f"Error recording initialization: {e}\n")
         return 2
 
-    _log("M3 initialization complete.", quiet)
-    _log("", quiet)
-    _log("Next steps:", quiet)
-    _log("  - Run 'm3 verify' to check data integrity", quiet)
-    _log("  - Run 'm3 run <stage>' to execute pipeline stages", quiet)
+    init_result["initialized_utc"] = _now_utc_iso()
+
+    if output_json:
+        sys.stdout.write(json.dumps(init_result, indent=2) + "\n")
+    else:
+        _log("M3 initialization complete.", quiet)
+        _log("", quiet)
+        _log("Next steps:", quiet)
+        _log("  - Run 'm3 verify' to check data integrity", quiet)
+        _log("  - Run 'm3 run <stage>' to execute pipeline stages", quiet)
 
     return 0
 
@@ -1140,6 +1391,7 @@ def _create_data_directories(data_dir: Path) -> None:
     (data_dir / "manifests").mkdir(parents=True, exist_ok=True)
     (data_dir / "mlflow" / "artifacts").mkdir(parents=True, exist_ok=True)
     (data_dir / "datasets").mkdir(parents=True, exist_ok=True)
+    (data_dir / "runs").mkdir(parents=True, exist_ok=True)
 
 
 def _init_artifact_store(data_dir: Path) -> None:
@@ -1211,6 +1463,7 @@ def cmd_run(
     force: bool,
     quiet: bool,
     tags: list[str],
+    output_json: bool = False,
 ) -> int:
     """Execute a DVC stage with metadata stamping and artifact tracking.
 
@@ -1229,6 +1482,7 @@ def cmd_run(
         force: If True, force re-run even if stage is cached.
         quiet: If True, suppress non-error output.
         tags: List of tags in KEY=VALUE format.
+        output_json: If True, output run metadata as JSON.
 
     Returns:
         0 on success, non-zero on error.
@@ -1244,7 +1498,10 @@ def cmd_run(
     if not root:
         project_root = _find_project_root(project_root)
 
-    _log(f"M3 Run: stage={stage}, root={project_root}", quiet)
+    # Suppress text output when JSON mode is requested
+    suppress_log = quiet or output_json
+
+    _log(f"M3 Run: stage={stage}, root={project_root}", suppress_log)
 
     # Verify M3 is initialized
     data_dir = project_root / "data"
@@ -1260,7 +1517,7 @@ def cmd_run(
         return 2
 
     # Gather provenance information
-    _log("Gathering provenance information...", quiet)
+    _log("Gathering provenance information...", suppress_log)
 
     git_info = _get_git_info(project_root)
     if git_info is None:
@@ -1272,6 +1529,8 @@ def cmd_run(
     python_version = _get_python_version()
     dvc_version = _get_dvc_version()
     container_digest = _get_container_digest()
+    dvc_lock_hash = _get_dvc_lock_hash(project_root)
+    environment_stamp = _get_environment_stamp()
 
     # Build toolchain list
     toolchain: list[ToolVersion] = [ToolVersion(name="python", version=python_version)]
@@ -1281,7 +1540,7 @@ def cmd_run(
 
     # Determine run type
     effective_run_type = run_type or _infer_run_type(stage)
-    _log(f"Run type: {effective_run_type}", quiet)
+    _log(f"Run type: {effective_run_type}", suppress_log)
 
     # Parse tags
     parsed_tags = _parse_tags(tags)
@@ -1301,18 +1560,35 @@ def cmd_run(
 
     # Dry run mode
     if dry_run:
-        _log("", quiet)
-        _log("Dry run - would execute:", quiet)
-        _log(f"  Run ID: {run_id}", quiet)
-        _log(f"  Stage: {stage}", quiet)
-        _log(f"  Run type: {effective_run_type}", quiet)
-        _log(f"  Git commit: {git_info.commit[:12]}", quiet)
-        _log(f"  Git branch: {git_info.branch}", quiet)
-        _log(f"  Git dirty: {git_info.dirty}", quiet)
-        _log(f"  Container: {container_digest or 'none'}", quiet)
-        _log(f"  Command: dvc repro {stage}{' --force' if force else ''}", quiet)
-        if parsed_tags:
-            _log(f"  Tags: {parsed_tags}", quiet)
+        dry_run_result = {
+            "mode": "dry_run",
+            "run_id": run_id,
+            "stage": stage,
+            "run_type": effective_run_type,
+            "git_commit": git_info.commit,
+            "git_branch": git_info.branch,
+            "git_dirty": git_info.dirty,
+            "dvc_lock_hash": dvc_lock_hash,
+            "container_digest": container_digest,
+            "command": f"dvc repro {stage}{' --force' if force else ''}",
+            "tags": parsed_tags,
+        }
+        if output_json:
+            sys.stdout.write(json.dumps(dry_run_result, indent=2) + "\n")
+        else:
+            _log("", quiet)
+            _log("Dry run - would execute:", quiet)
+            _log(f"  Run ID: {run_id}", quiet)
+            _log(f"  Stage: {stage}", quiet)
+            _log(f"  Run type: {effective_run_type}", quiet)
+            _log(f"  Git commit: {git_info.commit[:12]}", quiet)
+            _log(f"  Git branch: {git_info.branch}", quiet)
+            _log(f"  Git dirty: {git_info.dirty}", quiet)
+            _log(f"  DVC lock hash: {dvc_lock_hash[:12] if dvc_lock_hash else 'none'}...", quiet)
+            _log(f"  Container: {container_digest or 'none'}", quiet)
+            _log(f"  Command: dvc repro {stage}{' --force' if force else ''}", quiet)
+            if parsed_tags:
+                _log(f"  Tags: {parsed_tags}", quiet)
         return 0
 
     # Verify DVC is available (only needed for actual execution)
@@ -1350,7 +1626,16 @@ def cmd_run(
         outputs=RunOutputs(),
         name=f"DVC stage: {stage}",
         tags=parsed_tags,
+        dvc_stage_hash=dvc_lock_hash,
+        annotations={"environment": environment_stamp} if environment_stamp else {},
     )
+
+    # Create run directory and write initial run.json (for resumability)
+    # Per design doc section 15.3, we write run.json early so that on restart
+    # we can detect incomplete runs and either resume or recompute
+    runs_dir = data_dir / "runs"
+    run_dir = runs_dir / run_id
+    run_json_path = _write_run_json(run_dir, run_metadata, suppress_log)
 
     # Initialize registry and record run start
     registry = ArtifactRegistry(registry_db)
@@ -1362,15 +1647,22 @@ def cmd_run(
         hostname=hostname,
         generator="m3_run",
         generator_version=__version__,
-        config={"stage": stage, "force": force, "run_type": effective_run_type},
+        config={
+            "stage": stage,
+            "force": force,
+            "run_type": effective_run_type,
+            "dvc_lock_hash": dvc_lock_hash,
+        },
     )
 
-    _log(f"Run ID: {run_id}", quiet)
-    _log(f"Git commit: {git_info.commit[:12]} ({git_info.branch})", quiet)
+    _log(f"Run ID: {run_id}", suppress_log)
+    _log(f"Git commit: {git_info.commit[:12]} ({git_info.branch})", suppress_log)
+    if dvc_lock_hash:
+        _log(f"DVC lock hash: {dvc_lock_hash[:12]}...", suppress_log)
     if container_digest:
-        _log(f"Container: {container_digest}", quiet)
-    _log("", quiet)
-    _log(f"Running: dvc repro {stage}{'--force' if force else ''}", quiet)
+        _log(f"Container: {container_digest}", suppress_log)
+    _log("", suppress_log)
+    _log(f"Running: dvc repro {stage}{'--force' if force else ''}", suppress_log)
 
     # Execute DVC stage
     stage_started_utc = _now_utc_iso()
@@ -1391,13 +1683,13 @@ def cmd_run(
         stage_status = "failed"
 
     # Log output
-    if stdout:
-        _log("", quiet)
-        _log("DVC output:", quiet)
+    if stdout and not output_json:
+        _log("", suppress_log)
+        _log("DVC output:", suppress_log)
         for line in stdout.strip().split("\n"):
-            _log(f"  {line}", quiet)
+            _log(f"  {line}", suppress_log)
 
-    if return_code != 0 and stderr:
+    if return_code != 0 and stderr and not output_json:
         sys.stderr.write("\nDVC errors:\n")
         for line in stderr.strip().split("\n"):
             sys.stderr.write(f"  {line}\n")
@@ -1420,6 +1712,12 @@ def cmd_run(
     run_metadata.duration_seconds = duration_seconds
     run_metadata.stages = [stage_execution]
 
+    # Capture DVC lock hash after run (may have changed if stage modified outputs)
+    dvc_lock_hash_after = _get_dvc_lock_hash(project_root)
+    if dvc_lock_hash_after and dvc_lock_hash_after != dvc_lock_hash:
+        run_metadata.dvc_stage_hash = dvc_lock_hash_after
+        _log(f"DVC lock updated: {dvc_lock_hash_after[:12]}...", suppress_log)
+
     if return_code != 0:
         run_metadata.error = {
             "error_type": "DVCError",
@@ -1427,6 +1725,12 @@ def cmd_run(
             "stage_name": stage,
             "recoverable": True,
         }
+
+    # Record log paths
+    run_metadata.log_paths = [str(run_json_path.relative_to(project_root))]
+
+    # Update run.json with final status (for resumability/auditing)
+    _write_run_json(run_dir, run_metadata, suppress_log)
 
     # Update run status in registry
     registry.update_run_status(
@@ -1436,8 +1740,8 @@ def cmd_run(
     )
 
     # Store run metadata as artifact
-    _log("", quiet)
-    _log("Storing run metadata...", quiet)
+    _log("", suppress_log)
+    _log("Storing run metadata...", suppress_log)
 
     store = ArtifactStore(
         root=data_dir,
@@ -1461,15 +1765,47 @@ def cmd_run(
     registry.index_artifact(manifest)
     registry.close()
 
-    _log(f"Metadata artifact: {manifest.artifact_id}", quiet)
-    _log("", quiet)
+    _log(f"Metadata artifact: {manifest.artifact_id}", suppress_log)
+    _log("", suppress_log)
 
-    if return_code == 0:
-        _log(f"Run completed in {duration_seconds:.2f}s", quiet)
-        if was_cached:
-            _log("(Stage outputs were cached)", quiet)
+    # Output JSON if requested
+    if output_json:
+        # Build comprehensive run result JSON
+        run_result = {
+            "run_id": run_id,
+            "stage": stage,
+            "status": status,
+            "run_type": effective_run_type,
+            "started_utc": started_utc,
+            "finished_utc": finished_utc,
+            "duration_seconds": duration_seconds,
+            "cached": was_cached,
+            "provenance": {
+                "git_commit": git_info.commit,
+                "git_branch": git_info.branch,
+                "git_dirty": git_info.dirty,
+                "hostname": hostname,
+                "username": username,
+                "container_digest": container_digest,
+            },
+            "dvc_lock_hash": run_metadata.dvc_stage_hash,
+            "artifact_id": manifest.artifact_id,
+            "run_dir": str(run_dir),
+            "tags": parsed_tags,
+        }
+        if return_code != 0:
+            run_result["error"] = run_metadata.error
+            run_result["dvc_stderr"] = stderr.strip() if stderr else None
+        if stdout:
+            run_result["dvc_stdout"] = stdout.strip()
+        sys.stdout.write(json.dumps(run_result, indent=2) + "\n")
     else:
-        _log(f"Run failed after {duration_seconds:.2f}s", quiet)
+        if return_code == 0:
+            _log(f"Run completed in {duration_seconds:.2f}s", quiet)
+            if was_cached:
+                _log("(Stage outputs were cached)", quiet)
+        else:
+            _log(f"Run failed after {duration_seconds:.2f}s", quiet)
 
     return return_code
 
@@ -1850,6 +2186,188 @@ def cmd_dataset_diff(
     # Output
     for line in lines:
         _log(line, quiet)
+
+    return 0
+
+
+def cmd_dataset_list(
+    root: Path | None,
+    name_filter: str | None,
+    limit: int | None,
+    output_json: bool,
+    long_format: bool,
+    quiet: bool,
+) -> int:
+    """List all dataset snapshots in the store.
+
+    Args:
+        root: Project root directory.
+        name_filter: Filter datasets by name prefix.
+        limit: Maximum number of datasets to show.
+        output_json: If True, output as JSON.
+        long_format: If True, show detailed info for each dataset.
+        quiet: If True, only show dataset IDs.
+
+    Returns:
+        0 on success, non-zero on error.
+    """
+    from formula_foundry.m3.dataset_snapshot import (
+        DatasetNotFoundError,
+        DatasetSnapshotReader,
+    )
+
+    # Find project root
+    project_root = root or Path.cwd()
+    if not root:
+        project_root = _find_project_root(project_root)
+
+    # Verify M3 is initialized
+    data_dir = project_root / "data"
+    datasets_dir = data_dir / "datasets"
+    if not datasets_dir.exists():
+        if output_json:
+            sys.stdout.write(json.dumps({"count": 0, "datasets": []}, indent=2) + "\n")
+        else:
+            _log("No datasets directory found. Run 'm3 init' first.", quiet)
+        return 0
+
+    # Find all dataset manifest files
+    manifest_files = sorted(datasets_dir.glob("*.json"))
+    # Filter out parquet index files
+    manifest_files = [f for f in manifest_files if not f.stem.endswith("_index")]
+
+    # Group by dataset ID (without version suffix)
+    datasets: dict[str, list[Path]] = {}
+    for manifest_path in manifest_files:
+        stem = manifest_path.stem
+        # Dataset IDs can contain underscores, so we take everything before the last underscore
+        # that looks like a version (timestamp format YYYYMMDDTHHMMSS or vN)
+        parts = stem.rsplit("_", 1)
+        if len(parts) == 2:
+            dataset_id, version = parts
+        else:
+            dataset_id = stem
+        if dataset_id not in datasets:
+            datasets[dataset_id] = []
+        datasets[dataset_id].append(manifest_path)
+
+    # Apply name filter
+    if name_filter:
+        datasets = {k: v for k, v in datasets.items() if k.startswith(name_filter)}
+
+    # Sort datasets by name
+    sorted_dataset_ids = sorted(datasets.keys())
+
+    # Apply limit
+    if limit is not None:
+        sorted_dataset_ids = sorted_dataset_ids[:limit]
+
+    # Build dataset info list
+    dataset_infos: list[dict[str, Any]] = []
+
+    for dataset_id in sorted_dataset_ids:
+        manifest_paths = datasets[dataset_id]
+        # Use the latest version (last in sorted list)
+        latest_manifest = manifest_paths[-1]
+
+        info: dict[str, Any] = {
+            "dataset_id": dataset_id,
+            "versions": len(manifest_paths),
+            "latest_manifest": str(latest_manifest),
+        }
+
+        # Load snapshot for detailed info
+        try:
+            reader = DatasetSnapshotReader(snapshot_path=latest_manifest)
+            snapshot = reader.load()
+            info["latest_version"] = snapshot.version
+            info["member_count"] = snapshot.member_count
+            info["total_bytes"] = snapshot.total_bytes
+            info["created_utc"] = snapshot.created_utc
+            if snapshot.name:
+                info["name"] = snapshot.name
+            if snapshot.description:
+                info["description"] = snapshot.description
+            info["content_hash"] = snapshot.content_hash.digest
+        except DatasetNotFoundError:
+            info["error"] = "Failed to load manifest"
+        except Exception as e:
+            info["error"] = str(e)
+
+        dataset_infos.append(info)
+
+    # Output JSON if requested
+    if output_json:
+        output_data = {
+            "count": len(dataset_infos),
+            "datasets": dataset_infos,
+        }
+        sys.stdout.write(json.dumps(output_data, indent=2) + "\n")
+        return 0
+
+    # Quiet mode - just IDs
+    if quiet:
+        for info in dataset_infos:
+            sys.stdout.write(info["dataset_id"] + "\n")
+        return 0
+
+    # No results
+    if not dataset_infos:
+        _log("No datasets found.", False)
+        return 0
+
+    # Formatted output
+    if long_format:
+        # Detailed view for each dataset
+        for i, info in enumerate(dataset_infos):
+            if i > 0:
+                _log("", False)
+                _log("-" * 50, False)
+            _log(f"Dataset: {info['dataset_id']}", False)
+            if info.get("name"):
+                _log(f"  Name: {info['name']}", False)
+            if info.get("latest_version"):
+                _log(f"  Latest version: {info['latest_version']}", False)
+            _log(f"  Versions: {info['versions']}", False)
+            if info.get("member_count") is not None:
+                _log(f"  Members: {info['member_count']}", False)
+            if info.get("total_bytes") is not None:
+                _log(f"  Size: {_format_bytes(info['total_bytes'])}", False)
+            if info.get("created_utc"):
+                _log(f"  Created: {info['created_utc']}", False)
+            if info.get("description"):
+                desc = info["description"]
+                if len(desc) > 60:
+                    desc = desc[:57] + "..."
+                _log(f"  Description: {desc}", False)
+            if info.get("content_hash"):
+                _log(f"  Hash: {info['content_hash'][:16]}...", False)
+            if info.get("error"):
+                _log(f"  Error: {info['error']}", False)
+    else:
+        # Table view
+        _log(f"Found {len(dataset_infos)} dataset(s)", False)
+        _log("", False)
+
+        # Header
+        _log(f"{'DATASET_ID':<30} {'VERSIONS':>8} {'MEMBERS':>8} {'SIZE':>12} {'LATEST VERSION':<20}", False)
+        _log("-" * 82, False)
+
+        for info in dataset_infos:
+            dataset_id = info["dataset_id"]
+            if len(dataset_id) > 28:
+                dataset_id = dataset_id[:25] + "..."
+
+            versions = str(info["versions"])
+            members = str(info.get("member_count", "?"))
+            size_str = _format_bytes(info["total_bytes"]) if info.get("total_bytes") is not None else "?"
+            latest_ver = info.get("latest_version", "?")
+            if len(latest_ver) > 18:
+                latest_ver = latest_ver[:15] + "..."
+
+            _log(f"{dataset_id:<30} {versions:>8} {members:>8} {size_str:>12} {latest_ver:<20}", False)
+
+    _log("", False)
 
     return 0
 
@@ -2354,6 +2872,7 @@ def cmd_gc(
         _log("", quiet)
         _log("Protection summary:", quiet)
         _log(f"  Pinned artifacts: {result.pinned_protected}", quiet)
+        _log(f"  Ancestors of pinned: {result.ancestor_protected}", quiet)
         _log(f"  With descendants: {result.descendant_protected}", quiet)
         _log("", quiet)
         _log("Storage:", quiet)
@@ -2697,6 +3216,23 @@ def cmd_audit(
             result["run_id"] = manifest.lineage.run_id
             result["stage_name"] = manifest.lineage.stage_name
 
+            # Include tool/provenance information for deterministic audit
+            result["provenance"] = {
+                "generator": manifest.provenance.generator,
+                "generator_version": manifest.provenance.generator_version,
+                "hostname": manifest.provenance.hostname,
+            }
+            if manifest.provenance.username:
+                result["provenance"]["username"] = manifest.provenance.username
+            if manifest.provenance.command:
+                result["provenance"]["command"] = manifest.provenance.command
+            if manifest.provenance.working_directory:
+                result["provenance"]["working_directory"] = manifest.provenance.working_directory
+            if manifest.provenance.ci_run_id:
+                result["provenance"]["ci_run_id"] = manifest.provenance.ci_run_id
+            if manifest.provenance.ci_job_url:
+                result["provenance"]["ci_job_url"] = manifest.provenance.ci_job_url
+
             # Verify hash if requested
             if verify_hashes:
                 try:
@@ -2772,6 +3308,8 @@ def cmd_audit(
         report = {
             "schema_version": 1,
             "generated_utc": _now_utc_iso(),
+            "generator": "m3_audit",
+            "generator_version": __version__,
             "total_artifacts": len(artifact_ids),
             "verification_failures": len(verification_failures),
             "missing_roles": len(missing_roles),
@@ -2796,6 +3334,11 @@ def cmd_audit(
                 _log(f"  Roles: {', '.join(result['roles'])}", quiet)
             if "run_id" in result:
                 _log(f"  Run ID: {result['run_id']}", quiet)
+            if "provenance" in result:
+                prov = result["provenance"]
+                _log(f"  Generator: {prov.get('generator', 'unknown')} v{prov.get('generator_version', 'unknown')}", quiet)
+                if prov.get("hostname"):
+                    _log(f"  Hostname: {prov['hostname']}", quiet)
             if "ancestor_count" in result:
                 _log(f"  Ancestors: {result['ancestor_count']}", quiet)
             if "root_ids" in result:
@@ -2849,17 +3392,25 @@ def cmd_verify(
     check_lineage: bool,
     check_manifest: bool,
     check_registry: bool,
-    full: bool,
-    repair: bool,
-    quiet: bool,
+    check_store: bool = False,
+    check_orphans: bool = False,
+    check_pipeline: bool = False,
+    check_gc: bool = False,
+    full: bool = False,
+    repair: bool = False,
+    quiet: bool = False,
 ) -> int:
     """Verify artifact integrity: hashes, lineage consistency, and metadata validation.
 
-    This command performs comprehensive integrity verification:
+    This command performs comprehensive integrity verification per REQ-M3-009:
     1. Hash verification: Recompute content hashes and compare with stored digests
     2. Lineage consistency: Verify all referenced input artifacts exist
     3. Manifest validation: Check manifest structure against artifact.v1 schema
     4. Registry consistency: Ensure registry entries match actual manifests
+    5. Store integrity: Verify directory structure and file sizes
+    6. Orphan detection: Find artifacts not referenced by datasets or pinned
+    7. Pipeline cache validity: Verify DVC pipeline cache consistency
+    8. GC dry-run: Ensure pinned objects are preserved during garbage collection
 
     Args:
         artifact_id: Artifact ID to verify (if None, verifies all).
@@ -2870,6 +3421,10 @@ def cmd_verify(
         check_lineage: If True, check lineage consistency.
         check_manifest: If True, validate manifest schema.
         check_registry: If True, check registry consistency.
+        check_store: If True, verify store integrity (sizes, structure).
+        check_orphans: If True, detect orphan artifacts.
+        check_pipeline: If True, verify pipeline cache validity.
+        check_gc: If True, run GC dry-run validation.
         full: If True, run all verification checks.
         repair: If True, attempt to repair issues.
         quiet: If True, suppress non-error output.
@@ -2894,13 +3449,24 @@ def cmd_verify(
         do_lineage = True
         do_manifest = True
         do_registry = True
+        do_store = True
+        do_orphans = True
+        do_pipeline = False  # Pipeline check requires DVC and is expensive, not included in --full
+        do_gc = False  # GC check is expensive, not included in --full
     else:
         # Default: just hash verification unless something else specified
-        any_explicit = check_hash or check_lineage or check_manifest or check_registry
+        any_explicit = (
+            check_hash or check_lineage or check_manifest or check_registry
+            or check_store or check_orphans or check_pipeline or check_gc
+        )
         do_hash = check_hash or (not any_explicit and not skip_hash)
         do_lineage = check_lineage
         do_manifest = check_manifest
         do_registry = check_registry
+        do_store = check_store
+        do_orphans = check_orphans
+        do_pipeline = check_pipeline
+        do_gc = check_gc
 
     if skip_hash:
         do_hash = False
@@ -2944,30 +3510,15 @@ def cmd_verify(
     else:
         artifact_ids = store.list_manifests()
 
+    # Initialize result counters
+    verify_results: list[dict[str, Any]] = []
+    total_passed = 0
+    total_warnings = 0
+    total_errors = 0
+    repaired_count = 0
+
     if not artifact_ids:
-        if output_format == "json":
-            report = {
-                "schema_version": 1,
-                "generated_utc": _now_utc_iso(),
-                "verification_type": "m3_verify",
-                "checks_performed": {
-                    "hash": do_hash,
-                    "lineage": do_lineage,
-                    "manifest": do_manifest,
-                    "registry": do_registry,
-                },
-                "total_artifacts": 0,
-                "passed": 0,
-                "warnings": 0,
-                "errors": 0,
-                "artifacts": [],
-            }
-            sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        else:
-            _log("No artifacts found to verify.", suppress_log)
-        graph.close()
-        registry.close()
-        return 0
+        _log("No artifacts found to verify.", suppress_log)
 
     # Define valid types and roles for schema validation
     valid_types: set[str] = {
@@ -3014,13 +3565,6 @@ def cmd_verify(
         "supersedes",
     }
 
-    # Prepare verification results
-    verify_results: list[dict[str, Any]] = []
-    total_passed = 0
-    total_warnings = 0
-    total_errors = 0
-    repaired_count = 0
-
     _log(f"Verifying {len(artifact_ids)} artifact(s)...", suppress_log)
     checks_desc = []
     if do_hash:
@@ -3031,6 +3575,14 @@ def cmd_verify(
         checks_desc.append("manifest")
     if do_registry:
         checks_desc.append("registry")
+    if do_store:
+        checks_desc.append("store")
+    if do_orphans:
+        checks_desc.append("orphans")
+    if do_pipeline:
+        checks_desc.append("pipeline")
+    if do_gc:
+        checks_desc.append("gc")
     _log(f"Checks: {', '.join(checks_desc)}", suppress_log)
     _log("", suppress_log)
 
@@ -3186,6 +3738,48 @@ def cmd_verify(
                 if registry_check["issues"] and not registry_check.get("repaired"):
                     result["issues"].extend(registry_check["issues"])
 
+            # Check 5: Store integrity (file size verification)
+            if do_store:
+                store_check: dict[str, Any] = {"passed": True, "issues": []}
+
+                # Verify content file exists and size matches
+                try:
+                    object_path = store._object_path(manifest.content_hash.digest)
+                    if not object_path.exists():
+                        store_check["passed"] = False
+                        store_check["issues"].append("Content file missing from object store")
+                        has_error = True
+                    else:
+                        actual_size = object_path.stat().st_size
+                        if actual_size != manifest.byte_size:
+                            store_check["passed"] = False
+                            store_check["issues"].append(
+                                f"Size mismatch: manifest says {manifest.byte_size} bytes, "
+                                f"actual file is {actual_size} bytes"
+                            )
+                            has_error = True
+                        else:
+                            store_check["size_verified"] = True
+                            store_check["byte_size"] = actual_size
+
+                    # Verify manifest file exists
+                    manifest_path = store._manifest_path(art_id)
+                    if not manifest_path.exists():
+                        store_check["passed"] = False
+                        store_check["issues"].append("Manifest file missing")
+                        has_error = True
+                    else:
+                        store_check["manifest_exists"] = True
+
+                except Exception as e:
+                    store_check["passed"] = False
+                    store_check["issues"].append(f"Store integrity check error: {e}")
+                    has_error = True
+
+                result["checks"]["store"] = store_check
+                if not store_check["passed"]:
+                    result["issues"].extend(store_check["issues"])
+
         except ArtifactNotFoundError:
             result["status"] = "error"
             result["issues"].append(f"Manifest not found for artifact: {art_id}")
@@ -3208,6 +3802,158 @@ def cmd_verify(
 
         verify_results.append(result)
 
+    # Global checks (not per-artifact)
+    global_checks: dict[str, Any] = {}
+
+    # Check 6: Orphan artifact detection
+    if do_orphans:
+        orphan_check: dict[str, Any] = {"passed": True, "orphan_count": 0, "orphan_ids": []}
+
+        try:
+            # Get all artifact IDs
+            all_artifacts = set(store.list_manifests())
+
+            # Get artifacts referenced by datasets
+            datasets_dir = data_dir / "datasets"
+            referenced_by_dataset: set[str] = set()
+            if datasets_dir.exists():
+                for dataset_file in datasets_dir.glob("*.json"):
+                    try:
+                        dataset_data = json.loads(dataset_file.read_text(encoding="utf-8"))
+                        members = dataset_data.get("members", {}).get("artifacts", [])
+                        for member in members:
+                            referenced_by_dataset.add(member.get("artifact_id", ""))
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+            # Get pinned artifacts from GC config
+            pinned_artifacts: set[str] = set()
+            gc_config_path = data_dir / "gc_config.json"
+            if gc_config_path.exists():
+                try:
+                    gc_config = json.loads(gc_config_path.read_text(encoding="utf-8"))
+                    pinned_artifacts.update(gc_config.get("pinned_artifacts", []))
+                    # Also get artifacts from pinned runs
+                    pinned_runs = gc_config.get("pinned_runs", [])
+                    for art_id in all_artifacts:
+                        try:
+                            manifest = store.get_manifest(art_id)
+                            if manifest.lineage.run_id in pinned_runs:
+                                pinned_artifacts.add(art_id)
+                        except Exception:
+                            pass
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            # Find orphans (not referenced and not pinned)
+            orphan_ids = all_artifacts - referenced_by_dataset - pinned_artifacts
+
+            # Filter: artifacts that are inputs to other artifacts are not orphans
+            for art_id in list(orphan_ids):
+                try:
+                    # Check if any other artifact references this one as input
+                    edges = graph.get_edges_from(art_id)
+                    if edges:
+                        orphan_ids.discard(art_id)
+                except Exception:
+                    pass
+
+            if orphan_ids:
+                orphan_check["passed"] = False
+                orphan_check["orphan_count"] = len(orphan_ids)
+                orphan_check["orphan_ids"] = sorted(orphan_ids)[:20]  # Limit to 20 for readability
+                if len(orphan_ids) > 20:
+                    orphan_check["more_orphans"] = len(orphan_ids) - 20
+                total_errors += 1
+
+        except Exception as e:
+            orphan_check["passed"] = False
+            orphan_check["error"] = str(e)
+            total_errors += 1
+
+        global_checks["orphans"] = orphan_check
+
+    # Check 7: Pipeline cache validity (DVC)
+    if do_pipeline:
+        pipeline_check: dict[str, Any] = {"passed": True}
+
+        dvc_yaml = project_root / "dvc.yaml"
+        if not dvc_yaml.exists():
+            pipeline_check["passed"] = True
+            pipeline_check["skipped"] = "No dvc.yaml found"
+        elif not shutil.which("dvc"):
+            pipeline_check["passed"] = True
+            pipeline_check["skipped"] = "DVC not installed"
+        else:
+            try:
+                # Run dvc status to check if pipeline is up to date
+                result_proc = subprocess.run(
+                    ["dvc", "status"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=60,
+                )
+
+                if result_proc.returncode == 0:
+                    output = result_proc.stdout.strip()
+                    if not output or "Pipeline is up to date" in output or output == "{}":
+                        pipeline_check["passed"] = True
+                        pipeline_check["status"] = "up_to_date"
+                    else:
+                        pipeline_check["passed"] = False
+                        pipeline_check["status"] = "stale"
+                        pipeline_check["stale_stages"] = output
+                        total_warnings += 1
+                else:
+                    pipeline_check["passed"] = False
+                    pipeline_check["error"] = result_proc.stderr
+                    total_errors += 1
+
+            except subprocess.TimeoutExpired:
+                pipeline_check["passed"] = False
+                pipeline_check["error"] = "DVC status check timed out"
+                total_errors += 1
+            except Exception as e:
+                pipeline_check["passed"] = False
+                pipeline_check["error"] = str(e)
+                total_errors += 1
+
+        global_checks["pipeline"] = pipeline_check
+
+    # Check 8: GC dry-run validation
+    if do_gc:
+        from formula_foundry.m3.gc import GarbageCollector
+
+        gc_check: dict[str, Any] = {"passed": True}
+
+        try:
+            gc = GarbageCollector(data_dir, registry)
+            preview = gc.preview_gc(policy_name="laptop_default")
+
+            gc_check["would_delete_count"] = len(preview.get("would_delete", []))
+            gc_check["would_reclaim_bytes"] = preview.get("would_reclaim_bytes", 0)
+            gc_check["pinned_count"] = len(preview.get("pinned", []))
+
+            # Verify pinned artifacts would not be deleted
+            pinned_set = set(preview.get("pinned", []))
+            would_delete_set = set(preview.get("would_delete", []))
+
+            if pinned_set & would_delete_set:
+                gc_check["passed"] = False
+                gc_check["error"] = "GC would delete pinned artifacts"
+                gc_check["affected_pinned"] = list(pinned_set & would_delete_set)
+                total_errors += 1
+
+        except Exception as e:
+            gc_check["passed"] = False
+            gc_check["error"] = str(e)
+            # GC check failure is a warning, not error
+            total_warnings += 1
+
+        global_checks["gc"] = gc_check
+
     # Output results
     if output_format == "json":
         report = {
@@ -3219,6 +3965,10 @@ def cmd_verify(
                 "lineage": do_lineage,
                 "manifest": do_manifest,
                 "registry": do_registry,
+                "store": do_store,
+                "orphans": do_orphans,
+                "pipeline": do_pipeline,
+                "gc": do_gc,
             },
             "total_artifacts": len(artifact_ids),
             "passed": total_passed,
@@ -3226,6 +3976,7 @@ def cmd_verify(
             "errors": total_errors,
             "repaired_count": repaired_count,
             "artifacts": verify_results,
+            "global_checks": global_checks,
         }
         sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
     else:
@@ -3262,6 +4013,9 @@ def cmd_verify(
                 _log(f"    Registry consistency: {r_status}", quiet)
                 if checks["registry"].get("repaired"):
                     _log("      (Repaired)", quiet)
+            if "store" in checks:
+                s_status = "PASS" if checks["store"].get("passed") else "FAIL"
+                _log(f"    Store integrity: {s_status}", quiet)
 
             # Show issues
             if result.get("issues"):
@@ -3273,6 +4027,35 @@ def cmd_verify(
                 for repair_action in result["repaired"]:
                     _log(f"    Repaired: {repair_action}", quiet)
 
+            _log("", quiet)
+
+        # Global check results
+        if global_checks:
+            _log("Global Checks:", quiet)
+            if "orphans" in global_checks:
+                orphan_info = global_checks["orphans"]
+                o_status = "PASS" if orphan_info.get("passed") else "FAIL"
+                _log(f"  Orphan detection: {o_status}", quiet)
+                if not orphan_info.get("passed") and orphan_info.get("orphan_count"):
+                    _log(f"    Found {orphan_info['orphan_count']} orphan artifact(s)", quiet)
+                    if orphan_info.get("orphan_ids"):
+                        for oid in orphan_info["orphan_ids"][:5]:
+                            _log(f"      - {oid}", quiet)
+                        if len(orphan_info["orphan_ids"]) > 5:
+                            _log(f"      ... and {len(orphan_info['orphan_ids']) - 5} more", quiet)
+            if "pipeline" in global_checks:
+                pipeline_info = global_checks["pipeline"]
+                if pipeline_info.get("skipped"):
+                    _log(f"  Pipeline check: SKIPPED ({pipeline_info['skipped']})", quiet)
+                else:
+                    p_status = "PASS" if pipeline_info.get("passed") else "FAIL"
+                    _log(f"  Pipeline cache: {p_status}", quiet)
+            if "gc" in global_checks:
+                gc_info = global_checks["gc"]
+                g_status = "PASS" if gc_info.get("passed") else "FAIL"
+                _log(f"  GC dry-run: {g_status}", quiet)
+                if gc_info.get("would_delete_count"):
+                    _log(f"    Would delete {gc_info['would_delete_count']} artifact(s)", quiet)
             _log("", quiet)
 
         # Summary
@@ -3305,6 +4088,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             root=args.root,
             force=args.force,
             quiet=args.quiet,
+            output_json=args.output_json,
         )
 
     if args.command == "run":
@@ -3316,6 +4100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             force=args.force,
             quiet=args.quiet,
             tags=args.tags,
+            output_json=args.output_json,
         )
 
     if args.command == "dataset":
@@ -3334,6 +4119,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dataset_b=args.dataset_b,
                 root=args.root,
                 output_json=args.output_json,
+                quiet=args.quiet,
+            )
+        if args.dataset_command == "list":
+            return cmd_dataset_list(
+                root=args.root,
+                name_filter=args.name,
+                limit=args.limit,
+                output_json=args.output_json,
+                long_format=args.long_format,
                 quiet=args.quiet,
             )
         parser.error(f"Unknown dataset command: {args.dataset_command}")
@@ -3424,6 +4218,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_lineage=args.check_lineage,
             check_manifest=args.check_manifest,
             check_registry=args.check_registry,
+            check_store=args.check_store,
+            check_orphans=args.check_orphans,
+            check_pipeline=args.check_pipeline,
+            check_gc=args.check_gc,
             full=args.full,
             repair=args.repair,
             quiet=args.quiet,

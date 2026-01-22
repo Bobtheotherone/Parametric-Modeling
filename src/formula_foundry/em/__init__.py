@@ -1,8 +1,10 @@
 """EM (Electromagnetic) simulation support modules.
 
 This package provides solver-agnostic EM simulation configuration and utilities,
-including mesh generation, frequency analysis, adaptive refinement, and
-Touchstone file I/O for S-parameter data.
+including mesh generation, frequency analysis, adaptive refinement,
+Touchstone file I/O for S-parameter data, and S-parameter validation.
+
+REQ-M2-007: Includes validation for passivity, reciprocity, and causality.
 """
 
 from .mesh import (
@@ -29,6 +31,21 @@ from .touchstone import (
     write_touchstone,
     write_touchstone_to_string,
 )
+from .validation import (
+    CausalityCheckResult,
+    PassivityCheckResult,
+    ReciprocityCheckResult,
+    SParameterValidationResult,
+    ValidationStatus,
+    build_validation_manifest_entry,
+    check_causality,
+    check_passivity,
+    check_reciprocity,
+    check_stability_2port,
+    compute_stability_k_factor,
+    validate_sparam_data,
+    validate_touchstone_file,
+)
 
 __all__ = [
     # Mesh configuration
@@ -53,4 +70,18 @@ __all__ = [
     "validate_with_skrf",
     "write_touchstone",
     "write_touchstone_to_string",
+    # S-parameter Validation (REQ-M2-007)
+    "CausalityCheckResult",
+    "PassivityCheckResult",
+    "ReciprocityCheckResult",
+    "SParameterValidationResult",
+    "ValidationStatus",
+    "build_validation_manifest_entry",
+    "check_causality",
+    "check_passivity",
+    "check_reciprocity",
+    "check_stability_2port",
+    "compute_stability_k_factor",
+    "validate_sparam_data",
+    "validate_touchstone_file",
 ]

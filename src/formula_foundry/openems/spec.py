@@ -55,16 +55,142 @@ class ToolchainSpec(_SpecBase):
 # =============================================================================
 
 
+class GaussianPulseSpec(_SpecBase):
+    """Gaussian pulse excitation specification with configurable bandwidth.
+
+    The Gaussian pulse is the standard excitation for broadband S-parameter
+    extraction. Key parameters:
+
+    - f0_hz: Center frequency of the pulse spectrum
+    - fc_hz: Cutoff frequency defining the 20dB bandwidth edge
+    - bandwidth_hz: Optional explicit bandwidth specification (overrides fc_hz)
+    - bandwidth_ratio: Optional bandwidth as fraction of f0 (e.g., 2.0 for f0±f0)
+
+    For openEMS, the Gaussian pulse is defined by:
+        E(t) = exp(-0.5 * ((t - t0) / sigma)^2) * sin(2*pi*f0*t)
+
+    where sigma determines the pulse width and thus bandwidth.
+
+    REQ-M2-005: Gaussian pulse excitation with configurable bandwidth.
+    """
+
+    f0_hz: FrequencyHz = Field(..., description="Center frequency (Hz)")
+    fc_hz: FrequencyHz | None = Field(None, description="Cutoff frequency (20dB point) in Hz")
+    bandwidth_hz: FrequencyHz | None = Field(
+        None,
+        description="Full bandwidth in Hz (f_max - f_min). Overrides fc_hz if specified.",
+    )
+    bandwidth_ratio: float | None = Field(
+        None,
+        gt=0,
+        le=4.0,
+        description="Bandwidth as ratio of f0 (e.g., 2.0 means f0±f0). Overrides fc_hz/bandwidth_hz.",
+    )
+
+    def compute_fc_hz(self) -> int:
+        """Compute the effective cutoff frequency in Hz.
+
+        Priority: bandwidth_ratio > bandwidth_hz > fc_hz
+
+        Returns:
+            Cutoff frequency in Hz.
+
+        Raises:
+            ValueError: If no bandwidth specification is provided.
+        """
+        if self.bandwidth_ratio is not None:
+            # fc = f0 * bandwidth_ratio / 2 (half-bandwidth)
+            return int(self.f0_hz * self.bandwidth_ratio / 2)
+        if self.bandwidth_hz is not None:
+            # fc = bandwidth / 2
+            return int(self.bandwidth_hz // 2)
+        if self.fc_hz is not None:
+            return int(self.fc_hz)
+        raise ValueError("Gaussian pulse requires fc_hz, bandwidth_hz, or bandwidth_ratio")
+
+    def compute_f_min_hz(self) -> int:
+        """Compute minimum frequency covered by the pulse."""
+        fc = self.compute_fc_hz()
+        return max(0, int(self.f0_hz) - fc)
+
+    def compute_f_max_hz(self) -> int:
+        """Compute maximum frequency covered by the pulse."""
+        fc = self.compute_fc_hz()
+        return int(self.f0_hz) + fc
+
+
 class ExcitationSpec(_SpecBase):
     """Excitation signal specification for FDTD simulation.
 
     The excitation defines the source waveform injected into the simulation.
     A Gaussian pulse is standard for broadband S-parameter extraction.
+
+    Enhanced to support:
+    - Configurable bandwidth via multiple specification methods
+    - Gaussian pulse with automatic parameter calculation
+    - Validation against frequency sweep range
+
+    REQ-M2-005: Gaussian pulse excitation with configurable bandwidth.
     """
 
     type: Literal["gaussian", "sinusoidal", "custom"] = Field("gaussian", description="Excitation waveform type")
     f0_hz: FrequencyHz = Field(..., description="Center frequency (Hz)")
     fc_hz: FrequencyHz = Field(..., description="Cutoff frequency for Gaussian (20dB bandwidth)")
+
+    # Extended bandwidth configuration (optional, defaults to fc_hz-based)
+    bandwidth_hz: FrequencyHz | None = Field(
+        None,
+        description="Explicit bandwidth in Hz (overrides fc_hz calculation if specified)",
+    )
+    bandwidth_ratio: float | None = Field(
+        None,
+        gt=0,
+        le=4.0,
+        description="Bandwidth as ratio of f0 (e.g., 2.0 = octave bandwidth)",
+    )
+
+    def to_gaussian_pulse(self) -> GaussianPulseSpec:
+        """Convert to detailed GaussianPulseSpec.
+
+        Returns:
+            GaussianPulseSpec with all bandwidth parameters.
+        """
+        return GaussianPulseSpec(
+            f0_hz=self.f0_hz,
+            fc_hz=self.fc_hz,
+            bandwidth_hz=self.bandwidth_hz,
+            bandwidth_ratio=self.bandwidth_ratio,
+        )
+
+    def compute_effective_fc_hz(self) -> int:
+        """Compute effective cutoff frequency considering all bandwidth params.
+
+        Priority: bandwidth_ratio > bandwidth_hz > fc_hz
+
+        Returns:
+            Effective cutoff frequency in Hz.
+        """
+        if self.bandwidth_ratio is not None:
+            return int(self.f0_hz * self.bandwidth_ratio / 2)
+        if self.bandwidth_hz is not None:
+            return int(self.bandwidth_hz // 2)
+        return int(self.fc_hz)
+
+    def covers_frequency_range(self, f_start_hz: int, f_stop_hz: int) -> bool:
+        """Check if excitation covers the specified frequency range.
+
+        Args:
+            f_start_hz: Start frequency in Hz.
+            f_stop_hz: Stop frequency in Hz.
+
+        Returns:
+            True if the Gaussian pulse spectrum covers the range.
+        """
+        fc = self.compute_effective_fc_hz()
+        f0 = int(self.f0_hz)
+        pulse_min = max(0, f0 - fc)
+        pulse_max = f0 + fc
+        return pulse_min <= f_start_hz and pulse_max >= f_stop_hz
 
 
 class FrequencySpec(_SpecBase):
@@ -239,10 +365,21 @@ class TerminationSpec(_SpecBase):
 
 
 class EngineSpec(_SpecBase):
-    """FDTD engine configuration."""
+    """FDTD engine configuration.
+
+    Supports both CPU-based engines (basic, sse, multithreaded) and GPU
+    acceleration when available. GPU mode requires NVIDIA Container Toolkit
+    and a CUDA-capable GPU. Set use_gpu=True and optionally specify
+    gpu_device_id and gpu_memory_fraction.
+    """
 
     type: Literal["basic", "sse", "sse-compressed", "multithreaded"] = Field("multithreaded", description="Engine type")
     num_threads: int | None = Field(None, ge=1, description="Number of threads (None = auto)")
+    use_gpu: bool = Field(False, description="Enable GPU acceleration (requires CUDA-capable GPU)")
+    gpu_device_id: int | None = Field(None, ge=0, description="CUDA device ID (None = auto-select first available)")
+    gpu_memory_fraction: float | None = Field(
+        None, ge=0.1, le=1.0, description="Fraction of GPU memory to use (0.1-1.0, None = auto)"
+    )
 
 
 class SimulationControlSpec(_SpecBase):
