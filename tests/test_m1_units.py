@@ -3,9 +3,14 @@ from __future__ import annotations
 import pytest
 
 from formula_foundry.coupongen.units import (
+    KICAD_MAX_NM,
+    KICAD_MIN_NM,
     AngleMdeg,
     FrequencyHz,
     LengthNM,
+    check_kicad_bounds,
+    clamp_to_kicad_bounds,
+    is_within_kicad_bounds,
     parse_angle_mdeg,
     parse_frequency_hz,
     parse_length_nm,
@@ -502,3 +507,105 @@ def test_lengthnm_parsing_integer_nm() -> None:
     assert isinstance(parse_length_nm("100um"), int)
     assert isinstance(parse_length_nm("1mil"), int)
     assert isinstance(parse_length_nm(123456), int)
+
+
+# =============================================================================
+# KiCad 32-bit bounds checking tests
+# =============================================================================
+
+
+class TestKicadBoundsConstants:
+    """Tests for KiCad bounds constants."""
+
+    def test_kicad_min_nm_is_32bit_min(self) -> None:
+        assert KICAD_MIN_NM == -(2**31)
+
+    def test_kicad_max_nm_is_32bit_max(self) -> None:
+        assert KICAD_MAX_NM == 2**31 - 1
+
+    def test_kicad_bounds_approximately_2_meters(self) -> None:
+        """KiCad 32-bit bounds represent approximately ±2.1 meters."""
+        # 2^31 nm ≈ 2.147 meters
+        assert KICAD_MAX_NM > 2_000_000_000  # > 2 meters
+        assert KICAD_MAX_NM < 2_200_000_000  # < 2.2 meters
+        assert abs(KICAD_MIN_NM) > 2_000_000_000
+        assert abs(KICAD_MIN_NM) < 2_200_000_000
+
+
+class TestCheckKicadBounds:
+    """Tests for check_kicad_bounds function."""
+
+    def test_zero_is_valid(self) -> None:
+        check_kicad_bounds(0)  # Should not raise
+
+    def test_typical_pcb_dimensions_valid(self) -> None:
+        """Typical PCB dimensions (100mm = 100_000_000 nm) should be valid."""
+        check_kicad_bounds(100_000_000)  # 100mm
+        check_kicad_bounds(-100_000_000)  # -100mm
+
+    def test_max_i32_valid(self) -> None:
+        check_kicad_bounds(KICAD_MAX_NM)  # Should not raise
+
+    def test_min_i32_valid(self) -> None:
+        check_kicad_bounds(KICAD_MIN_NM)  # Should not raise
+
+    def test_above_max_raises(self) -> None:
+        with pytest.raises(ValueError, match="32-bit"):
+            check_kicad_bounds(KICAD_MAX_NM + 1)
+
+    def test_below_min_raises(self) -> None:
+        with pytest.raises(ValueError, match="32-bit"):
+            check_kicad_bounds(KICAD_MIN_NM - 1)
+
+    def test_large_64bit_value_raises(self) -> None:
+        """Values valid in 64-bit but exceeding 32-bit should raise."""
+        with pytest.raises(ValueError, match="32-bit"):
+            check_kicad_bounds(2**62)  # Valid 64-bit, invalid 32-bit
+
+
+class TestClampToKicadBounds:
+    """Tests for clamp_to_kicad_bounds function."""
+
+    def test_value_in_range_unchanged(self) -> None:
+        assert clamp_to_kicad_bounds(0) == 0
+        assert clamp_to_kicad_bounds(100_000_000) == 100_000_000
+        assert clamp_to_kicad_bounds(-100_000_000) == -100_000_000
+
+    def test_value_above_max_clamped(self) -> None:
+        assert clamp_to_kicad_bounds(KICAD_MAX_NM + 1) == KICAD_MAX_NM
+        assert clamp_to_kicad_bounds(KICAD_MAX_NM + 1_000_000) == KICAD_MAX_NM
+        assert clamp_to_kicad_bounds(2**62) == KICAD_MAX_NM
+
+    def test_value_below_min_clamped(self) -> None:
+        assert clamp_to_kicad_bounds(KICAD_MIN_NM - 1) == KICAD_MIN_NM
+        assert clamp_to_kicad_bounds(KICAD_MIN_NM - 1_000_000) == KICAD_MIN_NM
+        assert clamp_to_kicad_bounds(-(2**62)) == KICAD_MIN_NM
+
+    def test_boundary_values_unchanged(self) -> None:
+        assert clamp_to_kicad_bounds(KICAD_MAX_NM) == KICAD_MAX_NM
+        assert clamp_to_kicad_bounds(KICAD_MIN_NM) == KICAD_MIN_NM
+
+
+class TestIsWithinKicadBounds:
+    """Tests for is_within_kicad_bounds function."""
+
+    def test_zero_is_within(self) -> None:
+        assert is_within_kicad_bounds(0) is True
+
+    def test_typical_values_within(self) -> None:
+        assert is_within_kicad_bounds(100_000_000) is True  # 100mm
+        assert is_within_kicad_bounds(-100_000_000) is True
+
+    def test_boundary_values_within(self) -> None:
+        assert is_within_kicad_bounds(KICAD_MAX_NM) is True
+        assert is_within_kicad_bounds(KICAD_MIN_NM) is True
+
+    def test_above_max_not_within(self) -> None:
+        assert is_within_kicad_bounds(KICAD_MAX_NM + 1) is False
+
+    def test_below_min_not_within(self) -> None:
+        assert is_within_kicad_bounds(KICAD_MIN_NM - 1) is False
+
+    def test_large_64bit_not_within(self) -> None:
+        assert is_within_kicad_bounds(2**62) is False
+        assert is_within_kicad_bounds(-(2**62)) is False

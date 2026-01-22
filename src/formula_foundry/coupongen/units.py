@@ -35,6 +35,10 @@ _FREQ_SCALES_HZ: dict[str, int] = {
 _MIN_I64 = -(2**63)
 _MAX_I64 = 2**63 - 1
 
+# KiCad uses 32-bit signed integers for nanometer coordinates
+_MIN_I32 = -(2**31)
+_MAX_I32 = 2**31 - 1
+
 _LENGTH_JSON_SCHEMA = {
     "anyOf": [
         {"type": "integer"},
@@ -127,6 +131,62 @@ def _check_i64(value: int, type_name: str) -> int:
     if value < _MIN_I64 or value > _MAX_I64:
         raise ValueError(f"{type_name} is outside the signed 64-bit integer range.")
     return value
+
+
+def check_kicad_bounds(value: int) -> None:
+    """Check if a nanometer value is within KiCad's 32-bit signed integer range.
+
+    KiCad internally uses 32-bit signed integers for nanometer coordinates.
+    This function validates that a value can be safely exported to KiCad.
+
+    Args:
+        value: Nanometer value to check.
+
+    Raises:
+        ValueError: If the value exceeds 32-bit signed integer range.
+    """
+    if value < _MIN_I32 or value > _MAX_I32:
+        raise ValueError(
+            f"Value {value} nm is outside KiCad's 32-bit signed integer range "
+            f"[{_MIN_I32}, {_MAX_I32}] (approximately ±2.1 meters)."
+        )
+
+
+def clamp_to_kicad_bounds(value: int) -> int:
+    """Clamp a nanometer value to KiCad's 32-bit signed integer range.
+
+    KiCad internally uses 32-bit signed integers for nanometer coordinates.
+    This function clamps values that exceed the range, which is useful for
+    defensive export when values are known to be within reasonable physical
+    bounds but may technically overflow due to computation.
+
+    Args:
+        value: Nanometer value to clamp.
+
+    Returns:
+        Value clamped to [-2^31, 2^31-1] range.
+    """
+    return max(_MIN_I32, min(_MAX_I32, value))
+
+
+def is_within_kicad_bounds(value: int) -> bool:
+    """Check if a nanometer value is within KiCad's 32-bit signed integer range.
+
+    Args:
+        value: Nanometer value to check.
+
+    Returns:
+        True if value is within 32-bit signed integer range.
+    """
+    return _MIN_I32 <= value <= _MAX_I32
+
+
+# KiCad bounds constants for external use
+KICAD_MIN_NM: int = _MIN_I32
+"""Minimum nanometer value KiCad supports (approximately -2.1 meters)."""
+
+KICAD_MAX_NM: int = _MAX_I32
+"""Maximum nanometer value KiCad supports (approximately +2.1 meters)."""
 
 
 def parse_angle_mdeg(value: str | int | float) -> int:
