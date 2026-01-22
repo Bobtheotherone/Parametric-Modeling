@@ -594,18 +594,19 @@ class TestTieredConstraintSystem:
     """Test the full tiered constraint system."""
 
     def test_all_tiers_evaluated(self) -> None:
-        """System should evaluate all four tiers."""
+        """System should evaluate all five tiers (T0-T4)."""
         spec = CouponSpec.model_validate(_example_spec_data())
         limits = _default_fab_limits()
 
         proof = evaluate_tiered_constraints(spec, limits)
 
-        assert set(proof.tiers.keys()) == {"T0", "T1", "T2", "T3"}
-        # All tiers should have at least one constraint
+        assert set(proof.tiers.keys()) == {"T0", "T1", "T2", "T3", "T4"}
+        # T0-T3 tiers should have at least one constraint
         assert len(proof.tiers["T0"]) > 0
         assert len(proof.tiers["T1"]) > 0
         assert len(proof.tiers["T2"]) > 0
         assert len(proof.tiers["T3"]) > 0
+        # T4 may be empty (DRC is external validation, not always run inline)
 
     def test_valid_spec_passes_all_tiers(self) -> None:
         """Valid spec should pass all tiers."""
