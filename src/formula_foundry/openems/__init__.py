@@ -158,6 +158,22 @@ from .toolchain import (
     parse_docker_image_ref,
     validate_openems_version,
 )
+from .sim_config_validation import (
+    DEFAULT_MIN_CELLS_PER_WAVELENGTH,
+    DEFAULT_MIN_PML_WAVELENGTHS,
+    RECOMMENDED_CELLS_PER_WAVELENGTH,
+    RECOMMENDED_MIN_PML_WAVELENGTHS,
+    SimConfigValidationReport,
+    ValidationResult,
+    ValidationStatus,
+    load_sim_config_json,
+    validate_gpu_config,
+    validate_nyquist_compliance,
+    validate_pml_adequacy,
+    validate_sim_config,
+    write_sim_config_json,
+    write_validation_report,
+)
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 
 __all__ = [
@@ -316,4 +332,19 @@ __all__ = [
     "estimate_batch_time",
     "load_batch_result_summary",
     "write_batch_result",
+    # SimConfig validation (REQ-M2-003)
+    "DEFAULT_MIN_CELLS_PER_WAVELENGTH",
+    "DEFAULT_MIN_PML_WAVELENGTHS",
+    "RECOMMENDED_CELLS_PER_WAVELENGTH",
+    "RECOMMENDED_MIN_PML_WAVELENGTHS",
+    "SimConfigValidationReport",
+    "ValidationResult",
+    "ValidationStatus",
+    "load_sim_config_json",
+    "validate_gpu_config",
+    "validate_nyquist_compliance",
+    "validate_pml_adequacy",
+    "validate_sim_config",
+    "write_sim_config_json",
+    "write_validation_report",
 ]
