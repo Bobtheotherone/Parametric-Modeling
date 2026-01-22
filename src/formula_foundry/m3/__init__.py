@@ -78,31 +78,17 @@ __all__ = [
     "DatasetSnapshotReader",
     "DatasetSnapshotWriter",
     "DatasetStatistics",
-<<<<<<< HEAD
     "FileLock",
-=======
     "IncrementalSnapshotBuilder",
->>>>>>> task/20260122T044813Z/M3-DATASET-SNAPSHOT
-    "Lineage",
-    "LineageEdge",
-    "LineageGraph",
-    "LineageGraphError",
-    "LineageNode",
-    "LineagePath",
-    "LineageReference",
-    "LineageSubgraph",
-<<<<<<< HEAD
     "LockAcquisitionError",
     "LockError",
     "LockInfo",
     "LockNotHeldError",
     "LockTimeoutError",
-=======
     "M3RunContext",
     "M3RunMetadata",
     "M3Tracker",
     "M3TrackingError",
->>>>>>> task/20260122T044813Z/M3-MLFLOW-CONFIG
     "NodeNotFoundError",
     "ParquetNotAvailableError",
     "Provenance",
