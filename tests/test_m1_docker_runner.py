@@ -19,6 +19,7 @@ from formula_foundry.coupongen.kicad import (
     KicadRunResult,
 )
 from formula_foundry.coupongen.kicad.runners.docker import (
+    DockerMountError,
     load_docker_image_ref,
     parse_kicad_version,
 )
@@ -331,3 +332,193 @@ class TestDRCIntegration:
         assert result.success is False
         assert result.has_drc_violations is True
         assert result.returncode == 5
+
+
+class TestDockerMountError:
+    """Tests for DockerMountError exception."""
+
+    def test_error_message_includes_host_path(self) -> None:
+        """Error message should include the host path."""
+        host_path = Path("/some/test/path")
+        error = DockerMountError(host_path)
+        assert "/some/test/path" in str(error)
+
+    def test_error_message_includes_expected_file(self) -> None:
+        """Error message should include expected file if provided."""
+        host_path = Path("/some/test/path")
+        error = DockerMountError(host_path, "coupon.kicad_pcb")
+        assert "coupon.kicad_pcb" in str(error)
+
+    def test_error_message_includes_container_mount(self) -> None:
+        """Error message should mention /workspace mount point."""
+        host_path = Path("/some/test/path")
+        error = DockerMountError(host_path)
+        assert "/workspace" in str(error)
+
+    def test_attributes_set_correctly(self) -> None:
+        """Error should store host_path and expected_file attributes."""
+        host_path = Path("/some/test/path")
+        error = DockerMountError(host_path, "test.kicad_pcb")
+        assert error.host_path == host_path
+        assert error.expected_file == "test.kicad_pcb"
+
+
+class TestDRCViolationSummary:
+    """Tests for DRC violation summary on rc=5."""
+
+    def test_summarize_empty_violations(self, tmp_path: Path) -> None:
+        """Summary should handle empty violations list."""
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        # Create a minimal DRC JSON
+        drc_json = {
+            "violations": [],
+            "unconnected_items": [],
+        }
+        drc_path = tmp_path / "drc.json"
+        drc_path.write_text(json.dumps(drc_json))
+
+        summary = runner._summarize_drc_violations(drc_path, tmp_path)
+        assert "Total violations: 0" in summary
+        assert "Unconnected items: 0" in summary
+
+    def test_summarize_with_violations(self, tmp_path: Path) -> None:
+        """Summary should count and categorize violations."""
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        # Create a DRC JSON with violations
+        drc_json = {
+            "violations": [
+                {"type": "clearance", "severity": "error", "description": "Clearance violation"},
+                {"type": "clearance", "severity": "error", "description": "Another clearance"},
+                {"type": "track_dangling", "severity": "warning", "description": "Dangling track"},
+            ],
+            "unconnected_items": [
+                {"type": "unconnected_items", "severity": "error", "description": "Missing connection"},
+            ],
+        }
+        drc_path = tmp_path / "drc.json"
+        drc_path.write_text(json.dumps(drc_json))
+
+        summary = runner._summarize_drc_violations(drc_path, tmp_path)
+        assert "Total violations: 3" in summary
+        assert "Unconnected items: 1" in summary
+        assert "error:" in summary.lower()
+        assert "clearance: 2" in summary
+
+    def test_summarize_missing_file(self, tmp_path: Path) -> None:
+        """Summary should handle missing DRC file gracefully."""
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        drc_path = tmp_path / "nonexistent.json"
+        summary = runner._summarize_drc_violations(drc_path, tmp_path)
+        assert "unavailable" in summary.lower() or "not found" in summary.lower()
+
+
+class TestMountVerification:
+    """Tests for Docker mount sanity verification.
+
+    These tests verify that the mount verification logic correctly detects
+    empty or inaccessible bind mounts before running kicad-cli.
+    """
+
+    @patch("subprocess.run")
+    def test_verify_mount_detects_empty_workspace(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Mount verification should raise DockerMountError for empty workspace.
+
+        Regression test: empty /workspace (only . and ..) should raise a clear
+        error rather than letting kicad-cli fail with misleading rc=3.
+        """
+        # Simulate empty workspace (only total, ., and ..)
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="total 8\ndrwxr-xr-x 2 root root 4096 Jan 21 00:00 .\ndrwxr-xr-x 3 root root 4096 Jan 21 00:00 ..\n",
+            stderr="",
+        )
+
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        with pytest.raises(DockerMountError) as exc_info:
+            runner._verify_mount(tmp_path, "coupon.kicad_pcb")
+
+        # Error should mention the host path
+        assert str(tmp_path) in str(exc_info.value) or "Docker" in str(exc_info.value)
+
+    @patch("subprocess.run")
+    def test_verify_mount_passes_with_files(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Mount verification should pass when workspace has files."""
+        def side_effect(cmd, **kwargs):
+            if "ls" in cmd:
+                return MagicMock(
+                    returncode=0,
+                    stdout="total 16\ndrwxr-xr-x 2 root root 4096 Jan 21 00:00 .\ndrwxr-xr-x 3 root root 4096 Jan 21 00:00 ..\n-rw-r--r-- 1 root root 1234 Jan 21 00:00 coupon.kicad_pcb\n",
+                    stderr="",
+                )
+            elif "test" in cmd:
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        # Should not raise
+        runner._verify_mount(tmp_path, "coupon.kicad_pcb")
+
+    @patch("subprocess.run")
+    def test_verify_mount_fails_when_file_missing(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        """Mount verification should raise when expected file is missing."""
+        def side_effect(cmd, **kwargs):
+            if "ls" in cmd:
+                return MagicMock(
+                    returncode=0,
+                    stdout="total 16\ndrwxr-xr-x 2 root root 4096 Jan 21 00:00 .\ndrwxr-xr-x 3 root root 4096 Jan 21 00:00 ..\n-rw-r--r-- 1 root root 1234 Jan 21 00:00 other_file.txt\n",
+                    stderr="",
+                )
+            elif "test" in cmd:
+                return MagicMock(returncode=1, stdout="", stderr="")  # File not found
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = side_effect
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+
+        with pytest.raises(DockerMountError) as exc_info:
+            runner._verify_mount(tmp_path, "coupon.kicad_pcb")
+
+        assert "coupon.kicad_pcb" in str(exc_info.value)
+
+
+class TestDRCDebugDiagnostics:
+    """Tests for rc=3 debug diagnostics."""
+
+    @patch("subprocess.run")
+    def test_diagnostics_included_on_rc3(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        """Debug diagnostics should be appended to stderr on rc=3."""
+        # First call is the main kicad-cli command
+        call_count = [0]
+
+        def side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # Main kicad-cli call fails with rc=3
+                return MagicMock(
+                    returncode=3,
+                    stdout="",
+                    stderr="Failed to load board\n",
+                )
+            else:
+                # Diagnostic commands
+                return MagicMock(returncode=0, stdout="diagnostic output\n", stderr="")
+
+        mock_run.side_effect = side_effect
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+        result = runner.run(["pcb", "drc"], tmp_path)
+
+        assert result.returncode == 3
+        # Diagnostics should be in stderr
+        assert "DEBUG DIAGNOSTICS" in result.stderr or "diagnostic" in result.stderr.lower()
