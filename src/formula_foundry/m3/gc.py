@@ -59,6 +59,8 @@ class RetentionPolicy:
         keep_min_count: Always keep at least this many artifacts per type.
         keep_pinned: If True, never delete pinned artifacts (default True).
         keep_with_descendants: If True, keep artifacts that have descendants.
+        keep_ancestors_of_pinned: If True, keep ancestors of pinned artifacts
+            to preserve lineage integrity (default True).
         keep_artifact_types: List of artifact types to always keep.
         keep_roles: List of roles to always keep.
         space_budget_bytes: Target maximum total space usage.
@@ -72,6 +74,7 @@ class RetentionPolicy:
     keep_min_count: int = 1
     keep_pinned: bool = True
     keep_with_descendants: bool = True
+    keep_ancestors_of_pinned: bool = True
     keep_artifact_types: list[str] = field(default_factory=list)
     keep_roles: list[str] = field(default_factory=list)
     space_budget_bytes: int | None = None
@@ -85,6 +88,7 @@ class RetentionPolicy:
             "keep_min_count": self.keep_min_count,
             "keep_pinned": self.keep_pinned,
             "keep_with_descendants": self.keep_with_descendants,
+            "keep_ancestors_of_pinned": self.keep_ancestors_of_pinned,
         }
         if self.description:
             result["description"] = self.description
@@ -111,6 +115,7 @@ class RetentionPolicy:
             keep_min_count=data.get("keep_min_count", 1),
             keep_pinned=data.get("keep_pinned", True),
             keep_with_descendants=data.get("keep_with_descendants", True),
+            keep_ancestors_of_pinned=data.get("keep_ancestors_of_pinned", True),
             keep_artifact_types=data.get("keep_artifact_types", []),
             keep_roles=data.get("keep_roles", []),
             space_budget_bytes=data.get("space_budget_bytes"),
@@ -251,6 +256,7 @@ class GCResult:
     bytes_total_after: int
     pinned_protected: int
     descendant_protected: int
+    ancestor_protected: int
     dvc_gc_ran: bool
     dvc_gc_output: str | None
     errors: list[str] = field(default_factory=list)
@@ -271,6 +277,7 @@ class GCResult:
             "bytes_total_after": self.bytes_total_after,
             "pinned_protected": self.pinned_protected,
             "descendant_protected": self.descendant_protected,
+            "ancestor_protected": self.ancestor_protected,
             "dvc_gc_ran": self.dvc_gc_ran,
             "dvc_gc_output": self.dvc_gc_output,
             "errors": self.errors,
@@ -560,11 +567,73 @@ class GarbageCollector:
         edges = self.lineage.get_edges_from(artifact_id)
         return len(edges) > 0
 
+    def get_pinned_artifact_ids(self) -> set[str]:
+        """Get all directly pinned artifact IDs.
+
+        Returns:
+            Set of artifact IDs that are explicitly pinned.
+        """
+        pinned_ids: set[str] = set()
+
+        for pin in self.pins:
+            if pin.artifact_id:
+                pinned_ids.add(pin.artifact_id)
+            elif pin.run_id:
+                # Get all artifacts from this run
+                try:
+                    records = self.registry.get_artifacts_for_run(pin.run_id)
+                    for record in records:
+                        pinned_ids.add(record.artifact_id)
+                except Exception:
+                    pass
+            elif pin.dataset_id:
+                # Get all artifacts from this dataset
+                try:
+                    records = self.registry.get_artifacts_for_dataset(pin.dataset_id)
+                    for record in records:
+                        pinned_ids.add(record.artifact_id)
+                except Exception:
+                    pass
+
+        return pinned_ids
+
+    def get_ancestors_of_pinned(self) -> set[str]:
+        """Get all ancestors of pinned artifacts.
+
+        This traverses the lineage graph backward from each pinned artifact
+        to collect all input artifacts that contributed to the pinned ones.
+        These ancestors must be preserved to maintain lineage integrity.
+
+        Returns:
+            Set of artifact IDs that are ancestors of pinned artifacts.
+        """
+        if self.lineage is None:
+            return set()
+
+        pinned_ids = self.get_pinned_artifact_ids()
+        ancestor_ids: set[str] = set()
+
+        for pinned_id in pinned_ids:
+            if not self.lineage.has_node(pinned_id):
+                continue
+
+            try:
+                subgraph = self.lineage.get_ancestors(pinned_id)
+                for node_id in subgraph.nodes:
+                    if node_id != pinned_id:  # Don't include the pinned artifact itself
+                        ancestor_ids.add(node_id)
+            except Exception:
+                # Node may not exist in lineage graph
+                continue
+
+        return ancestor_ids
+
     def _evaluate_candidate(
         self,
         artifact_id: str,
         policy: RetentionPolicy,
         artifact_counts_by_type: dict[str, int],
+        ancestors_of_pinned: set[str] | None = None,
     ) -> GCCandidate:
         """Evaluate an artifact for deletion under a policy.
 
@@ -572,6 +641,8 @@ class GarbageCollector:
             artifact_id: The artifact ID to evaluate.
             policy: The retention policy to apply.
             artifact_counts_by_type: Running count of artifacts by type.
+            ancestors_of_pinned: Optional set of artifact IDs that are ancestors
+                of pinned artifacts (for lineage protection).
 
         Returns:
             A GCCandidate with reasons to keep or delete.
@@ -609,6 +680,16 @@ class GarbageCollector:
         # Check pinned status
         if policy.keep_pinned and self.is_pinned(artifact_id, candidate.run_id):
             candidate.reasons_to_keep.append("pinned")
+            return candidate
+
+        # Check if this artifact is an ancestor of a pinned artifact
+        # (protects lineage integrity - never break the chain to pinned artifacts)
+        if (
+            policy.keep_ancestors_of_pinned
+            and ancestors_of_pinned
+            and artifact_id in ancestors_of_pinned
+        ):
+            candidate.reasons_to_keep.append("ancestor_of_pinned")
             return candidate
 
         # Check descendants
@@ -673,6 +754,11 @@ class GarbageCollector:
 
         manifests_with_time.sort(key=lambda x: x[1])
 
+        # Compute ancestors of pinned artifacts if policy requires it
+        ancestors_of_pinned: set[str] | None = None
+        if policy.keep_ancestors_of_pinned:
+            ancestors_of_pinned = self.get_ancestors_of_pinned()
+
         # Track artifact counts by type
         artifact_counts_by_type: dict[str, int] = {}
 
@@ -680,7 +766,9 @@ class GarbageCollector:
         to_keep: list[GCCandidate] = []
 
         for artifact_id, _ in manifests_with_time:
-            candidate = self._evaluate_candidate(artifact_id, policy, artifact_counts_by_type)
+            candidate = self._evaluate_candidate(
+                artifact_id, policy, artifact_counts_by_type, ancestors_of_pinned
+            )
 
             if candidate.should_delete:
                 to_delete.append(candidate)
@@ -775,6 +863,7 @@ class GarbageCollector:
         bytes_freed = 0
         pinned_protected = sum(1 for c in to_keep if "pinned" in c.reasons_to_keep)
         descendant_protected = sum(1 for c in to_keep if "has_descendants" in c.reasons_to_keep)
+        ancestor_protected = sum(1 for c in to_keep if "ancestor_of_pinned" in c.reasons_to_keep)
 
         errors: list[str] = []
         deleted_artifacts: list[str] = []
@@ -821,8 +910,11 @@ class GarbageCollector:
                 for candidate in kept_by_age:
                     if bytes_total_after <= policy.space_budget_bytes:
                         break
-                    # Skip if protected for important reasons
-                    if any(r.startswith("pinned") or r.startswith("protected_") for r in candidate.reasons_to_keep):
+                    # Skip if protected for important reasons (pinned, ancestors, or protected types/roles)
+                    if any(
+                        r.startswith("pinned") or r.startswith("protected_") or r == "ancestor_of_pinned"
+                        for r in candidate.reasons_to_keep
+                    ):
                         continue
                     try:
                         self.store.delete(candidate.artifact_id, delete_content=True)
@@ -849,6 +941,7 @@ class GarbageCollector:
             bytes_total_after=bytes_total_after,
             pinned_protected=pinned_protected,
             descendant_protected=descendant_protected,
+            ancestor_protected=ancestor_protected,
             dvc_gc_ran=dvc_gc_ran,
             dvc_gc_output=dvc_gc_output,
             errors=errors,

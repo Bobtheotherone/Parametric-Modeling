@@ -2513,6 +2513,7 @@ def cmd_gc(
         _log("", quiet)
         _log("Protection summary:", quiet)
         _log(f"  Pinned artifacts: {result.pinned_protected}", quiet)
+        _log(f"  Ancestors of pinned: {result.ancestor_protected}", quiet)
         _log(f"  With descendants: {result.descendant_protected}", quiet)
         _log("", quiet)
         _log("Storage:", quiet)
