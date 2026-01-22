@@ -23,6 +23,7 @@ from formula_foundry.m3.dataset_snapshot import (
     DatasetSnapshotReader,
     DatasetSnapshotWriter,
     DatasetStatistics,
+    IncrementalSnapshotBuilder,
     SplitDefinition,
     compute_manifest_hash,
 )
@@ -475,6 +476,12 @@ class TestDatasetSnapshotWriter:
         """Test Parquet index file creation."""
         store = ArtifactStore(tmp_path / "data")
 
+        writer = DatasetSnapshotWriter(
+            dataset_id="parquet_test",
+            version="v1",
+            store=store,
+        )
+
         # Create artifacts with features
         for i in range(5):
             manifest = store.put(
@@ -483,19 +490,10 @@ class TestDatasetSnapshotWriter:
                 roles=["oracle_output"],
                 run_id="run-001",
             )
-
-        writer = DatasetSnapshotWriter(
-            dataset_id="parquet_test",
-            version="v1",
-            store=store,
-        )
-
-        for manifest_id in store.list_manifests():
-            manifest = store.get_manifest(manifest_id)
             writer.add_member(
                 manifest,
                 role="oracle_output",
-                features={"via_diameter": 0.3 + float(manifest_id[-1]) / 10},
+                features={"via_diameter": 0.3 + i / 10.0},
             )
 
         output_dir = tmp_path / "datasets"
@@ -857,3 +855,411 @@ class TestDatasetProvenanceAndStatistics:
 
         restored = DatasetStatistics.from_dict(data)
         assert restored.unique_coupons == 5
+
+
+class TestIncrementalSnapshotBuilder:
+    """Tests for IncrementalSnapshotBuilder class."""
+
+    def test_basic_incremental_workflow(self, tmp_path: Path) -> None:
+        """Test creating an incremental snapshot from a parent."""
+        store = ArtifactStore(tmp_path / "data")
+
+        # Create parent snapshot
+        parent_writer = DatasetSnapshotWriter(
+            dataset_id="incremental_test",
+            version="v1.0",
+            store=store,
+            name="Parent Dataset",
+        )
+
+        manifests = []
+        for i in range(3):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            manifests.append(m)
+            parent_writer.add_member(m, role="oracle_output")
+
+        output_dir = tmp_path / "datasets"
+        parent = parent_writer.finalize(output_dir=output_dir, write_parquet=False)
+
+        # Create incremental snapshot
+        builder = IncrementalSnapshotBuilder(
+            parent=parent,
+            new_version="v1.1",
+            store=store,
+        )
+
+        # Add a new member
+        new_manifest = store.put(
+            content=b"new content",
+            artifact_type="touchstone",
+            roles=["oracle_output"],
+            run_id="run-002",
+        )
+        builder.add_member(new_manifest, role="oracle_output")
+
+        # Finalize
+        child = builder.finalize(output_dir=output_dir, write_parquet=False)
+
+        assert child.dataset_id == "incremental_test"
+        assert child.version == "v1.1"
+        assert child.parent_version == "v1.0"
+        assert child.member_count == 4  # 3 from parent + 1 new
+
+    def test_incremental_remove_member(self, tmp_path: Path) -> None:
+        """Test removing members in incremental snapshot."""
+        store = ArtifactStore(tmp_path / "data")
+
+        # Create parent with 3 members
+        parent_writer = DatasetSnapshotWriter(
+            dataset_id="remove_test",
+            version="v1",
+            store=store,
+        )
+
+        manifests = []
+        for i in range(3):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            manifests.append(m)
+            parent_writer.add_member(m, role="oracle_output")
+
+        parent = parent_writer.finalize(write_parquet=False)
+
+        # Create incremental and remove one
+        builder = IncrementalSnapshotBuilder(
+            parent=parent,
+            new_version="v2",
+            store=store,
+        )
+        removed = builder.remove_member(manifests[0].artifact_id)
+
+        assert removed is True
+        child = builder.finalize(write_parquet=False)
+
+        assert child.member_count == 2
+        assert child.get_member(manifests[0].artifact_id) is None
+        assert child.get_member(manifests[1].artifact_id) is not None
+
+    def test_incremental_diff_summary(self, tmp_path: Path) -> None:
+        """Test getting diff summary from incremental builder."""
+        store = ArtifactStore(tmp_path / "data")
+
+        # Create parent
+        parent_writer = DatasetSnapshotWriter(
+            dataset_id="diff_test",
+            version="v1",
+            store=store,
+        )
+        m1 = store.put(content=b"1", artifact_type="other", roles=["intermediate"], run_id="run-001")
+        m2 = store.put(content=b"2", artifact_type="other", roles=["intermediate"], run_id="run-001")
+        parent_writer.add_member(m1, role="intermediate")
+        parent_writer.add_member(m2, role="intermediate")
+        parent = parent_writer.finalize(write_parquet=False)
+
+        # Create incremental
+        builder = IncrementalSnapshotBuilder(parent=parent, new_version="v2", store=store)
+
+        # Add one, remove one
+        m3 = store.put(content=b"3", artifact_type="other", roles=["intermediate"], run_id="run-002")
+        builder.add_member(m3, role="intermediate")
+        builder.remove_member(m1.artifact_id)
+
+        diff = builder.get_diff_summary()
+
+        assert diff["parent_version"] == "v1"
+        assert diff["new_version"] == "v2"
+        assert diff["parent_count"] == 2
+        assert diff["new_count"] == 2
+        assert diff["added"] == 1
+        assert diff["removed"] == 1
+
+    def test_incremental_update_features(self, tmp_path: Path) -> None:
+        """Test updating member features in incremental snapshot."""
+        store = ArtifactStore(tmp_path / "data")
+
+        # Create parent
+        parent_writer = DatasetSnapshotWriter(
+            dataset_id="feature_test",
+            version="v1",
+            store=store,
+        )
+        m = store.put(content=b"test", artifact_type="other", roles=["intermediate"], run_id="run-001")
+        parent_writer.add_member(m, role="intermediate", features={"value": 1.0})
+        parent = parent_writer.finalize(write_parquet=False)
+
+        # Create incremental and update features
+        builder = IncrementalSnapshotBuilder(parent=parent, new_version="v2", store=store)
+        updated = builder.update_member_features(
+            m.artifact_id,
+            {"value": 2.0, "extra": "new"},
+            merge=True,
+        )
+
+        assert updated is True
+        child = builder.finalize(write_parquet=False)
+        member = child.get_member(m.artifact_id)
+
+        assert member is not None
+        assert member.features["value"] == 2.0
+        assert member.features["extra"] == "new"
+
+    def test_incremental_annotations_preserved(self, tmp_path: Path) -> None:
+        """Test that incremental diff info is recorded in annotations."""
+        store = ArtifactStore(tmp_path / "data")
+
+        parent_writer = DatasetSnapshotWriter(
+            dataset_id="annotation_test",
+            version="v1",
+            store=store,
+        )
+        m = store.put(content=b"test", artifact_type="other", roles=["intermediate"], run_id="run-001")
+        parent_writer.add_member(m, role="intermediate")
+        parent = parent_writer.finalize(write_parquet=False)
+
+        builder = IncrementalSnapshotBuilder(parent=parent, new_version="v2", store=store)
+        child = builder.finalize(write_parquet=False)
+
+        assert "incremental_from" in child.annotations
+        assert child.annotations["incremental_from"] == "v1"
+        assert "incremental_diff" in child.annotations
+
+
+class TestDatasetSnapshotSlicing:
+    """Tests for efficient slicing and filtering."""
+
+    def test_slice_basic(self, tmp_path: Path) -> None:
+        """Test basic slicing functionality."""
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="slice_test",
+            version="v1",
+            store=store,
+        )
+
+        # Create 10 members with features
+        for i in range(10):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone" if i % 2 == 0 else "coupon_spec",
+                roles=["oracle_output" if i % 2 == 0 else "geometry"],
+                run_id="run-001",
+            )
+            writer.add_member(
+                m,
+                role="oracle_output" if i % 2 == 0 else "geometry",
+                features={"index": i, "value": i * 0.1},
+            )
+
+        output_dir = tmp_path / "datasets"
+        writer.finalize(output_dir=output_dir, write_parquet=False)
+
+        reader = DatasetSnapshotReader(snapshot_path=output_dir / "slice_test_v1.json")
+
+        # Test range slicing
+        sliced = reader.slice(start=2, end=5)
+        assert len(sliced) == 3
+
+        # Test type filtering
+        touchstones = reader.slice(artifact_type="touchstone")
+        assert len(touchstones) == 5
+
+        # Test role filtering
+        geometry = reader.slice(role="geometry")
+        assert len(geometry) == 5
+
+    def test_slice_with_feature_filter(self, tmp_path: Path) -> None:
+        """Test slicing with feature range filters.
+
+        Note: Feature filtering on in-memory members works when the snapshot
+        is created and members have features populated. When loaded from JSON,
+        features are only available via the Parquet index (if written).
+        This test uses the snapshot directly from the writer.
+        """
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="feature_filter_test",
+            version="v1",
+            store=store,
+        )
+
+        for i in range(20):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            writer.add_member(
+                m,
+                role="oracle_output",
+                features={"value": i * 0.1},  # 0.0 to 1.9
+            )
+
+        # Finalize returns snapshot with features in memory
+        snapshot = writer.finalize(write_parquet=False)
+
+        # Create reader from the in-memory snapshot (not from file)
+        reader = DatasetSnapshotReader(snapshot=snapshot)
+
+        # Filter by feature range
+        filtered = reader.slice(
+            feature_filter={"value": (0.5, 1.0)}  # Values 0.5 to 1.0
+        )
+
+        # Should get indices 5-10 (values 0.5-1.0)
+        assert len(filtered) == 6
+        for m in filtered:
+            assert 0.5 <= m.features["value"] <= 1.0
+
+    def test_slice_combined_filters(self, tmp_path: Path) -> None:
+        """Test slicing with multiple filters combined.
+
+        Uses in-memory snapshot since features are not persisted in JSON.
+        """
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="combined_filter_test",
+            version="v1",
+            store=store,
+        )
+
+        for i in range(20):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone" if i % 2 == 0 else "coupon_spec",
+                roles=["oracle_output" if i % 2 == 0 else "geometry"],
+                run_id="run-001",
+            )
+            writer.add_member(
+                m,
+                role="oracle_output" if i % 2 == 0 else "geometry",
+                features={"value": i * 0.1},
+            )
+
+        # Use in-memory snapshot for feature access
+        snapshot = writer.finalize(write_parquet=False)
+        reader = DatasetSnapshotReader(snapshot=snapshot)
+
+        # Combine type filter + feature range + limit
+        filtered = reader.slice(
+            artifact_type="touchstone",
+            feature_filter={"value": (0.0, 1.0)},
+            start=0,
+            end=3,
+        )
+
+        # touchstones are at indices 0, 2, 4, 6, 8... with values 0.0, 0.2, 0.4, 0.6, 0.8...
+        # Filtered by value <= 1.0: 0, 2, 4, 6, 8, 10 (6 items)
+        # Take first 3
+        assert len(filtered) == 3
+        for m in filtered:
+            assert m.artifact_type == "touchstone"
+
+    @pytest.mark.skipif(not HAS_PYARROW, reason="PyArrow not installed")
+    def test_slice_parquet_basic(self, tmp_path: Path) -> None:
+        """Test Parquet-based slicing."""
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="parquet_slice_test",
+            version="v1",
+            store=store,
+        )
+
+        for i in range(10):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone" if i % 2 == 0 else "coupon_spec",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            writer.add_member(m, role="oracle_output", features={"index": i})
+
+        output_dir = tmp_path / "datasets"
+        writer.finalize(output_dir=output_dir, write_parquet=True)
+
+        reader = DatasetSnapshotReader(snapshot_path=output_dir / "parquet_slice_test_v1.json")
+
+        # Basic slice
+        table = reader.slice_parquet(artifact_type="touchstone")
+        assert len(table) == 5
+
+        # Column projection
+        table = reader.slice_parquet(columns=["artifact_id", "artifact_type"])
+        assert len(table.column_names) == 2
+
+    @pytest.mark.skipif(not HAS_PYARROW, reason="PyArrow not installed")
+    def test_slice_parquet_with_filters(self, tmp_path: Path) -> None:
+        """Test Parquet slicing with predicate pushdown filters."""
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="predicate_test",
+            version="v1",
+            store=store,
+        )
+
+        for i in range(20):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            writer.add_member(m, role="oracle_output", features={"value": float(i)})
+
+        output_dir = tmp_path / "datasets"
+        writer.finalize(output_dir=output_dir, write_parquet=True)
+
+        reader = DatasetSnapshotReader(snapshot_path=output_dir / "predicate_test_v1.json")
+
+        # Filter with predicates
+        table = reader.slice_parquet(
+            filters=[("feature_value", ">=", 5.0), ("feature_value", "<=", 10.0)]
+        )
+
+        # Should get values 5-10 (6 rows)
+        assert len(table) == 6
+
+    @pytest.mark.skipif(not HAS_PYARROW, reason="PyArrow not installed")
+    def test_row_group_metadata(self, tmp_path: Path) -> None:
+        """Test getting row group metadata."""
+        store = ArtifactStore(tmp_path / "data")
+
+        writer = DatasetSnapshotWriter(
+            dataset_id="rowgroup_test",
+            version="v1",
+            store=store,
+        )
+
+        for i in range(10):
+            m = store.put(
+                content=f"content {i}".encode(),
+                artifact_type="touchstone",
+                roles=["oracle_output"],
+                run_id="run-001",
+            )
+            writer.add_member(m, role="oracle_output")
+
+        output_dir = tmp_path / "datasets"
+        writer.finalize(output_dir=output_dir, write_parquet=True)
+
+        reader = DatasetSnapshotReader(snapshot_path=output_dir / "rowgroup_test_v1.json")
+
+        metadata = reader.get_row_group_metadata()
+
+        assert len(metadata) >= 1
+        assert "num_rows" in metadata[0]
+        assert "total_byte_size" in metadata[0]
