@@ -148,11 +148,21 @@ from .spec import (
     ToolchainSpec,
     load_simulationspec,
 )
-from .toolchain import DEFAULT_OPENEMS_TOOLCHAIN_PATH, OpenEMSToolchain, load_openems_toolchain
+from .toolchain import (
+    DEFAULT_OPENEMS_LOCKFILE_PATH,
+    DEFAULT_OPENEMS_TOOLCHAIN_PATH,
+    OpenEMSToolchain,
+    is_digest_pinned,
+    load_openems_lockfile,
+    load_openems_toolchain,
+    parse_docker_image_ref,
+    validate_openems_version,
+)
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 
 __all__ = [
     # Toolchain (existing)
+    "DEFAULT_OPENEMS_LOCKFILE_PATH",
     "DEFAULT_OPENEMS_TOOLCHAIN_PATH",
     "BoardOutlineSpec",
     "DiscontinuitySpec",
@@ -167,8 +177,12 @@ __all__ = [
     "build_simulation_spec",
     "geometry_canonical_json",
     "layer_positions_nm",
+    "is_digest_pinned",
+    "load_openems_lockfile",
     "load_openems_toolchain",
+    "parse_docker_image_ref",
     "parse_openems_version_output",
+    "validate_openems_version",
     # Units
     "FrequencyHz",
     "TimePS",
