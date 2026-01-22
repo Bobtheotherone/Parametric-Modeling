@@ -367,18 +367,29 @@ class TerminationSpec(_SpecBase):
 class EngineSpec(_SpecBase):
     """FDTD engine configuration.
 
+<<<<<<< HEAD
     Supports both CPU-based engines (basic, sse, multithreaded) and GPU
     acceleration when available. GPU mode requires NVIDIA Container Toolkit
     and a compatible GPU.
+=======
+    Supports both CPU and GPU execution backends. For GPU execution,
+    set use_gpu=True and optionally specify the GPU device ID.
+>>>>>>> 65c0ed4 (Implement SimConfig schema validation (REQ-M2-003))
     """
 
     type: Literal["basic", "sse", "sse-compressed", "multithreaded"] = Field("multithreaded", description="Engine type")
     num_threads: int | None = Field(None, ge=1, description="Number of threads (None = auto)")
+<<<<<<< HEAD
     use_gpu: bool = Field(False, description="Enable GPU acceleration (requires CUDA-capable GPU)")
     gpu_device_id: int | None = Field(None, ge=0, description="CUDA device ID (None = auto-select first available)")
     gpu_memory_fraction: float | None = Field(
         None, ge=0.1, le=1.0, description="Fraction of GPU memory to use (0.1-1.0, None = auto)"
     )
+=======
+    use_gpu: bool = Field(False, description="Enable GPU acceleration via openEMS CUDA backend")
+    gpu_device_id: int | None = Field(None, ge=0, description="GPU device ID (None = default device)")
+    gpu_memory_limit_mb: int | None = Field(None, ge=256, description="GPU memory limit in MB (None = no limit)")
+>>>>>>> 65c0ed4 (Implement SimConfig schema validation (REQ-M2-003))
 
 
 class SimulationControlSpec(_SpecBase):

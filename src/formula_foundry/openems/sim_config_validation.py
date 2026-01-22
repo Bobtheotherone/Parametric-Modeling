@@ -1,38 +1,33 @@
-"""SimConfig validation for Nyquist compliance and PML adequacy.
+"""Simulation configuration validation for openEMS simulations.
 
 This module implements REQ-M2-003 validation requirements:
-- Nyquist compliance: Ensures mesh density is sufficient for max frequency
-- PML adequacy: Ensures PML layers are thick enough for proper wave absorption
+- Nyquist compliance: Ensure temporal sampling rate satisfies Nyquist criterion
+  for the maximum simulation frequency.
+- PML adequacy: Verify that PML boundary conditions have sufficient layers
+  for proper absorption at the frequency range of interest.
 
-The validators can be run pre-simulation to catch configuration errors early.
+The validation functions can be used both as pre-simulation checks (to catch
+configuration errors early) and as part of the overall simulation quality gates.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
+from formula_foundry.substrate import canonical_json_dumps
 
-from .spec import BoundarySpec, BoundaryType, MeshSpec, SimulationSpec
+from .spec import BoundarySpec, BoundaryType, FrequencySpec, MeshSpec, SimulationSpec
 
 logger = logging.getLogger(__name__)
 
 # Physical constants
 C0_M_PER_S = 299_792_458.0  # Speed of light in vacuum (m/s)
-NM_TO_M = 1e-9  # Nanometers to meters conversion
-
-# Default validation thresholds
-DEFAULT_MIN_CELLS_PER_WAVELENGTH = 10  # Absolute minimum for Nyquist
-RECOMMENDED_CELLS_PER_WAVELENGTH = 20  # Recommended for accuracy
-# PML thresholds - these are for the longest wavelength in the simulation.
-# FDTD PML is effective even at small fractions of a wavelength because
-# it uses polynomial grading. 8 cells with good grading absorbs well.
-DEFAULT_MIN_PML_WAVELENGTHS = 0.05  # PML should be at least 0.05 wavelengths
-RECOMMENDED_MIN_PML_WAVELENGTHS = 0.1  # Recommended for broadband absorption
+NM_TO_M = 1e-9  # Nanometers to meters
 
 
 class ValidationStatus(str, Enum):
@@ -51,7 +46,7 @@ class ValidationResult:
         name: Name of the validation check.
         status: Pass/fail/warning status.
         message: Human-readable description of result.
-        value: Actual value checked (if applicable).
+        value: Primary metric value (if applicable).
         threshold: Threshold used for comparison (if applicable).
         details: Additional diagnostic details.
     """
@@ -61,71 +56,48 @@ class ValidationResult:
     message: str
     value: float | None = None
     threshold: float | None = None
-    details: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] | None = None
 
     @property
     def passed(self) -> bool:
         """Whether check passed (or had warning)."""
         return self.status in (ValidationStatus.PASSED, ValidationStatus.WARNING)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "name": self.name,
+            "status": self.status.value,
+            "message": self.message,
+            "value": self.value,
+            "threshold": self.threshold,
+            "details": self.details or {},
+        }
 
-@dataclass(slots=True)
+
+@dataclass(frozen=True, slots=True)
 class SimConfigValidationReport:
-    """Complete validation report for a SimConfig.
+    """Complete simulation config validation report.
 
     Attributes:
-        checks: List of individual check results.
-        overall_status: Overall pass/fail status.
-        spec_hash: Hash of the validated spec.
-        canonical_hash: SHA256 hash of canonical report.
+        results: List of individual validation results.
+        overall_passed: Whether all validations passed.
+        warnings: List of warning messages.
+        errors: List of error messages.
     """
 
-    checks: list[ValidationResult]
-    overall_status: ValidationStatus
-    spec_hash: str
-    canonical_hash: str
-
-    @property
-    def all_passed(self) -> bool:
-        """Whether all checks passed."""
-        return self.overall_status == ValidationStatus.PASSED
-
-    @property
-    def n_passed(self) -> int:
-        """Number of checks that passed."""
-        return sum(1 for c in self.checks if c.passed)
-
-    @property
-    def n_failed(self) -> int:
-        """Number of checks that failed."""
-        return sum(1 for c in self.checks if c.status == ValidationStatus.FAILED)
-
-    def get_check(self, name: str) -> ValidationResult | None:
-        """Get a check result by name."""
-        for check in self.checks:
-            if check.name == name:
-                return check
-        return None
+    results: list[ValidationResult]
+    overall_passed: bool
+    warnings: list[str]
+    errors: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert report to dictionary for serialization."""
         return {
-            "overall_status": self.overall_status.value,
-            "spec_hash": self.spec_hash,
-            "canonical_hash": self.canonical_hash,
-            "n_passed": self.n_passed,
-            "n_failed": self.n_failed,
-            "checks": [
-                {
-                    "name": c.name,
-                    "status": c.status.value,
-                    "message": c.message,
-                    "value": c.value,
-                    "threshold": c.threshold,
-                    "details": c.details,
-                }
-                for c in self.checks
-            ],
+            "overall_passed": self.overall_passed,
+            "warnings": self.warnings,
+            "errors": self.errors,
+            "results": [r.to_dict() for r in self.results],
         }
 
 
@@ -133,450 +105,440 @@ class SimConfigValidationReport:
 # Nyquist Compliance Validation
 # =============================================================================
 
+# Default safety margin: Nyquist requires fs > 2*fmax, we use 10x for FDTD
+DEFAULT_NYQUIST_SAFETY_FACTOR = 10.0
+# Minimum acceptable factor (still valid but marginal)
+MINIMUM_NYQUIST_FACTOR = 2.0
 
-def _compute_wavelength_nm(freq_hz: float, epsilon_r: float = 1.0) -> float:
-    """Compute wavelength in nanometers.
+
+def compute_fdtd_timestep_limit_ps(
+    min_cell_size_nm: float,
+    epsilon_r: float = 1.0,
+    courant_factor: float = 0.5,
+) -> float:
+    """Compute the maximum stable FDTD timestep using Courant condition.
+
+    For 3D FDTD, the Courant-Friedrichs-Lewy (CFL) stability condition is:
+        dt <= (1/c) * (1/sqrt(1/dx^2 + 1/dy^2 + 1/dz^2)) * courant_factor
+
+    For uniform cubic cells of size dx:
+        dt <= dx / (c * sqrt(3)) * courant_factor
 
     Args:
-        freq_hz: Frequency in Hz.
-        epsilon_r: Relative permittivity of the medium.
+        min_cell_size_nm: Minimum mesh cell size in nanometers.
+        epsilon_r: Relative permittivity of the medium (reduces wave speed).
+        courant_factor: Safety factor for Courant condition (typically 0.5).
 
     Returns:
-        Wavelength in nanometers.
+        Maximum stable timestep in picoseconds.
     """
-    if freq_hz <= 0:
-        raise ValueError("Frequency must be positive")
-    lambda_m = C0_M_PER_S / (freq_hz * (epsilon_r**0.5))
-    return lambda_m / NM_TO_M
+    import math
+
+    # Convert cell size to meters
+    dx_m = min_cell_size_nm * NM_TO_M
+
+    # Wave speed in medium
+    c_medium = C0_M_PER_S / math.sqrt(epsilon_r)
+
+    # CFL condition for 3D cubic mesh
+    dt_s = dx_m / (c_medium * math.sqrt(3.0)) * courant_factor
+
+    # Convert to picoseconds
+    dt_ps = dt_s * 1e12
+
+    return dt_ps
 
 
 def validate_nyquist_compliance(
     spec: SimulationSpec,
     *,
-    epsilon_r: float = 4.0,
-    min_cells_per_wavelength: int = DEFAULT_MIN_CELLS_PER_WAVELENGTH,
+    min_cell_size_nm: float | None = None,
+    epsilon_r: float = 1.0,
+    safety_factor: float = DEFAULT_NYQUIST_SAFETY_FACTOR,
 ) -> ValidationResult:
-    """Validate Nyquist compliance for mesh resolution.
+    """Validate Nyquist compliance for FDTD simulation.
 
-    The Nyquist criterion requires at least 2 samples per wavelength for
-    signal reconstruction, but FDTD accuracy requires significantly more.
-    The typical rule is 10-20 cells per wavelength at the maximum frequency.
+    The FDTD timestep must be small enough to accurately capture the
+    highest frequency in the simulation. The Nyquist criterion requires
+    the sampling rate to be at least 2x the maximum frequency, but for
+    FDTD accuracy, a factor of 10x or higher is recommended.
+
+    This check verifies that:
+        fs = 1/dt >= safety_factor * f_max
+
+    Where fs is the sampling frequency (inverse of FDTD timestep) and
+    f_max is the maximum simulation frequency.
 
     Args:
         spec: Simulation specification to validate.
-        epsilon_r: Relative permittivity for wavelength calculation.
-            Use the highest epsilon_r in your simulation domain.
-        min_cells_per_wavelength: Minimum required cells per wavelength.
+        min_cell_size_nm: Minimum mesh cell size in nm. If None, uses
+            the metal_edge_resolution from mesh spec as an estimate.
+        epsilon_r: Relative permittivity (affects timestep through wave speed).
+        safety_factor: Required ratio of sampling rate to max frequency.
 
     Returns:
-        ValidationResult with pass/fail status.
+        ValidationResult indicating pass/fail/warning status.
     """
-    max_freq_hz = float(spec.frequency.f_stop_hz)
-    lambda_resolution = spec.mesh.resolution.lambda_resolution
+    # Get maximum frequency from spec
+    f_max_hz = float(spec.frequency.f_stop_hz)
 
-    # Compute wavelength at max frequency in the dielectric
-    wavelength_nm = _compute_wavelength_nm(max_freq_hz, epsilon_r)
+    # Estimate minimum cell size if not provided
+    if min_cell_size_nm is None:
+        # Use the finest resolution setting as an estimate
+        mesh_res = spec.mesh.resolution
+        min_cell_size_nm = float(
+            min(
+                mesh_res.metal_edge_resolution_nm,
+                mesh_res.via_resolution_nm,
+                mesh_res.substrate_resolution_nm or mesh_res.metal_edge_resolution_nm,
+            )
+        )
 
-    # Compute required cell size
-    required_cell_size_nm = wavelength_nm / lambda_resolution
+    # Get epsilon_r from materials if available
+    for dielectric in spec.materials.dielectrics:
+        if "substrate" in dielectric.id.lower():
+            epsilon_r = dielectric.epsilon_r
+            break
 
-    # The lambda_resolution in spec is cells per wavelength
-    actual_cells_per_wavelength = lambda_resolution
+    # Compute timestep limit
+    dt_ps = compute_fdtd_timestep_limit_ps(min_cell_size_nm, epsilon_r)
 
-    # Check metal edge and via resolutions against wavelength
-    metal_edge_res_nm = spec.mesh.resolution.metal_edge_resolution_nm
-    via_res_nm = spec.mesh.resolution.via_resolution_nm
+    # Convert timestep to sampling frequency
+    dt_s = dt_ps * 1e-12
+    fs_hz = 1.0 / dt_s if dt_s > 0 else float("inf")
 
-    # Worst case is the largest cell size
-    worst_resolution_nm = max(metal_edge_res_nm, via_res_nm)
-    cells_per_wavelength_worst = wavelength_nm / worst_resolution_nm
+    # Compute actual ratio
+    actual_ratio = fs_hz / f_max_hz if f_max_hz > 0 else float("inf")
 
     details = {
-        "max_freq_hz": max_freq_hz,
+        "f_max_hz": f_max_hz,
+        "sampling_freq_hz": fs_hz,
+        "timestep_ps": dt_ps,
+        "min_cell_size_nm": min_cell_size_nm,
         "epsilon_r": epsilon_r,
-        "wavelength_nm": wavelength_nm,
-        "wavelength_um": wavelength_nm / 1000,
-        "lambda_resolution": lambda_resolution,
-        "required_cell_size_nm": required_cell_size_nm,
-        "metal_edge_resolution_nm": metal_edge_res_nm,
-        "via_resolution_nm": via_res_nm,
-        "worst_resolution_nm": worst_resolution_nm,
-        "cells_per_wavelength_worst_case": cells_per_wavelength_worst,
+        "actual_ratio": actual_ratio,
+        "required_ratio": safety_factor,
+        "minimum_ratio": MINIMUM_NYQUIST_FACTOR,
     }
 
-    # Check if specified lambda_resolution meets minimum
-    if actual_cells_per_wavelength < min_cells_per_wavelength:
+    if actual_ratio >= safety_factor:
+        return ValidationResult(
+            name="nyquist_compliance",
+            status=ValidationStatus.PASSED,
+            message=f"Nyquist criterion satisfied: fs/f_max = {actual_ratio:.1f}x (required: {safety_factor:.1f}x)",
+            value=actual_ratio,
+            threshold=safety_factor,
+            details=details,
+        )
+    elif actual_ratio >= MINIMUM_NYQUIST_FACTOR:
+        return ValidationResult(
+            name="nyquist_compliance",
+            status=ValidationStatus.WARNING,
+            message=f"Nyquist marginal: fs/f_max = {actual_ratio:.1f}x (recommended: {safety_factor:.1f}x)",
+            value=actual_ratio,
+            threshold=safety_factor,
+            details=details,
+        )
+    else:
         return ValidationResult(
             name="nyquist_compliance",
             status=ValidationStatus.FAILED,
-            message=f"lambda_resolution {actual_cells_per_wavelength} < minimum {min_cells_per_wavelength}",
-            value=float(actual_cells_per_wavelength),
-            threshold=float(min_cells_per_wavelength),
+            message=f"Nyquist violated: fs/f_max = {actual_ratio:.1f}x < {MINIMUM_NYQUIST_FACTOR}x minimum",
+            value=actual_ratio,
+            threshold=MINIMUM_NYQUIST_FACTOR,
             details=details,
         )
-
-    # Check worst-case (metal edges/vias) meets minimum
-    if cells_per_wavelength_worst < min_cells_per_wavelength:
-        return ValidationResult(
-            name="nyquist_compliance",
-            status=ValidationStatus.WARNING,
-            message=f"Metal edge/via resolution may be too coarse: {cells_per_wavelength_worst:.1f} cells/wavelength",
-            value=cells_per_wavelength_worst,
-            threshold=float(min_cells_per_wavelength),
-            details=details,
-        )
-
-    # Check if meeting recommended threshold
-    if actual_cells_per_wavelength < RECOMMENDED_CELLS_PER_WAVELENGTH:
-        return ValidationResult(
-            name="nyquist_compliance",
-            status=ValidationStatus.WARNING,
-            message=f"lambda_resolution {actual_cells_per_wavelength} below recommended {RECOMMENDED_CELLS_PER_WAVELENGTH}",
-            value=float(actual_cells_per_wavelength),
-            threshold=float(RECOMMENDED_CELLS_PER_WAVELENGTH),
-            details=details,
-        )
-
-    return ValidationResult(
-        name="nyquist_compliance",
-        status=ValidationStatus.PASSED,
-        message=f"Mesh resolution adequate: {actual_cells_per_wavelength} cells/wavelength",
-        value=float(actual_cells_per_wavelength),
-        threshold=float(min_cells_per_wavelength),
-        details=details,
-    )
 
 
 # =============================================================================
 # PML Adequacy Validation
 # =============================================================================
 
+# PML layer requirements based on frequency range
+# These are empirical guidelines based on openEMS best practices
+PML_LAYERS_GUIDELINES: dict[str, dict[str, int]] = {
+    # Frequency range -> recommended PML layers
+    "low": {"min": 8, "recommended": 8},  # < 5 GHz
+    "mid": {"min": 8, "recommended": 16},  # 5-20 GHz
+    "high": {"min": 16, "recommended": 32},  # > 20 GHz
+}
 
-def _pml_layers_from_type(boundary_type: BoundaryType) -> int:
-    """Extract number of PML layers from boundary type.
-
-    Args:
-        boundary_type: Boundary condition type.
-
-    Returns:
-        Number of PML layers (0 if not PML).
-    """
-    if boundary_type == "PML_8":
-        return 8
-    elif boundary_type == "PML_16":
-        return 16
-    elif boundary_type == "PML_32":
-        return 32
-    return 0
+# Mapping from BoundaryType to number of PML layers
+PML_LAYER_COUNT: dict[str, int] = {
+    "PML_8": 8,
+    "PML_16": 16,
+    "PML_32": 32,
+}
 
 
-def _estimate_pml_thickness_nm(
-    n_layers: int,
-    mesh_resolution_nm: float,
-) -> float:
-    """Estimate PML thickness in nanometers.
-
-    The PML thickness depends on the number of layers and the mesh resolution.
-    This is a rough estimate assuming uniform mesh in the PML region.
+def get_pml_layers(boundary: BoundaryType) -> int | None:
+    """Get number of PML layers for a boundary type.
 
     Args:
-        n_layers: Number of PML layers.
-        mesh_resolution_nm: Approximate mesh cell size in nm.
+        boundary: Boundary type string.
 
     Returns:
-        Estimated PML thickness in nm.
+        Number of PML layers, or None if not a PML boundary.
     """
-    return n_layers * mesh_resolution_nm
+    return PML_LAYER_COUNT.get(boundary)
+
+
+def get_frequency_range_category(f_max_hz: float) -> str:
+    """Categorize frequency range for PML guidelines.
+
+    Args:
+        f_max_hz: Maximum frequency in Hz.
+
+    Returns:
+        Frequency range category: 'low', 'mid', or 'high'.
+    """
+    f_max_ghz = f_max_hz / 1e9
+    if f_max_ghz < 5.0:
+        return "low"
+    elif f_max_ghz <= 20.0:
+        return "mid"
+    else:
+        return "high"
 
 
 def validate_pml_adequacy(
     spec: SimulationSpec,
     *,
-    epsilon_r: float = 4.0,
-    min_pml_wavelengths: float = DEFAULT_MIN_PML_WAVELENGTHS,
+    domain_size_nm: tuple[float, float, float] | None = None,
 ) -> ValidationResult:
-    """Validate PML adequacy for wave absorption.
+    """Validate PML boundary condition adequacy.
 
-    PML (Perfectly Matched Layer) boundaries need to be thick enough to
-    absorb outgoing waves without significant reflection. A typical rule
-    is that PML should be at least 0.5-1.0 wavelengths thick.
+    For proper absorption of outgoing waves, the PML (Perfectly Matched Layer)
+    must have sufficient layers relative to:
+    1. The maximum simulation frequency (higher freq needs more layers)
+    2. The simulation domain size (larger domains may need more layers)
 
-    The PML needs to be adequate at the *lowest* frequency (longest wavelength).
-    The cell size in the PML region is typically based on the *highest* frequency
-    mesh requirements.
+    This check verifies that PML boundaries have adequate layer counts
+    for the frequency range being simulated.
 
     Args:
         spec: Simulation specification to validate.
-        epsilon_r: Relative permittivity for wavelength calculation.
-        min_pml_wavelengths: Minimum required PML thickness in wavelengths.
+        domain_size_nm: Optional domain size (x, y, z) in nm for additional checks.
 
     Returns:
-        ValidationResult with pass/fail status.
+        ValidationResult indicating pass/fail/warning status.
     """
     boundaries = spec.boundaries
-    min_freq_hz = float(spec.frequency.f_start_hz)
-    max_freq_hz = float(spec.frequency.f_stop_hz)
+    f_max_hz = float(spec.frequency.f_stop_hz)
 
-    # Use lowest frequency for PML adequacy (longest wavelength = worst case)
-    wavelength_at_fmin = _compute_wavelength_nm(min_freq_hz, epsilon_r)
+    # Determine frequency category and required PML layers
+    freq_category = get_frequency_range_category(f_max_hz)
+    guidelines = PML_LAYERS_GUIDELINES[freq_category]
+    min_layers = guidelines["min"]
+    recommended_layers = guidelines["recommended"]
 
-    # Estimate mesh size from lambda_resolution at max frequency
-    # This gives the smallest cell size the mesh will have
-    wavelength_at_fmax = _compute_wavelength_nm(max_freq_hz, epsilon_r)
-    min_cell_size_nm = wavelength_at_fmax / spec.mesh.resolution.lambda_resolution
-
-    # For PML estimation, we use a more conservative (larger) cell size
-    # because PML regions may use coarser mesh. A common approach is to
-    # use the cell size at the geometric mean frequency.
-    geometric_mean_freq = (min_freq_hz * max_freq_hz) ** 0.5
-    wavelength_at_gmean = _compute_wavelength_nm(geometric_mean_freq, epsilon_r)
-    estimated_cell_size_nm = wavelength_at_gmean / spec.mesh.resolution.lambda_resolution
-
-    # Check each boundary with PML
-    pml_checks: dict[str, dict[str, Any]] = {}
-    min_pml_wavelength_ratio = float("inf")
-    worst_boundary = ""
-
-    for direction, bc_type in [
-        ("x_min", boundaries.x_min),
-        ("x_max", boundaries.x_max),
-        ("y_min", boundaries.y_min),
-        ("y_max", boundaries.y_max),
-        ("z_min", boundaries.z_min),
-        ("z_max", boundaries.z_max),
-    ]:
-        n_layers = _pml_layers_from_type(bc_type)
-        if n_layers > 0:
-            thickness_nm = _estimate_pml_thickness_nm(n_layers, estimated_cell_size_nm)
-            # Compare against longest wavelength (worst case for PML absorption)
-            wavelength_ratio = thickness_nm / wavelength_at_fmin
-            pml_checks[direction] = {
-                "type": bc_type,
-                "n_layers": n_layers,
-                "thickness_nm": thickness_nm,
-                "wavelength_ratio": wavelength_ratio,
-            }
-            if wavelength_ratio < min_pml_wavelength_ratio:
-                min_pml_wavelength_ratio = wavelength_ratio
-                worst_boundary = direction
-
-    details = {
-        "min_freq_hz": min_freq_hz,
-        "max_freq_hz": max_freq_hz,
-        "epsilon_r": epsilon_r,
-        "wavelength_at_fmin_nm": wavelength_at_fmin,
-        "wavelength_at_fmax_nm": wavelength_at_fmax,
-        "min_cell_size_nm": min_cell_size_nm,
-        "estimated_cell_size_nm": estimated_cell_size_nm,
-        "pml_boundaries": pml_checks,
-        "worst_boundary": worst_boundary,
-        "min_pml_wavelength_ratio": min_pml_wavelength_ratio if min_pml_wavelength_ratio != float("inf") else None,
+    # Check each boundary face
+    boundary_faces = {
+        "x_min": boundaries.x_min,
+        "x_max": boundaries.x_max,
+        "y_min": boundaries.y_min,
+        "y_max": boundaries.y_max,
+        "z_min": boundaries.z_min,
+        "z_max": boundaries.z_max,
     }
 
-    # If no PML boundaries, check if that's expected (e.g., fully enclosed with PEC)
-    if not pml_checks:
-        return ValidationResult(
-            name="pml_adequacy",
-            status=ValidationStatus.WARNING,
-            message="No PML boundaries configured - check if this is intentional",
-            details=details,
-        )
+    pml_faces: dict[str, int] = {}
+    non_pml_faces: list[str] = []
+    inadequate_faces: list[str] = []
+    marginal_faces: list[str] = []
 
-    # Check if worst-case PML meets minimum threshold
-    if min_pml_wavelength_ratio < min_pml_wavelengths:
+    for face, bc_type in boundary_faces.items():
+        pml_layers = get_pml_layers(bc_type)
+        if pml_layers is not None:
+            pml_faces[face] = pml_layers
+            if pml_layers < min_layers:
+                inadequate_faces.append(f"{face}={bc_type}")
+            elif pml_layers < recommended_layers:
+                marginal_faces.append(f"{face}={bc_type}")
+        else:
+            non_pml_faces.append(f"{face}={bc_type}")
+
+    details = {
+        "f_max_hz": f_max_hz,
+        "f_max_ghz": f_max_hz / 1e9,
+        "frequency_category": freq_category,
+        "min_pml_layers": min_layers,
+        "recommended_pml_layers": recommended_layers,
+        "pml_faces": pml_faces,
+        "non_pml_faces": non_pml_faces,
+        "inadequate_faces": inadequate_faces,
+        "marginal_faces": marginal_faces,
+    }
+
+    # For S-parameter extraction, we typically need PML on at least the
+    # port-facing boundaries (usually x_min and x_max)
+    port_faces_with_pml = sum(1 for f in ["x_min", "x_max"] if f in pml_faces)
+
+    if len(inadequate_faces) > 0:
         return ValidationResult(
             name="pml_adequacy",
             status=ValidationStatus.FAILED,
-            message=f"PML at {worst_boundary} too thin: {min_pml_wavelength_ratio:.2f} wavelengths < {min_pml_wavelengths}",
-            value=min_pml_wavelength_ratio,
-            threshold=min_pml_wavelengths,
+            message=f"PML layers inadequate for {freq_category} frequency: {', '.join(inadequate_faces)}",
+            value=float(min(pml_faces.values())) if pml_faces else 0.0,
+            threshold=float(min_layers),
             details=details,
         )
-
-    # Check if meeting recommended threshold
-    if min_pml_wavelength_ratio < RECOMMENDED_MIN_PML_WAVELENGTHS:
+    elif port_faces_with_pml < 2:
         return ValidationResult(
             name="pml_adequacy",
             status=ValidationStatus.WARNING,
-            message=f"PML at {worst_boundary} below recommended: {min_pml_wavelength_ratio:.2f} wavelengths",
-            value=min_pml_wavelength_ratio,
-            threshold=RECOMMENDED_MIN_PML_WAVELENGTHS,
+            message=f"Port faces (x_min, x_max) should have PML for S-parameter extraction",
+            value=float(port_faces_with_pml),
+            threshold=2.0,
             details=details,
         )
-
-    return ValidationResult(
-        name="pml_adequacy",
-        status=ValidationStatus.PASSED,
-        message=f"PML adequate: minimum {min_pml_wavelength_ratio:.2f} wavelengths thick",
-        value=min_pml_wavelength_ratio,
-        threshold=min_pml_wavelengths,
-        details=details,
-    )
-
-
-# =============================================================================
-# GPU Configuration Validation
-# =============================================================================
-
-
-def validate_gpu_config(spec: SimulationSpec) -> ValidationResult:
-    """Validate GPU configuration consistency.
-
-    Checks that GPU settings are self-consistent and reasonable.
-
-    Args:
-        spec: Simulation specification to validate.
-
-    Returns:
-        ValidationResult with pass/fail status.
-    """
-    engine = spec.control.engine
-    details = {
-        "use_gpu": engine.use_gpu,
-        "gpu_device_id": engine.gpu_device_id,
-        "gpu_memory_fraction": engine.gpu_memory_fraction,
-        "engine_type": engine.type,
-    }
-
-    # If GPU is disabled, nothing more to check
-    if not engine.use_gpu:
+    elif len(marginal_faces) > 0:
         return ValidationResult(
-            name="gpu_config",
-            status=ValidationStatus.PASSED,
-            message="GPU acceleration disabled, using CPU",
-            details=details,
-        )
-
-    # GPU enabled - check for potential issues
-    warnings = []
-
-    # Memory fraction too low might cause issues
-    if engine.gpu_memory_fraction is not None and engine.gpu_memory_fraction < 0.3:
-        warnings.append(f"GPU memory fraction {engine.gpu_memory_fraction} is low, may cause issues")
-
-    # GPU with multithreaded CPU engine is a config smell
-    if engine.type == "multithreaded":
-        warnings.append("GPU enabled with multithreaded CPU engine - consider dedicated GPU engine")
-
-    if warnings:
-        return ValidationResult(
-            name="gpu_config",
+            name="pml_adequacy",
             status=ValidationStatus.WARNING,
-            message="; ".join(warnings),
+            message=f"PML layers marginal for {freq_category} frequency: {', '.join(marginal_faces)}",
+            value=float(min(pml_faces.values())) if pml_faces else 0.0,
+            threshold=float(recommended_layers),
+            details=details,
+        )
+    else:
+        min_pml = min(pml_faces.values()) if pml_faces else 0
+        return ValidationResult(
+            name="pml_adequacy",
+            status=ValidationStatus.PASSED,
+            message=f"PML adequacy satisfied: {min_pml} layers for {freq_category} frequency range",
+            value=float(min_pml),
+            threshold=float(recommended_layers),
             details=details,
         )
 
-    return ValidationResult(
-        name="gpu_config",
-        status=ValidationStatus.PASSED,
-        message=f"GPU enabled (device: {engine.gpu_device_id or 'auto'})",
-        details=details,
-    )
-
 
 # =============================================================================
-# High-Level Validation API
+# Comprehensive Validation
 # =============================================================================
 
 
 def validate_sim_config(
     spec: SimulationSpec,
     *,
-    epsilon_r: float = 4.0,
-    min_cells_per_wavelength: int = DEFAULT_MIN_CELLS_PER_WAVELENGTH,
-    min_pml_wavelengths: float = DEFAULT_MIN_PML_WAVELENGTHS,
-    spec_hash: str = "",
+    min_cell_size_nm: float | None = None,
+    epsilon_r: float = 1.0,
+    domain_size_nm: tuple[float, float, float] | None = None,
 ) -> SimConfigValidationReport:
-    """Validate a SimulationSpec for Nyquist compliance and PML adequacy.
+    """Validate simulation configuration comprehensively.
 
-    This is the main entry point for pre-simulation validation. It runs
-    all configured checks and produces a comprehensive report.
+    Runs all validation checks and produces a complete report.
 
     Args:
         spec: Simulation specification to validate.
-        epsilon_r: Relative permittivity for wavelength calculations.
-        min_cells_per_wavelength: Minimum cells per wavelength for Nyquist.
-        min_pml_wavelengths: Minimum PML thickness in wavelengths.
-        spec_hash: Optional hash of the spec for tracking.
+        min_cell_size_nm: Minimum mesh cell size for Nyquist check.
+        epsilon_r: Relative permittivity for wave speed calculation.
+        domain_size_nm: Domain size for PML adequacy check.
 
     Returns:
-        SimConfigValidationReport with all check results.
+        SimConfigValidationReport with all validation results.
     """
-    checks: list[ValidationResult] = []
+    results: list[ValidationResult] = []
+    warnings: list[str] = []
+    errors: list[str] = []
 
-    # Nyquist compliance check
-    checks.append(
-        validate_nyquist_compliance(
-            spec,
-            epsilon_r=epsilon_r,
-            min_cells_per_wavelength=min_cells_per_wavelength,
-        )
+    # Run Nyquist compliance check
+    nyquist_result = validate_nyquist_compliance(
+        spec,
+        min_cell_size_nm=min_cell_size_nm,
+        epsilon_r=epsilon_r,
     )
+    results.append(nyquist_result)
+    if nyquist_result.status == ValidationStatus.WARNING:
+        warnings.append(nyquist_result.message)
+    elif nyquist_result.status == ValidationStatus.FAILED:
+        errors.append(nyquist_result.message)
 
-    # PML adequacy check
-    checks.append(
-        validate_pml_adequacy(
-            spec,
-            epsilon_r=epsilon_r,
-            min_pml_wavelengths=min_pml_wavelengths,
+    # Run PML adequacy check
+    pml_result = validate_pml_adequacy(spec, domain_size_nm=domain_size_nm)
+    results.append(pml_result)
+    if pml_result.status == ValidationStatus.WARNING:
+        warnings.append(pml_result.message)
+    elif pml_result.status == ValidationStatus.FAILED:
+        errors.append(pml_result.message)
+
+    # Check that at least one port is excited
+    excited_ports = [p for p in spec.ports if p.excite]
+    if len(excited_ports) == 0:
+        no_excite_result = ValidationResult(
+            name="port_excitation",
+            status=ValidationStatus.FAILED,
+            message="At least one port must be set to excite=True",
+            details={"n_ports": len(spec.ports), "n_excited": 0},
         )
-    )
-
-    # GPU configuration check
-    checks.append(validate_gpu_config(spec))
-
-    # Determine overall status
-    has_failure = any(c.status == ValidationStatus.FAILED for c in checks)
-    has_warning = any(c.status == ValidationStatus.WARNING for c in checks)
-
-    if has_failure:
-        overall_status = ValidationStatus.FAILED
-    elif has_warning:
-        overall_status = ValidationStatus.WARNING
+        results.append(no_excite_result)
+        errors.append(no_excite_result.message)
     else:
-        overall_status = ValidationStatus.PASSED
+        results.append(
+            ValidationResult(
+                name="port_excitation",
+                status=ValidationStatus.PASSED,
+                message=f"{len(excited_ports)} of {len(spec.ports)} ports configured for excitation",
+                details={"n_ports": len(spec.ports), "n_excited": len(excited_ports)},
+            )
+        )
 
-    # Compute canonical hash of the report
-    report_data = {
-        "spec_hash": spec_hash,
-        "checks": [
-            {
-                "name": c.name,
-                "status": c.status.value,
-                "value": c.value,
-                "threshold": c.threshold,
-            }
-            for c in checks
-        ],
-    }
-    canonical_hash = sha256_bytes(canonical_json_dumps(report_data).encode("utf-8"))
+    # Check frequency sweep validity
+    if spec.frequency.f_start_hz >= spec.frequency.f_stop_hz:
+        freq_result = ValidationResult(
+            name="frequency_sweep",
+            status=ValidationStatus.FAILED,
+            message="f_start_hz must be less than f_stop_hz",
+            value=float(spec.frequency.f_start_hz),
+            threshold=float(spec.frequency.f_stop_hz),
+        )
+        results.append(freq_result)
+        errors.append(freq_result.message)
+    else:
+        results.append(
+            ValidationResult(
+                name="frequency_sweep",
+                status=ValidationStatus.PASSED,
+                message=f"Frequency sweep: {spec.frequency.f_start_hz/1e9:.3f} - {spec.frequency.f_stop_hz/1e9:.3f} GHz ({spec.frequency.n_points} points)",
+            )
+        )
+
+    # Check GPU configuration consistency
+    if spec.control.engine.use_gpu:
+        if spec.control.engine.type not in ("basic", "multithreaded"):
+            gpu_result = ValidationResult(
+                name="gpu_configuration",
+                status=ValidationStatus.WARNING,
+                message=f"GPU mode may not be compatible with engine type '{spec.control.engine.type}'",
+                details={"engine_type": spec.control.engine.type, "use_gpu": True},
+            )
+            results.append(gpu_result)
+            warnings.append(gpu_result.message)
+        else:
+            results.append(
+                ValidationResult(
+                    name="gpu_configuration",
+                    status=ValidationStatus.PASSED,
+                    message=f"GPU acceleration enabled (device: {spec.control.engine.gpu_device_id or 'default'})",
+                )
+            )
+    else:
+        results.append(
+            ValidationResult(
+                name="gpu_configuration",
+                status=ValidationStatus.PASSED,
+                message=f"CPU mode with {spec.control.engine.type} engine",
+            )
+        )
+
+    overall_passed = len(errors) == 0
 
     return SimConfigValidationReport(
-        checks=checks,
-        overall_status=overall_status,
-        spec_hash=spec_hash,
-        canonical_hash=canonical_hash,
+        results=results,
+        overall_passed=overall_passed,
+        warnings=warnings,
+        errors=errors,
     )
-
-
-# =============================================================================
-# Report Writing
-# =============================================================================
-
-
-def write_validation_report(
-    report: SimConfigValidationReport,
-    output_path: Path,
-) -> None:
-    """Write validation report to JSON file.
-
-    Args:
-        report: Validation report to write.
-        output_path: Path for output JSON file.
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    text = canonical_json_dumps(report.to_dict())
-    output_path.write_text(f"{text}\n", encoding="utf-8")
 
 
 # =============================================================================
@@ -584,59 +546,70 @@ def write_validation_report(
 # =============================================================================
 
 
-def write_sim_config_json(
+def write_sim_config(
     spec: SimulationSpec,
     output_dir: Path,
     *,
-    validation_report: SimConfigValidationReport | None = None,
+    validate: bool = True,
+    filename: str = "sim_config.json",
 ) -> Path:
-    """Write sim_config.json alongside simulation outputs.
+    """Write simulation config to JSON file alongside outputs.
 
-    This function writes the simulation configuration as a JSON file
-    in the output directory, making it easy to inspect and reproduce
-    the simulation settings.
+    This function implements REQ-M2-003 requirement to store sim_config.json
+    alongside simulation outputs for reproducibility and audit trail.
 
     Args:
         spec: Simulation specification to write.
-        output_dir: Output directory for the simulation.
-        validation_report: Optional validation report to include.
+        output_dir: Directory where outputs are stored.
+        validate: If True, validate the config before writing.
+        filename: Name of the output file (default: sim_config.json).
 
     Returns:
-        Path to the written sim_config.json file.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    sim_config_path = output_dir / "sim_config.json"
-
-    # Build the config data
-    config_data: dict[str, Any] = {
-        "schema_version": spec.schema_version,
-        "simulation_id": spec.simulation_id,
-        "spec": spec.model_dump(mode="json"),
-    }
-
-    # Include validation report if provided
-    if validation_report is not None:
-        config_data["validation"] = validation_report.to_dict()
-
-    text = canonical_json_dumps(config_data)
-    sim_config_path.write_text(f"{text}\n", encoding="utf-8")
-
-    return sim_config_path
-
-
-def load_sim_config_json(sim_config_path: Path) -> dict[str, Any]:
-    """Load sim_config.json from output directory.
-
-    Args:
-        sim_config_path: Path to sim_config.json file.
-
-    Returns:
-        Parsed configuration data.
+        Path to the written config file.
 
     Raises:
-        FileNotFoundError: If file doesn't exist.
-        json.JSONDecodeError: If file is not valid JSON.
+        ValueError: If validation fails and validate=True.
     """
-    import json
+    if validate:
+        report = validate_sim_config(spec)
+        if not report.overall_passed:
+            error_msg = "; ".join(report.errors)
+            raise ValueError(f"Simulation config validation failed: {error_msg}")
+        if report.warnings:
+            for warning in report.warnings:
+                logger.warning("SimConfig warning: %s", warning)
 
-    return json.loads(sim_config_path.read_text(encoding="utf-8"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
+
+    # Serialize with canonical JSON for reproducibility
+    payload = spec.model_dump(mode="json")
+    text = canonical_json_dumps(payload)
+    output_path.write_text(f"{text}\n", encoding="utf-8")
+
+    logger.info("Wrote simulation config to %s", output_path)
+    return output_path
+
+
+def load_sim_config(config_path: Path) -> SimulationSpec:
+    """Load simulation config from JSON file.
+
+    Args:
+        config_path: Path to sim_config.json file.
+
+    Returns:
+        Validated SimulationSpec instance.
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist.
+        pydantic.ValidationError: If config is invalid.
+    """
+    from .spec import load_simulationspec
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Simulation config not found: {config_path}")
+
+    with open(config_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    return load_simulationspec(data)
