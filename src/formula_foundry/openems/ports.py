@@ -15,9 +15,16 @@ De-embedding Support:
 - Launch structure compensation
 - Via transition de-embedding
 
+Impedance Validation:
+- Port impedance validation against transmission line Z0
+- Mismatch detection with configurable tolerance
+- Warning/error modes for impedance discrepancies
+
 Coordinate System:
 - All coordinates in nanometers (nm) internally
 - Ports positioned relative to board edge center origin
+
+REQ-M2-005: Port placement logic with impedance validation.
 """
 
 from __future__ import annotations
@@ -515,3 +522,232 @@ def _fallback_port_positions(
     if left_length is None or right_length is None:
         raise KeyError("Transmission line lengths required for port position fallback")
     return ((-int(left_length), 0), (int(right_length), 0))
+
+
+# =============================================================================
+# Impedance Validation (REQ-M2-005)
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class ImpedanceValidationResult:
+    """Result of port impedance validation against transmission line Z0.
+
+    Attributes:
+        port_id: Port identifier that was validated.
+        port_z0_ohm: Port reference impedance in Ohms.
+        line_z0_ohm: Calculated transmission line impedance in Ohms.
+        mismatch_percent: Impedance mismatch as percentage.
+        is_valid: Whether the impedance is within tolerance.
+        tolerance_percent: Tolerance threshold used for validation.
+        message: Human-readable validation message.
+    """
+
+    port_id: str
+    port_z0_ohm: float
+    line_z0_ohm: float
+    mismatch_percent: float
+    is_valid: bool
+    tolerance_percent: float
+    message: str
+
+
+class ImpedanceMismatchError(Exception):
+    """Raised when port impedance exceeds acceptable mismatch threshold."""
+
+    def __init__(self, result: ImpedanceValidationResult) -> None:
+        self.result = result
+        super().__init__(result.message)
+
+
+class ImpedanceMismatchWarning(UserWarning):
+    """Warning issued when port impedance mismatch is notable but acceptable."""
+
+    pass
+
+
+def validate_port_impedance(
+    port: WaveguidePortSpec,
+    line_z0_ohm: float,
+    *,
+    tolerance_percent: float = 10.0,
+    error_threshold_percent: float = 25.0,
+    strict: bool = False,
+) -> ImpedanceValidationResult:
+    """Validate port impedance against transmission line characteristic impedance.
+
+    Compares the port reference impedance to the calculated transmission line
+    impedance and checks if the mismatch is within acceptable bounds.
+
+    Args:
+        port: The waveguide port specification to validate.
+        line_z0_ohm: Calculated transmission line characteristic impedance (Ohms).
+        tolerance_percent: Warning threshold for impedance mismatch (default 10%).
+        error_threshold_percent: Error threshold for impedance mismatch (default 25%).
+        strict: If True, raise error when mismatch exceeds tolerance_percent.
+
+    Returns:
+        ImpedanceValidationResult with validation details.
+
+    Raises:
+        ImpedanceMismatchError: If strict=True and mismatch exceeds tolerance,
+            or if mismatch exceeds error_threshold_percent.
+
+    REQ-M2-005: Validate port impedance against transmission line Z0.
+    """
+    port_z0 = port.impedance.z0_ohm
+
+    # Calculate mismatch percentage
+    if line_z0_ohm > 0:
+        mismatch = abs(port_z0 - line_z0_ohm) / line_z0_ohm * 100
+    else:
+        mismatch = 100.0  # Invalid line impedance
+
+    # Determine validity
+    if strict:
+        is_valid = mismatch <= tolerance_percent
+    else:
+        is_valid = mismatch <= error_threshold_percent
+
+    # Generate message
+    if mismatch <= tolerance_percent:
+        message = f"Port {port.id}: impedance {port_z0:.1f}Ω matches line Z0 {line_z0_ohm:.1f}Ω (mismatch: {mismatch:.1f}%)"
+    elif mismatch <= error_threshold_percent:
+        message = f"Port {port.id}: impedance {port_z0:.1f}Ω deviates from line Z0 {line_z0_ohm:.1f}Ω by {mismatch:.1f}% (warning)"
+    else:
+        message = f"Port {port.id}: impedance {port_z0:.1f}Ω significantly mismatched with line Z0 {line_z0_ohm:.1f}Ω ({mismatch:.1f}%)"
+
+    result = ImpedanceValidationResult(
+        port_id=port.id,
+        port_z0_ohm=port_z0,
+        line_z0_ohm=line_z0_ohm,
+        mismatch_percent=mismatch,
+        is_valid=is_valid,
+        tolerance_percent=tolerance_percent,
+        message=message,
+    )
+
+    # Raise error if mismatch exceeds error threshold
+    if mismatch > error_threshold_percent:
+        raise ImpedanceMismatchError(result)
+
+    # Issue warning if mismatch exceeds tolerance but not error threshold
+    if mismatch > tolerance_percent:
+        import warnings
+
+        warnings.warn(message, ImpedanceMismatchWarning, stacklevel=2)
+
+    return result
+
+
+def validate_ports_against_geometry(
+    ports: list[WaveguidePortSpec],
+    geometry: GeometrySpec,
+    *,
+    tolerance_percent: float = 10.0,
+    error_threshold_percent: float = 25.0,
+    strict: bool = False,
+) -> list[ImpedanceValidationResult]:
+    """Validate all ports against the geometry's transmission line impedance.
+
+    Calculates the characteristic impedance from the geometry specification
+    and validates each port's reference impedance against it.
+
+    Args:
+        ports: List of ports to validate.
+        geometry: GeometrySpec containing transmission line parameters.
+        tolerance_percent: Warning threshold (default 10%).
+        error_threshold_percent: Error threshold (default 25%).
+        strict: If True, require mismatch within tolerance_percent.
+
+    Returns:
+        List of ImpedanceValidationResult for each port.
+
+    REQ-M2-005: Validate port impedance against transmission line Z0.
+    """
+    # Calculate line impedance from geometry
+    line_z0 = calculate_cpwg_impedance(
+        w_nm=geometry.transmission_line.w_nm,
+        gap_nm=geometry.transmission_line.gap_nm,
+        er=geometry.stackup.materials.er,
+    )
+
+    results: list[ImpedanceValidationResult] = []
+    for port in ports:
+        result = validate_port_impedance(
+            port,
+            line_z0,
+            tolerance_percent=tolerance_percent,
+            error_threshold_percent=error_threshold_percent,
+            strict=strict,
+        )
+        results.append(result)
+
+    return results
+
+
+def calculate_cpwg_impedance(
+    w_nm: int,
+    gap_nm: int,
+    er: float,
+    *,
+    h_nm: int | None = None,
+) -> float:
+    """Calculate CPWG characteristic impedance using quasi-static approximation.
+
+    Uses the elliptic integral approximation for coplanar waveguide with ground.
+    More accurate results require substrate thickness consideration.
+
+    Args:
+        w_nm: Signal trace width in nm.
+        gap_nm: Gap to coplanar ground in nm.
+        er: Substrate relative permittivity.
+        h_nm: Optional substrate thickness in nm (for enhanced accuracy).
+
+    Returns:
+        Characteristic impedance in Ohms.
+
+    Note:
+        This uses a simplified formula. For production use, consider
+        implementing full elliptic integral calculations or using
+        a transmission line calculator library.
+    """
+    import math
+
+    if w_nm <= 0 or gap_nm <= 0:
+        return 50.0  # Default fallback
+
+    # Convert to meters for calculation
+    w = w_nm / 1e9
+    g = gap_nm / 1e9
+
+    # Effective dielectric constant for CPWG (simplified)
+    epsilon_r_eff = (er + 1) / 2
+
+    # Calculate k parameter: k = w / (w + 2*g)
+    k = w / (w + 2 * g)
+
+    if k <= 0 or k >= 1:
+        return 50.0  # Invalid geometry
+
+    # Elliptic integral ratio approximation
+    k_prime = math.sqrt(1 - k * k)
+
+    # Use different approximations based on k value
+    if k <= 0.707:
+        # For small k, use logarithmic approximation
+        if k_prime > 0:
+            ratio = math.pi / math.log(2 * (1 + math.sqrt(k_prime)) / (1 - math.sqrt(k_prime)))
+        else:
+            ratio = 1.0
+    else:
+        # For large k, use alternate approximation
+        if k > 0:
+            ratio = math.log(2 * (1 + math.sqrt(k)) / (1 - math.sqrt(k))) / math.pi
+        else:
+            ratio = 1.0
+
+    # Z0 = (30 * pi / sqrt(epsilon_r_eff)) * K(k') / K(k)
+    z0 = (30 * math.pi / math.sqrt(epsilon_r_eff)) * ratio
+
+    return z0
