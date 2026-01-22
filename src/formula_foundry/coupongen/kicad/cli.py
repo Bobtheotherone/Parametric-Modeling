@@ -6,6 +6,7 @@ This module provides a runner for kicad-cli that can execute:
 
 Satisfies REQ-M1-015 through REQ-M1-017:
 - REQ-M1-015: Runner supports local binary or pinned Docker image execution
+              with variable injection via --define-var and timeout handling
 - REQ-M1-016: DRC with severity-all, JSON report output, and exit-code gating
 - REQ-M1-017: Gerber and drill file export via KiCad CLI
 """
@@ -14,19 +15,220 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from enum import IntEnum
 from pathlib import Path
 from typing import Literal
 
 KicadCliMode = Literal["local", "docker"]
 
+# Default timeout for kicad-cli operations (5 minutes)
+DEFAULT_TIMEOUT_SEC: float = 300.0
+
+
+class KicadCliError(Exception):
+    """Base exception for KiCad CLI errors."""
+
+    def __init__(
+        self,
+        message: str,
+        returncode: int | None = None,
+        stdout: str = "",
+        stderr: str = "",
+        command: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.command = command or []
+
+
+class KicadCliTimeoutError(KicadCliError):
+    """Raised when kicad-cli command exceeds the timeout."""
+
+    def __init__(
+        self,
+        timeout_sec: float,
+        command: list[str] | None = None,
+    ) -> None:
+        super().__init__(
+            f"kicad-cli command timed out after {timeout_sec} seconds",
+            returncode=None,
+            command=command,
+        )
+        self.timeout_sec = timeout_sec
+
+
+class KicadErrorCode(IntEnum):
+    """Known kicad-cli exit codes and their meanings.
+
+    Reference: KiCad CLI documentation and observed behavior.
+    """
+
+    SUCCESS = 0
+    GENERAL_ERROR = 1
+    INVALID_ARGUMENTS = 2
+    FILE_LOAD_ERROR = 3
+    FILE_WRITE_ERROR = 4
+    DRC_VIOLATIONS = 5
+
+
+@dataclass(frozen=True)
+class ParsedKicadError:
+    """Structured representation of a parsed KiCad CLI error.
+
+    Attributes:
+        error_code: The exit code from kicad-cli.
+        error_type: Human-readable error type string.
+        message: Extracted error message from stderr/stdout.
+        file_path: File path mentioned in the error, if any.
+        details: Additional error details extracted from output.
+    """
+
+    error_code: int
+    error_type: str
+    message: str
+    file_path: str | None = None
+    details: list[str] = field(default_factory=list)
+
+    @property
+    def is_file_error(self) -> bool:
+        """Return True if this is a file-related error."""
+        return self.error_code in (
+            KicadErrorCode.FILE_LOAD_ERROR,
+            KicadErrorCode.FILE_WRITE_ERROR,
+        )
+
+    @property
+    def is_drc_error(self) -> bool:
+        """Return True if this indicates DRC violations."""
+        return self.error_code == KicadErrorCode.DRC_VIOLATIONS
+
+
+def parse_kicad_error(
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> ParsedKicadError:
+    """Parse kicad-cli error output into a structured format.
+
+    Args:
+        returncode: Exit code from kicad-cli.
+        stdout: Standard output from the command.
+        stderr: Standard error from the command.
+
+    Returns:
+        ParsedKicadError with structured error information.
+    """
+    error_type_map = {
+        KicadErrorCode.SUCCESS: "success",
+        KicadErrorCode.GENERAL_ERROR: "general_error",
+        KicadErrorCode.INVALID_ARGUMENTS: "invalid_arguments",
+        KicadErrorCode.FILE_LOAD_ERROR: "file_load_error",
+        KicadErrorCode.FILE_WRITE_ERROR: "file_write_error",
+        KicadErrorCode.DRC_VIOLATIONS: "drc_violations",
+    }
+
+    error_type = error_type_map.get(returncode, f"unknown_error_{returncode}")
+    combined_output = f"{stderr}\n{stdout}".strip()
+
+    # Extract file path from common error patterns
+    file_path = None
+    file_patterns = [
+        r"Failed to load\s+['\"]?([^'\"]+)['\"]?",
+        r"Cannot open\s+['\"]?([^'\"]+)['\"]?",
+        r"Error loading\s+['\"]?([^'\"]+)['\"]?",
+        r"File not found:\s*['\"]?([^'\"]+)['\"]?",
+        r"Could not read\s+['\"]?([^'\"]+)['\"]?",
+    ]
+    for pattern in file_patterns:
+        match = re.search(pattern, combined_output, re.IGNORECASE)
+        if match:
+            file_path = match.group(1).strip()
+            break
+
+    # Extract error message (first non-empty line of stderr, or summary)
+    message_lines = [line.strip() for line in stderr.split("\n") if line.strip()]
+    if not message_lines:
+        message_lines = [line.strip() for line in stdout.split("\n") if line.strip()]
+
+    message = message_lines[0] if message_lines else f"kicad-cli exited with code {returncode}"
+
+    # Collect additional details
+    details = []
+    if returncode == KicadErrorCode.DRC_VIOLATIONS:
+        # For DRC errors, look for violation counts
+        violation_match = re.search(r"(\d+)\s+violation", combined_output, re.IGNORECASE)
+        if violation_match:
+            details.append(f"Violations found: {violation_match.group(1)}")
+
+    return ParsedKicadError(
+        error_code=returncode,
+        error_type=error_type,
+        message=message,
+        file_path=file_path,
+        details=details,
+    )
+
+
+def build_define_var_args(variables: Mapping[str, str] | None) -> list[str]:
+    """Build --define-var arguments for kicad-cli.
+
+    KiCad supports text variable substitution via --define-var NAME=VALUE.
+    These can be used in board text elements like ${COUPON_ID}.
+
+    Args:
+        variables: Mapping of variable names to values. If None or empty,
+            returns an empty list.
+
+    Returns:
+        List of command-line arguments (e.g., ["--define-var", "COUPON_ID=test-001"]).
+
+    Example:
+        >>> build_define_var_args({"COUPON_ID": "test-001", "VERSION": "1.0"})
+        ['--define-var', 'COUPON_ID=test-001', '--define-var', 'VERSION=1.0']
+    """
+    if not variables:
+        return []
+
+    args: list[str] = []
+    for name, value in variables.items():
+        # Validate variable name (alphanumeric and underscores only)
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise ValueError(
+                f"Invalid variable name '{name}': must start with a letter or underscore "
+                "and contain only alphanumeric characters and underscores"
+            )
+        args.extend(["--define-var", f"{name}={value}"])
+
+    return args
+
 
 @dataclass(frozen=True)
 class KicadCliRunner:
+    """Runner for kicad-cli supporting local and Docker execution modes.
+
+    This class provides a unified interface for executing kicad-cli commands
+    either locally (using system-installed binary) or via Docker container.
+
+    Attributes:
+        mode: Execution mode - "local" or "docker".
+        docker_image: Docker image reference (required for docker mode).
+        kicad_bin: Name of the kicad-cli binary. Defaults to "kicad-cli".
+        default_timeout: Default timeout in seconds for commands.
+
+    Example:
+        >>> runner = KicadCliRunner(mode="local")
+        >>> result = runner.run(["--version"], workdir=Path.cwd())
+        >>> print(result.stdout)
+    """
+
     mode: KicadCliMode
     docker_image: str | None = None
     kicad_bin: str = "kicad-cli"
+    default_timeout: float | None = DEFAULT_TIMEOUT_SEC
 
     def _to_container_path(self, host_path: Path, workdir: Path) -> str:
         """Convert a host path to a container path relative to /workspace.
@@ -144,9 +346,65 @@ class KicadCliRunner:
         diagnostics.append("\n" + "=" * 60)
         return "\n".join(diagnostics)
 
-    def run(self, args: Iterable[str], *, workdir: Path) -> subprocess.CompletedProcess[str]:
-        cmd = self.build_command(args, workdir=workdir)
-        result = subprocess.run(cmd, cwd=workdir, text=True, capture_output=True, check=False)
+    def run(
+        self,
+        args: Iterable[str],
+        *,
+        workdir: Path,
+        timeout: float | None = None,
+        variables: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute a kicad-cli command.
+
+        Args:
+            args: Command arguments to pass to kicad-cli.
+            workdir: Working directory for the command. For Docker mode,
+                this directory is mounted into the container at /workspace.
+            timeout: Timeout in seconds. If None, uses default_timeout.
+                Set to 0 or negative for no timeout.
+            variables: Optional mapping of text variables to inject via
+                --define-var. Used for board text substitution.
+
+        Returns:
+            CompletedProcess with stdout, stderr, and returncode.
+
+        Raises:
+            KicadCliTimeoutError: If the command exceeds the timeout.
+
+        Example:
+            >>> runner = KicadCliRunner(mode="local")
+            >>> result = runner.run(
+            ...     ["pcb", "export", "gerbers", "board.kicad_pcb"],
+            ...     workdir=Path("/project"),
+            ...     variables={"COUPON_ID": "test-001"},
+            ... )
+        """
+        # Build define-var arguments if variables provided
+        var_args = build_define_var_args(variables)
+
+        # Combine variable args with command args
+        full_args = [*var_args, *args]
+        cmd = self.build_command(full_args, workdir=workdir)
+
+        # Determine effective timeout
+        effective_timeout: float | None = timeout if timeout is not None else self.default_timeout
+        if effective_timeout is not None and effective_timeout <= 0:
+            effective_timeout = None
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=workdir,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=effective_timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise KicadCliTimeoutError(
+                timeout_sec=effective_timeout or 0,
+                command=cmd,
+            ) from e
 
         # On returncode 3 (Failed to load board), collect debug diagnostics
         if result.returncode == 3 and self.mode == "docker":
@@ -159,7 +417,28 @@ class KicadCliRunner:
             )
         return result
 
-    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
+    def run_drc(
+        self,
+        board_path: Path,
+        report_path: Path,
+        *,
+        timeout: float | None = None,
+        variables: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run DRC check on a board file.
+
+        Args:
+            board_path: Path to the .kicad_pcb file.
+            report_path: Path where the JSON DRC report will be written.
+            timeout: Timeout in seconds. If None, uses default_timeout.
+            variables: Optional text variables for board substitution.
+
+        Returns:
+            CompletedProcess with DRC results. Exit code 5 indicates violations.
+
+        Raises:
+            KicadCliTimeoutError: If the command exceeds the timeout.
+        """
         workdir = board_path.parent.resolve()
 
         if self.mode == "docker":
@@ -170,9 +449,30 @@ class KicadCliRunner:
         else:
             args = build_drc_args(board_path, report_path)
 
-        return self.run(args, workdir=workdir)
+        return self.run(args, workdir=workdir, timeout=timeout, variables=variables)
 
-    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
+    def export_gerbers(
+        self,
+        board_path: Path,
+        out_dir: Path,
+        *,
+        timeout: float | None = None,
+        variables: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Export Gerber files from a board.
+
+        Args:
+            board_path: Path to the .kicad_pcb file.
+            out_dir: Output directory for Gerber files.
+            timeout: Timeout in seconds. If None, uses default_timeout.
+            variables: Optional text variables for board substitution.
+
+        Returns:
+            CompletedProcess with export results.
+
+        Raises:
+            KicadCliTimeoutError: If the command exceeds the timeout.
+        """
         workdir = board_path.parent.resolve()
 
         if self.mode == "docker":
@@ -197,9 +497,30 @@ class KicadCliRunner:
                 str(board_path),
             ]
 
-        return self.run(args, workdir=workdir)
+        return self.run(args, workdir=workdir, timeout=timeout, variables=variables)
 
-    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
+    def export_drill(
+        self,
+        board_path: Path,
+        out_dir: Path,
+        *,
+        timeout: float | None = None,
+        variables: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Export drill files from a board.
+
+        Args:
+            board_path: Path to the .kicad_pcb file.
+            out_dir: Output directory for drill files.
+            timeout: Timeout in seconds. If None, uses default_timeout.
+            variables: Optional text variables for board substitution.
+
+        Returns:
+            CompletedProcess with export results.
+
+        Raises:
+            KicadCliTimeoutError: If the command exceeds the timeout.
+        """
         workdir = board_path.parent.resolve()
 
         if self.mode == "docker":
@@ -224,7 +545,7 @@ class KicadCliRunner:
                 str(board_path),
             ]
 
-        return self.run(args, workdir=workdir)
+        return self.run(args, workdir=workdir, timeout=timeout, variables=variables)
 
 
 def build_drc_args(
@@ -323,8 +644,20 @@ def _parse_version_output(version_output: str) -> str:
 
 
 __all__ = [
+    # Constants
+    "DEFAULT_TIMEOUT_SEC",
+    # Types and Enums
     "KicadCliMode",
+    "KicadErrorCode",
+    # Exceptions
+    "KicadCliError",
+    "KicadCliTimeoutError",
+    # Data classes
+    "ParsedKicadError",
     "KicadCliRunner",
+    # Functions
+    "build_define_var_args",
     "build_drc_args",
     "get_kicad_cli_version",
+    "parse_kicad_error",
 ]
