@@ -5,6 +5,14 @@ This module implements the ArtifactStore class, which provides:
 - Atomic write pattern (write to .tmp then rename)
 - Manifest generation conforming to artifact.v1 schema
 - Spec ID computation for canonical artifact identification
+- Concurrency control via file-based locking (see locking.py)
+
+Concurrency Safety:
+    The store uses a two-level locking strategy:
+    1. Global store lock for metadata updates (manifest writes)
+    2. Per-artifact spec_id locks during creation to avoid duplicate work
+
+    This ensures safe concurrent access from multiple CPU/GPU processes.
 """
 
 from __future__ import annotations
@@ -19,7 +27,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal
+
+if TYPE_CHECKING:
+    from formula_foundry.m3.locking import StoreLock
 
 # Type aliases for clarity
 HashAlgorithm = Literal["sha256", "sha384", "sha512", "blake3"]
@@ -261,6 +272,10 @@ class ArtifactExistsError(ArtifactStoreError):
     """Raised when attempting to write an artifact that already exists."""
 
 
+class LockTimeoutError(ArtifactStoreError):
+    """Raised when a lock cannot be acquired within the timeout."""
+
+
 class ArtifactStore:
     """Content-addressed artifact storage with atomic writes.
 
@@ -294,11 +309,18 @@ class ArtifactStore:
     MANIFESTS_DIR = "manifests"
     TMP_SUFFIX = ".tmp"
 
+    # Default lock timeouts
+    DEFAULT_GLOBAL_LOCK_TIMEOUT = 30.0  # seconds
+    DEFAULT_SPEC_ID_LOCK_TIMEOUT = 60.0  # seconds
+
     def __init__(
         self,
         root: Path | str,
         generator: str = "formula_foundry",
         generator_version: str = "0.1.0",
+        enable_locking: bool = True,
+        global_lock_timeout: float | None = None,
+        spec_id_lock_timeout: float | None = None,
     ) -> None:
         """Initialize the artifact store.
 
@@ -306,6 +328,12 @@ class ArtifactStore:
             root: Root directory for the data store.
             generator: Name of the generator tool for provenance.
             generator_version: Version of the generator for provenance.
+            enable_locking: If True (default), use file-based locking for
+                concurrency safety. Set to False for single-process usage.
+            global_lock_timeout: Timeout for global store lock (seconds).
+                Defaults to DEFAULT_GLOBAL_LOCK_TIMEOUT.
+            spec_id_lock_timeout: Timeout for per-artifact spec_id locks (seconds).
+                Defaults to DEFAULT_SPEC_ID_LOCK_TIMEOUT.
         """
         self.root = Path(root)
         self.objects_dir = self.root / self.OBJECTS_DIR
@@ -314,6 +342,32 @@ class ArtifactStore:
         self.generator_version = generator_version
         self._hostname = socket.gethostname()
         self._username = os.environ.get("USER") or os.environ.get("USERNAME")
+
+        # Locking configuration
+        self._enable_locking = enable_locking
+        self._global_lock_timeout = (
+            global_lock_timeout
+            if global_lock_timeout is not None
+            else self.DEFAULT_GLOBAL_LOCK_TIMEOUT
+        )
+        self._spec_id_lock_timeout = (
+            spec_id_lock_timeout
+            if spec_id_lock_timeout is not None
+            else self.DEFAULT_SPEC_ID_LOCK_TIMEOUT
+        )
+        self._store_lock: StoreLock | None = None
+
+    def _get_store_lock(self) -> StoreLock:
+        """Get or create the StoreLock instance.
+
+        Lazy initialization to avoid circular imports and to defer
+        lock directory creation until actually needed.
+        """
+        if self._store_lock is None:
+            from formula_foundry.m3.locking import StoreLock
+
+            self._store_lock = StoreLock(self.root)
+        return self._store_lock
 
     def _ensure_dirs(self) -> None:
         """Ensure the store directories exist."""
@@ -465,6 +519,10 @@ class ArtifactStore:
     ) -> ArtifactManifest:
         """Store content as a new artifact.
 
+        This method is concurrency-safe when locking is enabled. It uses:
+        - Per-artifact spec_id lock during creation to avoid duplicate work
+        - Global store lock for manifest writes
+
         Args:
             content: The binary content to store.
             artifact_type: Type of the artifact.
@@ -485,12 +543,145 @@ class ArtifactStore:
 
         Raises:
             ArtifactExistsError: If artifact_id already exists and allow_overwrite is False.
+            LockTimeoutError: If a required lock cannot be acquired within timeout.
         """
         self._ensure_dirs()
 
-        # Compute hash
+        # Compute hash first (outside any locks - pure computation)
         content_hash = self._compute_hash(content)
         byte_size = len(content)
+        spec_id = compute_spec_id(content_hash.digest)
+
+        # Use the internal implementation with locking
+        return self._put_with_locking(
+            content=content,
+            content_hash=content_hash,
+            byte_size=byte_size,
+            spec_id=spec_id,
+            artifact_type=artifact_type,
+            roles=roles,
+            run_id=run_id,
+            generator=generator,
+            generator_version=generator_version,
+            artifact_id=artifact_id,
+            stage_name=stage_name,
+            inputs=inputs,
+            media_type=media_type,
+            tags=tags,
+            annotations=annotations,
+            allow_overwrite=allow_overwrite,
+        )
+
+    def _put_with_locking(
+        self,
+        content: bytes,
+        content_hash: ContentHash,
+        byte_size: int,
+        spec_id: str,
+        artifact_type: ArtifactType,
+        roles: list[ArtifactRole],
+        run_id: str,
+        generator: str | None,
+        generator_version: str | None,
+        artifact_id: str | None,
+        stage_name: str | None,
+        inputs: list[LineageReference] | None,
+        media_type: str | None,
+        tags: dict[str, str] | None,
+        annotations: dict[str, Any] | None,
+        allow_overwrite: bool,
+    ) -> ArtifactManifest:
+        """Internal put implementation with locking.
+
+        When locking is enabled, this method:
+        1. Acquires a per-artifact spec_id lock to serialize creation attempts
+        2. Checks if the artifact already exists (under lock)
+        3. Writes the object content atomically
+        4. Acquires the global store lock for manifest writes
+        5. Writes the manifest atomically
+
+        This ensures that:
+        - Multiple processes trying to create the same artifact don't duplicate work
+        - Manifest writes are serialized to maintain store consistency
+        """
+        from formula_foundry.m3.locking import LockAcquisitionError
+
+        if self._enable_locking:
+            store_lock = self._get_store_lock()
+
+            try:
+                # Acquire spec_id lock to serialize creation of same artifact
+                with store_lock.spec_id_lock(spec_id, timeout=self._spec_id_lock_timeout):
+                    return self._put_unlocked(
+                        content=content,
+                        content_hash=content_hash,
+                        byte_size=byte_size,
+                        artifact_type=artifact_type,
+                        roles=roles,
+                        run_id=run_id,
+                        generator=generator,
+                        generator_version=generator_version,
+                        artifact_id=artifact_id,
+                        stage_name=stage_name,
+                        inputs=inputs,
+                        media_type=media_type,
+                        tags=tags,
+                        annotations=annotations,
+                        allow_overwrite=allow_overwrite,
+                        use_global_lock=True,
+                    )
+            except LockAcquisitionError as e:
+                raise LockTimeoutError(str(e)) from e
+        else:
+            # No locking - direct write
+            return self._put_unlocked(
+                content=content,
+                content_hash=content_hash,
+                byte_size=byte_size,
+                artifact_type=artifact_type,
+                roles=roles,
+                run_id=run_id,
+                generator=generator,
+                generator_version=generator_version,
+                artifact_id=artifact_id,
+                stage_name=stage_name,
+                inputs=inputs,
+                media_type=media_type,
+                tags=tags,
+                annotations=annotations,
+                allow_overwrite=allow_overwrite,
+                use_global_lock=False,
+            )
+
+    def _put_unlocked(
+        self,
+        content: bytes,
+        content_hash: ContentHash,
+        byte_size: int,
+        artifact_type: ArtifactType,
+        roles: list[ArtifactRole],
+        run_id: str,
+        generator: str | None,
+        generator_version: str | None,
+        artifact_id: str | None,
+        stage_name: str | None,
+        inputs: list[LineageReference] | None,
+        media_type: str | None,
+        tags: dict[str, str] | None,
+        annotations: dict[str, Any] | None,
+        allow_overwrite: bool,
+        use_global_lock: bool,
+    ) -> ArtifactManifest:
+        """Core put implementation without spec_id locking.
+
+        This method should be called either:
+        - With spec_id lock already held (when locking enabled)
+        - Without any locking (when locking disabled)
+
+        Args:
+            use_global_lock: If True, acquire global lock for manifest write.
+        """
+        from formula_foundry.m3.locking import LockAcquisitionError
 
         # Generate or validate artifact ID
         if artifact_id is None:
@@ -502,6 +693,7 @@ class ArtifactStore:
                 raise ArtifactExistsError(f"Artifact already exists: {artifact_id}")
 
         # Write object (content-addressed, so duplicates are harmless)
+        # This uses atomic rename, so concurrent writes to same hash are safe
         object_path = self._object_path(content_hash.digest)
         if not object_path.exists():
             self._atomic_write(object_path, content)
@@ -537,9 +729,19 @@ class ArtifactStore:
             annotations=annotations or {},
         )
 
-        # Write manifest atomically
+        # Write manifest atomically, optionally under global lock
         manifest_path = self._manifest_path(artifact_id)
-        self._atomic_write(manifest_path, manifest.to_json().encode("utf-8"))
+        manifest_json = manifest.to_json().encode("utf-8")
+
+        if use_global_lock and self._enable_locking:
+            store_lock = self._get_store_lock()
+            try:
+                with store_lock.global_lock(timeout=self._global_lock_timeout):
+                    self._atomic_write(manifest_path, manifest_json)
+            except LockAcquisitionError as e:
+                raise LockTimeoutError(str(e)) from e
+        else:
+            self._atomic_write(manifest_path, manifest_json)
 
         return manifest
 

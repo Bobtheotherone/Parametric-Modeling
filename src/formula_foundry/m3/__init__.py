@@ -13,8 +13,17 @@ from formula_foundry.m3.artifact_store import (
     ContentHash,
     Lineage,
     LineageReference,
+    LockTimeoutError,
     Provenance,
     compute_spec_id,
+)
+from formula_foundry.m3.locking import (
+    FileLock,
+    LockAcquisitionError,
+    LockError,
+    LockInfo,
+    LockNotHeldError,
+    StoreLock,
 )
 from formula_foundry.m3.dataset_snapshot import (
     DatasetMember,
@@ -56,6 +65,7 @@ __all__ = [
     "DatasetSnapshotReader",
     "DatasetSnapshotWriter",
     "DatasetStatistics",
+    "FileLock",
     "Lineage",
     "LineageEdge",
     "LineageGraph",
@@ -64,10 +74,16 @@ __all__ = [
     "LineagePath",
     "LineageReference",
     "LineageSubgraph",
+    "LockAcquisitionError",
+    "LockError",
+    "LockInfo",
+    "LockNotHeldError",
+    "LockTimeoutError",
     "NodeNotFoundError",
     "ParquetNotAvailableError",
     "Provenance",
     "SplitDefinition",
+    "StoreLock",
     "compute_manifest_hash",
     "compute_spec_id",
 ]
