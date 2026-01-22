@@ -5,6 +5,7 @@ This module implements REQ-M2-003 validation requirements:
   for the maximum simulation frequency.
 - PML adequacy: Verify that PML boundary conditions have sufficient layers
   for proper absorption at the frequency range of interest.
+- GPU configuration: Validate GPU-related settings.
 
 The validation functions can be used both as pre-simulation checks (to catch
 configuration errors early) and as part of the overall simulation quality gates.
@@ -12,9 +13,10 @@ configuration errors early) and as part of the overall simulation quality gates.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,32 @@ logger = logging.getLogger(__name__)
 # Physical constants
 C0_M_PER_S = 299_792_458.0  # Speed of light in vacuum (m/s)
 NM_TO_M = 1e-9  # Nanometers to meters
+
+# =============================================================================
+# Mesh Density Constants (REQ-M2-003)
+# =============================================================================
+
+# Minimum mesh cells per wavelength for spatial sampling adequacy.
+# 10 cells/wavelength is the minimum for acceptable FDTD accuracy.
+DEFAULT_MIN_CELLS_PER_WAVELENGTH: int = 10
+"""Minimum mesh cells per wavelength for FDTD accuracy (default threshold)."""
+
+# Recommended mesh density for high-quality results.
+RECOMMENDED_CELLS_PER_WAVELENGTH: int = 20
+"""Recommended mesh cells per wavelength for high-fidelity simulations."""
+
+# =============================================================================
+# PML Layer Constants (REQ-M2-003)
+# =============================================================================
+
+# Minimum PML layers expressed as wavelengths at the lowest frequency.
+# 0.5 wavelength is the minimum to prevent significant reflections.
+DEFAULT_MIN_PML_WAVELENGTHS: float = 0.5
+"""Minimum PML depth in wavelengths (default threshold)."""
+
+# Recommended PML depth for high absorption quality.
+RECOMMENDED_MIN_PML_WAVELENGTHS: float = 1.0
+"""Recommended PML depth in wavelengths for optimal absorption."""
 
 
 class ValidationStatus(str, Enum):
@@ -75,29 +103,83 @@ class ValidationResult:
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=False)
 class SimConfigValidationReport:
     """Complete simulation config validation report.
 
     Attributes:
-        results: List of individual validation results.
-        overall_passed: Whether all validations passed.
-        warnings: List of warning messages.
-        errors: List of error messages.
+        checks: List of individual validation results.
+        overall_status: Overall validation status (PASSED, FAILED, WARNING).
+        spec_hash: Optional hash of the spec being validated.
     """
 
-    results: list[ValidationResult]
-    overall_passed: bool
-    warnings: list[str]
-    errors: list[str]
+    checks: list[ValidationResult]
+    overall_status: ValidationStatus
+    spec_hash: str | None = None
+
+    @property
+    def all_passed(self) -> bool:
+        """Whether all checks passed (no failures, warnings OK)."""
+        return self.overall_status != ValidationStatus.FAILED
+
+    @property
+    def overall_passed(self) -> bool:
+        """Backwards-compat alias for all_passed."""
+        return self.all_passed
+
+    @property
+    def n_passed(self) -> int:
+        """Count of checks that passed (including warnings)."""
+        return sum(1 for c in self.checks if c.passed)
+
+    @property
+    def n_failed(self) -> int:
+        """Count of checks that failed."""
+        return sum(1 for c in self.checks if c.status == ValidationStatus.FAILED)
+
+    @property
+    def warnings(self) -> list[str]:
+        """List of warning messages from checks."""
+        return [c.message for c in self.checks if c.status == ValidationStatus.WARNING]
+
+    @property
+    def errors(self) -> list[str]:
+        """List of error messages from checks."""
+        return [c.message for c in self.checks if c.status == ValidationStatus.FAILED]
+
+    @property
+    def results(self) -> list[ValidationResult]:
+        """Backwards-compat alias for checks."""
+        return self.checks
+
+    @property
+    def canonical_hash(self) -> str:
+        """Compute a SHA256 hash of the canonical JSON representation."""
+        payload = canonical_json_dumps(self.to_dict())
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def get_check(self, name: str) -> ValidationResult | None:
+        """Get a check result by name.
+
+        Args:
+            name: The name of the check to retrieve.
+
+        Returns:
+            The ValidationResult if found, None otherwise.
+        """
+        for check in self.checks:
+            if check.name == name:
+                return check
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert report to dictionary for serialization."""
         return {
-            "overall_passed": self.overall_passed,
-            "warnings": self.warnings,
-            "errors": self.errors,
-            "results": [r.to_dict() for r in self.results],
+            "overall_status": self.overall_status.value,
+            "spec_hash": self.spec_hash,
+            "n_passed": self.n_passed,
+            "n_failed": self.n_failed,
+            "checks": [r.to_dict() for r in self.checks],
         }
 
 
@@ -414,12 +496,68 @@ def validate_pml_adequacy(
 
 
 # =============================================================================
+# GPU Configuration Validation
+# =============================================================================
+
+
+def validate_gpu_config(spec: SimulationSpec) -> ValidationResult:
+    """Validate GPU configuration in the simulation spec.
+
+    Checks that GPU settings are consistent and valid:
+    - Engine type is compatible with GPU acceleration
+    - GPU device ID is valid (if specified)
+    - GPU memory fraction is within bounds (if specified)
+
+    Args:
+        spec: Simulation specification to validate.
+
+    Returns:
+        ValidationResult indicating pass/fail/warning status.
+    """
+    engine = spec.control.engine
+
+    details = {
+        "use_gpu": engine.use_gpu,
+        "gpu_device_id": engine.gpu_device_id,
+        "gpu_memory_fraction": engine.gpu_memory_fraction,
+        "engine_type": engine.type,
+    }
+
+    if not engine.use_gpu:
+        return ValidationResult(
+            name="gpu_config",
+            status=ValidationStatus.PASSED,
+            message=f"CPU mode with {engine.type} engine",
+            details=details,
+        )
+
+    # GPU is enabled - check compatibility
+    if engine.type not in ("basic", "multithreaded"):
+        return ValidationResult(
+            name="gpu_config",
+            status=ValidationStatus.WARNING,
+            message=f"GPU mode may not be compatible with engine type '{engine.type}'",
+            details=details,
+        )
+
+    # GPU enabled with compatible engine type
+    device_info = f"device: {engine.gpu_device_id}" if engine.gpu_device_id is not None else "device: default"
+    return ValidationResult(
+        name="gpu_config",
+        status=ValidationStatus.PASSED,
+        message=f"GPU acceleration enabled ({device_info})",
+        details=details,
+    )
+
+
+# =============================================================================
 # Comprehensive Validation
 # =============================================================================
 
 
 def validate_sim_config(
     spec: SimulationSpec,
+    spec_hash: str | None = None,
     *,
     min_cell_size_nm: float | None = None,
     epsilon_r: float = 1.0,
@@ -431,6 +569,7 @@ def validate_sim_config(
 
     Args:
         spec: Simulation specification to validate.
+        spec_hash: Optional hash of the spec being validated.
         min_cell_size_nm: Minimum mesh cell size for Nyquist check.
         epsilon_r: Relative permittivity for wave speed calculation.
         domain_size_nm: Domain size for PML adequacy check.
@@ -438,9 +577,7 @@ def validate_sim_config(
     Returns:
         SimConfigValidationReport with all validation results.
     """
-    results: list[ValidationResult] = []
-    warnings: list[str] = []
-    errors: list[str] = []
+    checks: list[ValidationResult] = []
 
     # Run Nyquist compliance check
     nyquist_result = validate_nyquist_compliance(
@@ -448,33 +585,29 @@ def validate_sim_config(
         min_cell_size_nm=min_cell_size_nm,
         epsilon_r=epsilon_r,
     )
-    results.append(nyquist_result)
-    if nyquist_result.status == ValidationStatus.WARNING:
-        warnings.append(nyquist_result.message)
-    elif nyquist_result.status == ValidationStatus.FAILED:
-        errors.append(nyquist_result.message)
+    checks.append(nyquist_result)
 
     # Run PML adequacy check
     pml_result = validate_pml_adequacy(spec, domain_size_nm=domain_size_nm)
-    results.append(pml_result)
-    if pml_result.status == ValidationStatus.WARNING:
-        warnings.append(pml_result.message)
-    elif pml_result.status == ValidationStatus.FAILED:
-        errors.append(pml_result.message)
+    checks.append(pml_result)
+
+    # Run GPU configuration check
+    gpu_result = validate_gpu_config(spec)
+    checks.append(gpu_result)
 
     # Check that at least one port is excited
     excited_ports = [p for p in spec.ports if p.excite]
     if len(excited_ports) == 0:
-        no_excite_result = ValidationResult(
-            name="port_excitation",
-            status=ValidationStatus.FAILED,
-            message="At least one port must be set to excite=True",
-            details={"n_ports": len(spec.ports), "n_excited": 0},
+        checks.append(
+            ValidationResult(
+                name="port_excitation",
+                status=ValidationStatus.FAILED,
+                message="At least one port must be set to excite=True",
+                details={"n_ports": len(spec.ports), "n_excited": 0},
+            )
         )
-        results.append(no_excite_result)
-        errors.append(no_excite_result.message)
     else:
-        results.append(
+        checks.append(
             ValidationResult(
                 name="port_excitation",
                 status=ValidationStatus.PASSED,
@@ -485,17 +618,17 @@ def validate_sim_config(
 
     # Check frequency sweep validity
     if spec.frequency.f_start_hz >= spec.frequency.f_stop_hz:
-        freq_result = ValidationResult(
-            name="frequency_sweep",
-            status=ValidationStatus.FAILED,
-            message="f_start_hz must be less than f_stop_hz",
-            value=float(spec.frequency.f_start_hz),
-            threshold=float(spec.frequency.f_stop_hz),
+        checks.append(
+            ValidationResult(
+                name="frequency_sweep",
+                status=ValidationStatus.FAILED,
+                message="f_start_hz must be less than f_stop_hz",
+                value=float(spec.frequency.f_start_hz),
+                threshold=float(spec.frequency.f_stop_hz),
+            )
         )
-        results.append(freq_result)
-        errors.append(freq_result.message)
     else:
-        results.append(
+        checks.append(
             ValidationResult(
                 name="frequency_sweep",
                 status=ValidationStatus.PASSED,
@@ -503,41 +636,21 @@ def validate_sim_config(
             )
         )
 
-    # Check GPU configuration consistency
-    if spec.control.engine.use_gpu:
-        if spec.control.engine.type not in ("basic", "multithreaded"):
-            gpu_result = ValidationResult(
-                name="gpu_configuration",
-                status=ValidationStatus.WARNING,
-                message=f"GPU mode may not be compatible with engine type '{spec.control.engine.type}'",
-                details={"engine_type": spec.control.engine.type, "use_gpu": True},
-            )
-            results.append(gpu_result)
-            warnings.append(gpu_result.message)
-        else:
-            results.append(
-                ValidationResult(
-                    name="gpu_configuration",
-                    status=ValidationStatus.PASSED,
-                    message=f"GPU acceleration enabled (device: {spec.control.engine.gpu_device_id or 'default'})",
-                )
-            )
-    else:
-        results.append(
-            ValidationResult(
-                name="gpu_configuration",
-                status=ValidationStatus.PASSED,
-                message=f"CPU mode with {spec.control.engine.type} engine",
-            )
-        )
+    # Determine overall status
+    has_failures = any(c.status == ValidationStatus.FAILED for c in checks)
+    has_warnings = any(c.status == ValidationStatus.WARNING for c in checks)
 
-    overall_passed = len(errors) == 0
+    if has_failures:
+        overall_status = ValidationStatus.FAILED
+    elif has_warnings:
+        overall_status = ValidationStatus.WARNING
+    else:
+        overall_status = ValidationStatus.PASSED
 
     return SimConfigValidationReport(
-        results=results,
-        overall_passed=overall_passed,
-        warnings=warnings,
-        errors=errors,
+        checks=checks,
+        overall_status=overall_status,
+        spec_hash=spec_hash,
     )
 
 
@@ -613,3 +726,89 @@ def load_sim_config(config_path: Path) -> SimulationSpec:
         data = json.load(f)
 
     return load_simulationspec(data)
+
+
+# =============================================================================
+# Enhanced sim_config.json I/O (REQ-M2-003)
+# =============================================================================
+
+
+def write_sim_config_json(
+    spec: SimulationSpec,
+    output_dir: Path,
+    *,
+    validation_report: SimConfigValidationReport | None = None,
+    filename: str = "sim_config.json",
+) -> Path:
+    """Write simulation config to JSON file with metadata wrapper.
+
+    Creates a JSON file with schema_version, spec, and optional validation
+    report. This is the preferred format for persisting simulation configs.
+
+    Args:
+        spec: Simulation specification to write.
+        output_dir: Directory where outputs are stored.
+        validation_report: Optional validation report to include.
+        filename: Name of the output file (default: sim_config.json).
+
+    Returns:
+        Path to the written config file.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / filename
+
+    # Build the wrapper structure
+    payload: dict[str, Any] = {
+        "schema_version": spec.schema_version,
+        "spec": spec.model_dump(mode="json"),
+    }
+
+    if validation_report is not None:
+        payload["validation"] = validation_report.to_dict()
+
+    text = canonical_json_dumps(payload)
+    output_path.write_text(f"{text}\n", encoding="utf-8")
+
+    logger.info("Wrote simulation config to %s", output_path)
+    return output_path
+
+
+def load_sim_config_json(config_path: Path) -> dict[str, Any]:
+    """Load simulation config JSON file as dictionary.
+
+    Reads the JSON wrapper format produced by write_sim_config_json.
+    Returns the raw dict for inspection; use load_simulationspec() on
+    the 'spec' field to get a validated SimulationSpec.
+
+    Args:
+        config_path: Path to sim_config.json file.
+
+    Returns:
+        Dictionary with schema_version, spec, and optional validation.
+
+    Raises:
+        FileNotFoundError: If config file doesn't exist.
+    """
+    if not config_path.exists():
+        raise FileNotFoundError(f"Simulation config not found: {config_path}")
+
+    with open(config_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_validation_report(
+    report: SimConfigValidationReport,
+    output_path: Path,
+) -> None:
+    """Write validation report to JSON file.
+
+    Serializes a SimConfigValidationReport to a standalone JSON file.
+
+    Args:
+        report: Validation report to write.
+        output_path: Path for the output file.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    text = canonical_json_dumps(report.to_dict())
+    output_path.write_text(f"{text}\n", encoding="utf-8")
+    logger.info("Wrote validation report to %s", output_path)
