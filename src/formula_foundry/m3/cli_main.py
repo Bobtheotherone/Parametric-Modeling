@@ -2697,6 +2697,23 @@ def cmd_audit(
             result["run_id"] = manifest.lineage.run_id
             result["stage_name"] = manifest.lineage.stage_name
 
+            # Include tool/provenance information for deterministic audit
+            result["provenance"] = {
+                "generator": manifest.provenance.generator,
+                "generator_version": manifest.provenance.generator_version,
+                "hostname": manifest.provenance.hostname,
+            }
+            if manifest.provenance.username:
+                result["provenance"]["username"] = manifest.provenance.username
+            if manifest.provenance.command:
+                result["provenance"]["command"] = manifest.provenance.command
+            if manifest.provenance.working_directory:
+                result["provenance"]["working_directory"] = manifest.provenance.working_directory
+            if manifest.provenance.ci_run_id:
+                result["provenance"]["ci_run_id"] = manifest.provenance.ci_run_id
+            if manifest.provenance.ci_job_url:
+                result["provenance"]["ci_job_url"] = manifest.provenance.ci_job_url
+
             # Verify hash if requested
             if verify_hashes:
                 try:
@@ -2772,6 +2789,8 @@ def cmd_audit(
         report = {
             "schema_version": 1,
             "generated_utc": _now_utc_iso(),
+            "generator": "m3_audit",
+            "generator_version": __version__,
             "total_artifacts": len(artifact_ids),
             "verification_failures": len(verification_failures),
             "missing_roles": len(missing_roles),
@@ -2796,6 +2815,11 @@ def cmd_audit(
                 _log(f"  Roles: {', '.join(result['roles'])}", quiet)
             if "run_id" in result:
                 _log(f"  Run ID: {result['run_id']}", quiet)
+            if "provenance" in result:
+                prov = result["provenance"]
+                _log(f"  Generator: {prov.get('generator', 'unknown')} v{prov.get('generator_version', 'unknown')}", quiet)
+                if prov.get("hostname"):
+                    _log(f"  Hostname: {prov['hostname']}", quiet)
             if "ancestor_count" in result:
                 _log(f"  Ancestors: {result['ancestor_count']}", quiet)
             if "root_ids" in result:

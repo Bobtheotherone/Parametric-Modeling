@@ -384,6 +384,105 @@ class TestCmdAuditHashVerification:
         assert result == 2  # Should fail due to hash mismatch
 
 
+class TestCmdAuditProvenance:
+    """Tests for provenance/tool version information in audit output."""
+
+    def test_audit_json_includes_provenance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Audit JSON output should include provenance (tool versions) for each artifact."""
+        cmd_init(root=tmp_path, force=False, quiet=True)
+
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = tmp_path / "data"
+        store = ArtifactStore(root=data_dir, generator="test_gen", generator_version="2.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        manifest = store.put(
+            content=b"test content",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-prov-001",
+            artifact_id="art-prov-001",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        result = cmd_audit(
+            artifact_id="art-prov-001",
+            root=tmp_path,
+            output_format="json",
+            trace_roots=False,
+            verify_hashes=False,
+            max_depth=None,
+            required_roles=None,
+            quiet=True,
+        )
+        assert result == 0
+
+        captured = capsys.readouterr()
+        report = json.loads(captured.out)
+
+        # Check report-level provenance
+        assert "generator" in report
+        assert report["generator"] == "m3_audit"
+        assert "generator_version" in report
+
+        # Check artifact-level provenance
+        artifact = report["artifacts"][0]
+        assert "provenance" in artifact
+        assert artifact["provenance"]["generator"] == "test_gen"
+        assert artifact["provenance"]["generator_version"] == "2.0.0"
+        assert "hostname" in artifact["provenance"]
+
+    def test_audit_json_includes_timestamps(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Audit JSON output should include timestamps for all artifacts."""
+        cmd_init(root=tmp_path, force=False, quiet=True)
+
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = tmp_path / "data"
+        store = ArtifactStore(root=data_dir, generator="test", generator_version="1.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        manifest = store.put(
+            content=b"timestamp test",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-ts-001",
+            artifact_id="art-ts-001",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        result = cmd_audit(
+            artifact_id=None,
+            root=tmp_path,
+            output_format="json",
+            trace_roots=False,
+            verify_hashes=False,
+            max_depth=None,
+            required_roles=None,
+            quiet=True,
+        )
+        assert result == 0
+
+        captured = capsys.readouterr()
+        report = json.loads(captured.out)
+
+        # Check report-level timestamp
+        assert "generated_utc" in report
+
+        # Check artifact-level timestamp
+        artifact = report["artifacts"][0]
+        assert "created_utc" in artifact
+
+
 class TestMainWithAudit:
     """Tests for main entry point with audit command."""
 
