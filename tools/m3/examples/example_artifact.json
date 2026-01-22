@@ -2,6 +2,7 @@
   "schema_version": 1,
   "artifact_id": "coupon_F1_001_board_v1",
   "artifact_type": "kicad_board",
+  "determinism_class": "quasi_deterministic",
   "content_hash": {
     "algorithm": "sha256",
     "digest": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
