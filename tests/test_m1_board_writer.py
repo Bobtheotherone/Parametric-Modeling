@@ -15,6 +15,10 @@ from formula_foundry.coupongen.kicad import (
     parse,
     write_board,
 )
+from formula_foundry.coupongen.kicad.board_writer import (
+    SPEC_TO_KICAD_LAYER,
+    map_layer_to_kicad,
+)
 from formula_foundry.coupongen.resolve import resolve
 from formula_foundry.coupongen.spec import CouponSpec
 
@@ -524,3 +528,397 @@ class TestF1RequirementCoverageInBoardWriter:
         # 7. Plane cutouts - zones for antipads (2) + cutouts (1) = 3
         zone_count = content.count("(zone")
         assert zone_count >= 3  # 2 antipads + 1 cutout
+
+
+class TestLayerMapping:
+    """Tests for spec layer name to KiCad layer name mapping."""
+
+    def test_map_layer_l1_to_fcu(self) -> None:
+        """L1 should map to F.Cu (front copper)."""
+        assert map_layer_to_kicad("L1") == "F.Cu"
+
+    def test_map_layer_l2_to_in1cu(self) -> None:
+        """L2 should map to In1.Cu (internal layer 1)."""
+        assert map_layer_to_kicad("L2") == "In1.Cu"
+
+    def test_map_layer_l3_to_in2cu(self) -> None:
+        """L3 should map to In2.Cu (internal layer 2)."""
+        assert map_layer_to_kicad("L3") == "In2.Cu"
+
+    def test_map_layer_l4_to_bcu(self) -> None:
+        """L4 should map to B.Cu (back copper)."""
+        assert map_layer_to_kicad("L4") == "B.Cu"
+
+    def test_map_layer_passthrough_fcu(self) -> None:
+        """KiCad layer names should pass through unchanged."""
+        assert map_layer_to_kicad("F.Cu") == "F.Cu"
+
+    def test_map_layer_passthrough_in1cu(self) -> None:
+        """KiCad layer names should pass through unchanged."""
+        assert map_layer_to_kicad("In1.Cu") == "In1.Cu"
+
+    def test_map_layer_passthrough_in2cu(self) -> None:
+        """KiCad layer names should pass through unchanged."""
+        assert map_layer_to_kicad("In2.Cu") == "In2.Cu"
+
+    def test_map_layer_passthrough_bcu(self) -> None:
+        """KiCad layer names should pass through unchanged."""
+        assert map_layer_to_kicad("B.Cu") == "B.Cu"
+
+    def test_map_layer_unknown_raises(self) -> None:
+        """Unknown layer names should raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown layer name"):
+            map_layer_to_kicad("Unknown.Layer")
+
+    def test_layer_mapping_completeness(self) -> None:
+        """SPEC_TO_KICAD_LAYER should contain all expected mappings."""
+        expected_mappings = {
+            "L1": "F.Cu",
+            "L2": "In1.Cu",
+            "L3": "In2.Cu",
+            "L4": "B.Cu",
+            "F.Cu": "F.Cu",
+            "In1.Cu": "In1.Cu",
+            "In2.Cu": "In2.Cu",
+            "B.Cu": "B.Cu",
+        }
+        assert SPEC_TO_KICAD_LAYER == expected_mappings
+
+
+class TestBoardFileValidation:
+    """Tests for validating generated .kicad_pcb files are syntactically correct."""
+
+    def test_board_file_not_empty(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Generated board file should not be empty."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+        assert len(content) > 0, "Board file should not be empty"
+
+    def test_board_file_starts_with_kicad_pcb(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Generated board file should start with (kicad_pcb."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+        assert content.strip().startswith("(kicad_pcb"), (
+            f"Board file should start with (kicad_pcb, got: {content[:50]!r}"
+        )
+
+    def test_board_file_balanced_parentheses(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Generated board file should have balanced parentheses."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+        open_count = content.count("(")
+        close_count = content.count(")")
+        assert open_count == close_count, (
+            f"Unbalanced parentheses: {open_count} open vs {close_count} close"
+        )
+
+    def test_board_file_parseable(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Generated board file should parse without errors."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+        # This should not raise
+        parsed = parse(content)
+        assert parsed[0] == "kicad_pcb"
+
+    def test_f1_board_file_valid(self, f1_spec: CouponSpec, tmp_path: Path) -> None:
+        """F1 generated board file should be syntactically valid."""
+        resolved = resolve(f1_spec)
+        board_path = write_board(f1_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Check basic validity
+        assert content.strip().startswith("(kicad_pcb")
+        assert content.count("(") == content.count(")")
+
+        # Should parse without error
+        parsed = parse(content)
+        assert parsed[0] == "kicad_pcb"
+
+
+@pytest.fixture
+def f1_spec_with_logical_layers(f1_spec_data: dict) -> CouponSpec:
+    """F1 spec using logical layer names (L2, L3) for antipads."""
+    spec = f1_spec_data.copy()
+    spec["discontinuity"] = {
+        "type": "VIA_TRANSITION",
+        "signal_via": {
+            "drill_nm": 300000,
+            "diameter_nm": 650000,
+            "pad_diameter_nm": 900000,
+        },
+        "antipads": {
+            "L2": {
+                "shape": "CIRCLE",
+                "r_nm": 480000,
+            },
+            "L3": {
+                "shape": "CIRCLE",
+                "r_nm": 480000,
+            },
+        },
+        "return_vias": {
+            "pattern": "RING",
+            "count": 4,
+            "radius_nm": 1000000,
+            "via": {"drill_nm": 300000, "diameter_nm": 510000},
+        },
+        "plane_cutouts": {},
+    }
+    return CouponSpec.model_validate(spec)
+
+
+class TestLayerMappingIntegration:
+    """Integration tests verifying layer mapping works in board generation."""
+
+    def test_f1_logical_layers_mapped_to_kicad(
+        self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path
+    ) -> None:
+        """F1 spec with L2/L3 layers should generate board with In1.Cu/In2.Cu."""
+        resolved = resolve(f1_spec_with_logical_layers)
+        board_path = write_board(f1_spec_with_logical_layers, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should NOT contain the logical layer names L2/L3 (except in comments)
+        # Split lines and check non-comment lines
+        for line in content.split("\n"):
+            # Skip comment-like patterns
+            if line.strip().startswith(";"):
+                continue
+            # Check that L2 and L3 are not used as layer names
+            # (layer L2) or (layer L3) should not appear
+            assert "(layer\n      L2)" not in line and "(layer L2)" not in line, (
+                f"Found invalid layer name L2 in: {line}"
+            )
+            assert "(layer\n      L3)" not in line and "(layer L3)" not in line, (
+                f"Found invalid layer name L3 in: {line}"
+            )
+
+        # Should contain the correct KiCad layer names
+        assert "In1.Cu" in content, "Should contain In1.Cu layer"
+        assert "In2.Cu" in content, "Should contain In2.Cu layer"
+
+    def test_f1_logical_layers_zones_have_valid_kicad_layers(
+        self, f1_spec_with_logical_layers: CouponSpec
+    ) -> None:
+        """Zone elements should have valid KiCad layer names."""
+        resolved = resolve(f1_spec_with_logical_layers)
+        writer = BoardWriter(f1_spec_with_logical_layers, resolved)
+        board = writer.build_board()
+
+        # Find zone elements
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+        assert len(zones) >= 2, "Should have at least 2 zones for antipads"
+
+        valid_kicad_layers = {"F.Cu", "In1.Cu", "In2.Cu", "B.Cu"}
+
+        for zone in zones:
+            # Find the layer element in the zone
+            layer_elems = [e for e in zone if isinstance(e, list) and e[0] == "layer"]
+            assert len(layer_elems) == 1, "Each zone should have exactly one layer element"
+
+            layer_name = layer_elems[0][1]
+            assert layer_name in valid_kicad_layers, (
+                f"Zone has invalid layer name: {layer_name!r}, "
+                f"expected one of {valid_kicad_layers}"
+            )
+
+    def test_board_file_kicad_loadable_layers(
+        self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path
+    ) -> None:
+        """Generated board file should only use valid KiCad layer names.
+
+        This is a regression test for the issue where L2/L3 logical layer
+        names were being written to the board file, causing KiCad to fail
+        to load the file (returncode 3: "Failed to load board").
+        """
+        resolved = resolve(f1_spec_with_logical_layers)
+        board_path = write_board(f1_spec_with_logical_layers, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+        parsed = parse(content)
+
+        # Valid copper layer names in KiCad for 4-layer boards
+        valid_copper_layers = {"F.Cu", "In1.Cu", "In2.Cu", "B.Cu"}
+
+        # Find all zones and check their layer names
+        def find_zones(sexpr: list) -> list:
+            zones = []
+            for elem in sexpr:
+                if isinstance(elem, list):
+                    if elem and elem[0] == "zone":
+                        zones.append(elem)
+                    zones.extend(find_zones(elem))
+            return zones
+
+        zones = find_zones(parsed)
+        for zone in zones:
+            for elem in zone:
+                if isinstance(elem, list) and elem[0] == "layer":
+                    layer_name = elem[1]
+                    assert layer_name in valid_copper_layers, (
+                        f"Zone uses invalid layer name '{layer_name}'. "
+                        f"This would cause KiCad to fail with 'Failed to load board'. "
+                        f"Valid layers: {valid_copper_layers}"
+                    )
+
+
+class TestAntipadKeeoutRules:
+    """Regression tests for antipad/cutout keepout rules.
+
+    These tests verify that antipad and cutout zones only block copperpour
+    and allow vias/tracks/pads to pass through. This prevents DRC errors
+    like 'items_not_allowed' when the signal via passes through antipads.
+    """
+
+    def test_antipad_allows_vias(self, f1_spec: CouponSpec) -> None:
+        """Antipad zones must allow vias to pass through.
+
+        Regression test: antipads blocking vias caused 'items_not_allowed'
+        DRC errors because the signal via passes through antipad regions.
+        """
+        resolved = resolve(f1_spec)
+        writer = BoardWriter(f1_spec, resolved)
+        board = writer.build_board()
+
+        # Find zone elements (antipads/cutouts)
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+
+        for zone in zones:
+            # Find the keepout element
+            keepout_elems = [e for e in zone if isinstance(e, list) and e[0] == "keepout"]
+            assert len(keepout_elems) == 1, "Each zone should have exactly one keepout element"
+
+            keepout = keepout_elems[0]
+
+            # Find vias rule
+            vias_rules = [e for e in keepout if isinstance(e, list) and e[0] == "vias"]
+            assert len(vias_rules) == 1, "Keepout should have exactly one vias rule"
+
+            vias_rule = vias_rules[0][1]
+            assert vias_rule == "allowed", (
+                f"Antipad/cutout must allow vias (got '{vias_rule}'). "
+                f"Blocking vias causes 'items_not_allowed' DRC errors."
+            )
+
+    def test_antipad_blocks_copperpour(self, f1_spec: CouponSpec) -> None:
+        """Antipad zones must block copperpour to create clearance in ground planes."""
+        resolved = resolve(f1_spec)
+        writer = BoardWriter(f1_spec, resolved)
+        board = writer.build_board()
+
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+
+        for zone in zones:
+            keepout_elems = [e for e in zone if isinstance(e, list) and e[0] == "keepout"]
+            assert len(keepout_elems) == 1
+
+            keepout = keepout_elems[0]
+
+            # Find copperpour rule
+            copperpour_rules = [e for e in keepout if isinstance(e, list) and e[0] == "copperpour"]
+            assert len(copperpour_rules) == 1, "Keepout should have exactly one copperpour rule"
+
+            copperpour_rule = copperpour_rules[0][1]
+            assert copperpour_rule == "not_allowed", (
+                f"Antipad/cutout must block copperpour (got '{copperpour_rule}'). "
+                f"This creates the clearance in ground planes."
+            )
+
+    def test_antipad_allows_tracks_and_pads(self, f1_spec: CouponSpec) -> None:
+        """Antipad zones should allow tracks and pads."""
+        resolved = resolve(f1_spec)
+        writer = BoardWriter(f1_spec, resolved)
+        board = writer.build_board()
+
+        zones = [e for e in board if isinstance(e, list) and e[0] == "zone"]
+
+        for zone in zones:
+            keepout_elems = [e for e in zone if isinstance(e, list) and e[0] == "keepout"]
+            assert len(keepout_elems) == 1
+
+            keepout = keepout_elems[0]
+
+            # Check tracks rule
+            tracks_rules = [e for e in keepout if isinstance(e, list) and e[0] == "tracks"]
+            assert len(tracks_rules) == 1
+            assert tracks_rules[0][1] == "allowed", "Antipad should allow tracks"
+
+            # Check pads rule
+            pads_rules = [e for e in keepout if isinstance(e, list) and e[0] == "pads"]
+            assert len(pads_rules) == 1
+            assert pads_rules[0][1] == "allowed", "Antipad should allow pads"
+
+
+class TestReturnViasNetAssignment:
+    """Regression tests for return via net assignment.
+
+    These tests verify that return vias are assigned to net 0 (unconnected)
+    in M1 test coupons. This prevents DRC 'unconnected_items' errors since
+    there are no ground plane fills to provide copper connectivity.
+    """
+
+    def test_return_vias_on_net_zero(self, f1_spec_with_antipads: CouponSpec) -> None:
+        """Return vias must be on net 0 (unconnected) for M1.
+
+        Regression test: return vias on GND net caused 'unconnected_items'
+        DRC errors because there are no ground planes connecting them.
+        """
+        resolved = resolve(f1_spec_with_antipads)
+        writer = BoardWriter(f1_spec_with_antipads, resolved)
+        board = writer.build_board()
+
+        # Find via elements
+        vias = [e for e in board if isinstance(e, list) and e[0] == "via"]
+        assert len(vias) >= 2, "F1 board should have signal + return vias"
+
+        # Count how many vias are on net 0 (return vias) vs net 1 (signal via)
+        net_0_count = 0
+        net_1_count = 0
+
+        for via in vias:
+            net_elems = [e for e in via if isinstance(e, list) and e[0] == "net"]
+            assert len(net_elems) == 1, "Each via should have exactly one net element"
+            net_id = net_elems[0][1]
+
+            if net_id == 0:
+                net_0_count += 1
+            elif net_id == 1:
+                net_1_count += 1
+
+        # Should have exactly 1 signal via on net 1 and all others on net 0
+        assert net_1_count == 1, f"Should have exactly 1 signal via on net 1, got {net_1_count}"
+        assert net_0_count >= 1, (
+            f"Return vias should be on net 0 (unconnected), "
+            f"but found {net_0_count} vias on net 0. "
+            f"Return vias must be on net 0 to avoid 'unconnected_items' DRC errors."
+        )
+
+    def test_signal_via_on_signal_net(self, f1_spec_with_antipads: CouponSpec) -> None:
+        """Signal via should be on signal net (net 1)."""
+        resolved = resolve(f1_spec_with_antipads)
+        writer = BoardWriter(f1_spec_with_antipads, resolved)
+        board = writer.build_board()
+
+        vias = [e for e in board if isinstance(e, list) and e[0] == "via"]
+
+        # Count vias on each net
+        signal_via_found = False
+        for via in vias:
+            net_elems = [e for e in via if isinstance(e, list) and e[0] == "net"]
+            assert len(net_elems) == 1
+            net_id = net_elems[0][1]
+
+            if net_id == 1:
+                signal_via_found = True
+
+        assert signal_via_found, "F1 board should have a signal via on net 1"

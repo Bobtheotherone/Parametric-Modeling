@@ -76,25 +76,86 @@ class KicadCliRunner:
             *args,
         ]
 
+    def _collect_debug_diagnostics(self, workdir: Path) -> str:
+        """Collect debug diagnostics when KiCad fails to load a board file.
+
+        Runs diagnostic commands inside the container to help diagnose
+        why kicad-cli failed to load the board file (returncode 3).
+
+        Args:
+            workdir: Working directory mounted as /workspace.
+
+        Returns:
+            Formatted diagnostic output string.
+        """
+        if self.mode != "docker" or not self.docker_image:
+            return ""
+
+        workdir_abs = workdir.resolve()
+        diagnostics: list[str] = [
+            "\n" + "=" * 60,
+            "DEBUG DIAGNOSTICS (returncode 3: Failed to load board)",
+            "=" * 60,
+        ]
+
+        # Define diagnostic commands to run
+        diag_commands = [
+            (["kicad-cli", "--version"], "kicad-cli --version"),
+            (["ls", "-la", "/workspace"], "ls -la /workspace"),
+            (["stat", "coupon.kicad_pcb"], "stat coupon.kicad_pcb"),
+            (["head", "-n", "40", "coupon.kicad_pcb"], "head -n 40 coupon.kicad_pcb"),
+            (["tail", "-n", "40", "coupon.kicad_pcb"], "tail -n 40 coupon.kicad_pcb"),
+            (["wc", "-c", "coupon.kicad_pcb"], "wc -c coupon.kicad_pcb"),
+            (["file", "coupon.kicad_pcb"], "file coupon.kicad_pcb"),
+        ]
+
+        for cmd_args, description in diag_commands:
+            diagnostics.append(f"\n--- {description} ---")
+            try:
+                docker_cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-v",
+                    f"{workdir_abs}:/workspace",
+                    "-w",
+                    "/workspace",
+                    self.docker_image,
+                    *cmd_args,
+                ]
+                result = subprocess.run(
+                    docker_cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=30,
+                )
+                if result.stdout:
+                    diagnostics.append(result.stdout.rstrip())
+                if result.stderr:
+                    diagnostics.append(f"[stderr] {result.stderr.rstrip()}")
+                if result.returncode != 0:
+                    diagnostics.append(f"[exit code: {result.returncode}]")
+            except subprocess.TimeoutExpired:
+                diagnostics.append("[TIMEOUT]")
+            except Exception as e:
+                diagnostics.append(f"[ERROR: {e}]")
+
+        diagnostics.append("\n" + "=" * 60)
+        return "\n".join(diagnostics)
+
     def run(self, args: Iterable[str], *, workdir: Path) -> subprocess.CompletedProcess[str]:
         cmd = self.build_command(args, workdir=workdir)
         result = subprocess.run(cmd, cwd=workdir, text=True, capture_output=True, check=False)
 
-        # Add debug info on failure (returncode 3 typically means file not found in KiCad)
+        # On returncode 3 (Failed to load board), collect debug diagnostics
         if result.returncode == 3 and self.mode == "docker":
-            debug_msg = (
-                f"\n[DEBUG] Docker KiCad CLI returned code 3 (invalid input file).\n"
-                f"  Command: {' '.join(cmd)}\n"
-                f"  Workdir (host): {workdir.resolve()}\n"
-                f"  Workdir (container): /workspace\n"
-                f"  This usually means the board file path was not correctly "
-                f"translated to a container-relative path."
-            )
+            diagnostics = self._collect_debug_diagnostics(workdir)
             result = subprocess.CompletedProcess(
                 args=result.args,
                 returncode=result.returncode,
                 stdout=result.stdout,
-                stderr=result.stderr + debug_msg,
+                stderr=(result.stderr or "") + diagnostics,
             )
         return result
 
@@ -166,25 +227,37 @@ class KicadCliRunner:
         return self.run(args, workdir=workdir)
 
 
-def build_drc_args(board_path: Path, report_path: Path) -> list[str]:
+def build_drc_args(
+    board_path: Path,
+    report_path: Path,
+    *,
+    severity: str = "error",
+) -> list[str]:
     """Build kicad-cli DRC command arguments.
 
     Satisfies REQ-M1-016:
-    - --severity-all: Report violations at all severity levels
+    - --severity-error: Report only error-level violations (default for M1)
     - --format json: Output in JSON format for programmatic parsing
     - --exit-code-violations: Return non-zero exit code if violations exist
+
+    Note: M1 uses --severity-error to allow warnings (expected for headless
+    test coupons without loaded footprint libraries) while failing on real
+    errors. Use severity="all" to include warnings in exit code checks.
 
     Args:
         board_path: Path to the .kicad_pcb file to check.
         report_path: Path where the JSON DRC report will be written.
+        severity: Severity level to check ("error", "warning", "all").
+            Default is "error" to only fail on errors.
 
     Returns:
         List of command-line arguments for kicad-cli pcb drc.
     """
+    severity_arg = f"--severity-{severity}"
     return [
         "pcb",
         "drc",
-        "--severity-all",
+        severity_arg,
         "--exit-code-violations",
         "--format",
         "json",

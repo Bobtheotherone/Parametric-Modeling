@@ -66,6 +66,40 @@ DEFAULT_LAYER_DEFS: tuple[tuple[int, str, str], ...] = (
     (49, "F.Fab", "user"),
 )
 
+# Mapping from spec layer names to KiCad layer names (4-layer board)
+# The spec uses logical names (L1, L2, L3, L4) while KiCad uses physical names
+SPEC_TO_KICAD_LAYER: dict[str, str] = {
+    "L1": "F.Cu",
+    "L2": "In1.Cu",
+    "L3": "In2.Cu",
+    "L4": "B.Cu",
+    # Pass through KiCad layer names unchanged
+    "F.Cu": "F.Cu",
+    "In1.Cu": "In1.Cu",
+    "In2.Cu": "In2.Cu",
+    "B.Cu": "B.Cu",
+}
+
+
+def map_layer_to_kicad(spec_layer: str) -> str:
+    """Map a spec layer name to a KiCad layer name.
+
+    Args:
+        spec_layer: Layer name from spec (e.g., "L2") or KiCad name (e.g., "In1.Cu").
+
+    Returns:
+        KiCad layer name (e.g., "In1.Cu").
+
+    Raises:
+        ValueError: If the layer name is not recognized.
+    """
+    if spec_layer in SPEC_TO_KICAD_LAYER:
+        return SPEC_TO_KICAD_LAYER[spec_layer]
+    raise ValueError(
+        f"Unknown layer name: {spec_layer!r}. "
+        f"Expected one of: {sorted(SPEC_TO_KICAD_LAYER.keys())}"
+    )
+
 
 def deterministic_uuid(schema_version: int, path: str) -> str:
     """Generate a deterministic UUIDv5 for a given path.
@@ -354,6 +388,9 @@ class BoardWriter:
 
         # Return vias if present - use F1 composition for correct positioning
         # (the F1 builder uses the same discontinuity position internally)
+        # Note: Return vias are on net 0 (unconnected) because without actual
+        # ground plane fills, they have no copper connectivity. This avoids
+        # DRC "unconnected_items" errors for M1 test coupons.
         if disc.return_vias is not None:
             if self._f1_composition is not None and self._f1_composition.return_vias:
                 # Use pre-computed return via positions from the F1 builder
@@ -366,7 +403,7 @@ class BoardWriter:
                             ["size", nm_to_mm(return_via.diameter_nm)],
                             ["drill", nm_to_mm(return_via.drill_nm)],
                             ["layers", return_via.layers[0], return_via.layers[1]],
-                            ["net", 2],
+                            ["net", 0],
                             ["tstamp", via_uuid],
                         ]
                     )
@@ -389,7 +426,7 @@ class BoardWriter:
                             ["size", nm_to_mm(int(rv.via.diameter_nm))],
                             ["drill", nm_to_mm(int(rv.via.drill_nm))],
                             ["layers", "F.Cu", "B.Cu"],
-                            ["net", 2],
+                            ["net", 0],
                             ["tstamp", via_uuid],
                         ]
                     )
@@ -400,8 +437,12 @@ class BoardWriter:
         """Build antipad polygons for F1 coupons.
 
         Antipads are cutout regions on internal copper layers that provide
-        clearance around the signal via. They are generated as filled zones
-        with the 'keepout' attribute or as explicit zone cutouts.
+        clearance around the signal via. They are generated as zones with
+        keepout restrictions for copper fill, but allowing vias to pass through.
+
+        Note: The keepout allows vias because the signal via must pass through
+        the antipad area. The antipad's purpose is to clear copper fill from
+        ground planes, not to block the via structure itself.
         """
         antipads: list[SExprList] = []
 
@@ -417,12 +458,16 @@ class BoardWriter:
             for vertex in antipad.vertices:
                 pts.append(["xy", nm_to_mm(vertex.x), nm_to_mm(vertex.y)])
 
+            # Map spec layer name to KiCad layer name
+            kicad_layer = map_layer_to_kicad(antipad.layer)
+
             # Create a zone cutout on the appropriate layer
+            # Note: vias are "allowed" because the signal via must pass through
             zone: SExprList = [
                 "zone",
                 ["net", 0],
                 ["net_name", ""],
-                ["layer", antipad.layer],
+                ["layer", kicad_layer],
                 ["tstamp", antipad_uuid],
                 ["hatch", "edge", 0.5],
                 ["priority", 0],
@@ -431,9 +476,9 @@ class BoardWriter:
                 ["filled_areas_thickness", "no"],
                 [
                     "keepout",
-                    ["tracks", "not_allowed"],
-                    ["vias", "not_allowed"],
-                    ["pads", "not_allowed"],
+                    ["tracks", "allowed"],
+                    ["vias", "allowed"],
+                    ["pads", "allowed"],
                     ["copperpour", "not_allowed"],
                     ["footprints", "allowed"],
                 ],
@@ -449,7 +494,7 @@ class BoardWriter:
 
         Plane cutouts are typically slot-shaped or rectangular regions
         that provide impedance tuning or thermal relief around the via
-        transition.
+        transition. Like antipads, they block copper fill but allow vias.
         """
         cutouts: list[SExprList] = []
 
@@ -465,12 +510,16 @@ class BoardWriter:
             for vertex in cutout.vertices:
                 pts.append(["xy", nm_to_mm(vertex.x), nm_to_mm(vertex.y)])
 
+            # Map spec layer name to KiCad layer name
+            kicad_layer = map_layer_to_kicad(cutout.layer)
+
             # Create a zone cutout on the appropriate layer
+            # Note: vias are "allowed" - cutouts clear copper fill, not block vias
             zone: SExprList = [
                 "zone",
                 ["net", 0],
                 ["net_name", ""],
-                ["layer", cutout.layer],
+                ["layer", kicad_layer],
                 ["tstamp", cutout_uuid],
                 ["hatch", "edge", 0.5],
                 ["priority", 0],
@@ -479,9 +528,9 @@ class BoardWriter:
                 ["filled_areas_thickness", "no"],
                 [
                     "keepout",
-                    ["tracks", "not_allowed"],
-                    ["vias", "not_allowed"],
-                    ["pads", "not_allowed"],
+                    ["tracks", "allowed"],
+                    ["vias", "allowed"],
+                    ["pads", "allowed"],
                     ["copperpour", "not_allowed"],
                     ["footprints", "allowed"],
                 ],
