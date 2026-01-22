@@ -31,6 +31,14 @@ from .batch_runner import (
     load_batch_result_summary,
     write_batch_result,
 )
+from .gpu_batch_runner import (
+    GPUBatchConfig,
+    GPUBatchMode,
+    GPUBatchSimulationRunner,
+    check_cuda_available,
+    detect_nvidia_gpus,
+    write_gpu_batch_result,
+)
 from .convergence import validate_simulation_convergence
 from .geometry import (
     BoardOutlineSpec,
@@ -218,6 +226,55 @@ def build_parser() -> argparse.ArgumentParser:
         const="-",
         default=None,
         help="Output batch result as JSON",
+    )
+
+    # GPU batch arguments (REQ-M2-010)
+    sim_batch.add_argument(
+        "--use-gpu",
+        action="store_true",
+        help="Enable GPU acceleration for batch simulations",
+    )
+    sim_batch.add_argument(
+        "--gpu-mode",
+        choices=("auto", "force_gpu", "force_cpu", "hybrid"),
+        default="auto",
+        help="GPU batching mode: auto (use GPU if available), force_gpu (require GPU), "
+        "force_cpu (CPU only), hybrid (use both)",
+    )
+    sim_batch.add_argument(
+        "--gpu-devices",
+        type=str,
+        default=None,
+        help="Comma-separated list of GPU device IDs to use (e.g., '0,1,2')",
+    )
+    sim_batch.add_argument(
+        "--vram-per-sim",
+        type=int,
+        default=2048,
+        help="Estimated VRAM per simulation in MB (default: 2048)",
+    )
+    sim_batch.add_argument(
+        "--gpu-memory-fraction",
+        type=float,
+        default=0.8,
+        help="Fraction of GPU memory to use (0.1-1.0, default: 0.8)",
+    )
+    sim_batch.add_argument(
+        "--max-sims-per-gpu",
+        type=int,
+        default=4,
+        help="Maximum concurrent simulations per GPU (default: 4)",
+    )
+    sim_batch.add_argument(
+        "--no-gpu-fallback",
+        action="store_true",
+        help="Disable CPU fallback on GPU failure",
+    )
+    sim_batch.add_argument(
+        "--oom-retries",
+        type=int,
+        default=2,
+        help="Number of OOM retries before fallback (default: 2)",
     )
 
     # sim status
@@ -537,7 +594,6 @@ def _cmd_sim_batch(args: argparse.Namespace) -> int:
     )
 
     sim_runner = _create_sim_runner(args)
-    batch_runner = BatchSimulationRunner(sim_runner, batch_config)
 
     # Progress callback
     def progress_callback(progress: Any) -> None:
@@ -548,25 +604,174 @@ def _cmd_sim_batch(args: argparse.Namespace) -> int:
             progress.percent_complete,
         )
 
-    # Run batch
-    logger.info("Starting batch of %d simulations", len(jobs))
-    batch_result = batch_runner.run(jobs, progress_callback=progress_callback)
+    # Check if GPU mode is requested (REQ-M2-010)
+    use_gpu_batch = getattr(args, "use_gpu", False)
+    gpu_mode_str = getattr(args, "gpu_mode", "auto")
 
-    # Write batch result
-    result_path = output_base / "batch_result.json"
-    write_batch_result(batch_result, result_path)
-    logger.info("Batch result written to %s", result_path)
+    if use_gpu_batch or gpu_mode_str != "auto":
+        # GPU batch execution (REQ-M2-010)
+        return _run_gpu_batch(
+            jobs=jobs,
+            sim_runner=sim_runner,
+            batch_config=batch_config,
+            output_base=output_base,
+            args=args,
+            progress_callback=progress_callback,
+        )
+    else:
+        # Standard CPU batch execution
+        batch_runner = BatchSimulationRunner(sim_runner, batch_config)
+
+        # Run batch
+        logger.info("Starting batch of %d simulations", len(jobs))
+        batch_result = batch_runner.run(jobs, progress_callback=progress_callback)
+
+        # Write batch result
+        result_path = output_base / "batch_result.json"
+        write_batch_result(batch_result, result_path)
+        logger.info("Batch result written to %s", result_path)
+
+        # Build output payload
+        payload = batch_result.to_dict()
+        payload["result_path"] = str(result_path)
+
+        if args.json:
+            _emit_json(payload, args.json)
+        else:
+            _print_batch_result(batch_result)
+
+        return 0 if batch_result.all_passed else 1
+
+
+def _run_gpu_batch(
+    jobs: list[SimulationJob],
+    sim_runner: SimulationRunner,
+    batch_config: BatchConfig,
+    output_base: Path,
+    args: argparse.Namespace,
+    progress_callback: Any,
+) -> int:
+    """Run GPU-accelerated batch simulations (REQ-M2-010).
+
+    Args:
+        jobs: List of simulation jobs.
+        sim_runner: SimulationRunner instance.
+        batch_config: Batch configuration.
+        output_base: Output directory.
+        args: Command line arguments.
+        progress_callback: Progress callback function.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    # Parse GPU device IDs if specified
+    gpu_device_ids: tuple[int, ...] | None = None
+    if getattr(args, "gpu_devices", None):
+        try:
+            gpu_device_ids = tuple(int(d.strip()) for d in args.gpu_devices.split(","))
+        except ValueError:
+            sys.stderr.write(f"Error: Invalid GPU device IDs: {args.gpu_devices}\n")
+            return 1
+
+    # Map GPU mode string to enum
+    gpu_mode_map = {
+        "auto": GPUBatchMode.AUTO,
+        "force_gpu": GPUBatchMode.FORCE_GPU,
+        "force_cpu": GPUBatchMode.FORCE_CPU,
+        "hybrid": GPUBatchMode.HYBRID,
+    }
+    gpu_mode = gpu_mode_map.get(getattr(args, "gpu_mode", "auto"), GPUBatchMode.AUTO)
+
+    # Configure GPU batch runner
+    gpu_config = GPUBatchConfig(
+        mode=gpu_mode,
+        device_ids=gpu_device_ids,
+        vram_per_sim_mb=getattr(args, "vram_per_sim", 2048),
+        gpu_memory_fraction=getattr(args, "gpu_memory_fraction", 0.8),
+        max_sims_per_gpu=getattr(args, "max_sims_per_gpu", 4),
+        fallback_to_cpu=not getattr(args, "no_gpu_fallback", False),
+        oom_retry_count=getattr(args, "oom_retries", 2),
+        track_utilization=True,
+    )
+
+    # Check GPU availability
+    if gpu_config.mode != GPUBatchMode.FORCE_CPU:
+        detected_gpus = detect_nvidia_gpus()
+        if detected_gpus:
+            logger.info(
+                "GPU batch mode enabled with %d GPU(s): %s",
+                len(detected_gpus),
+                ", ".join(f"{g.device_name} ({g.device_id})" for g in detected_gpus),
+            )
+        else:
+            if gpu_config.mode == GPUBatchMode.FORCE_GPU:
+                sys.stderr.write("Error: No GPUs detected but --gpu-mode=force_gpu\n")
+                return 1
+            logger.warning("No GPUs detected, falling back to CPU execution")
+    else:
+        logger.info("GPU batch mode disabled (--gpu-mode=force_cpu)")
+
+    # Create GPU batch runner
+    gpu_batch_runner = GPUBatchSimulationRunner(
+        sim_runner,
+        batch_config,
+        gpu_config,
+    )
+
+    # Run GPU batch
+    logger.info("Starting GPU batch of %d simulations", len(jobs))
+    gpu_result = gpu_batch_runner.run(jobs, progress_callback=progress_callback)
+
+    # Write GPU batch result
+    result_path = output_base / "gpu_batch_result.json"
+    write_gpu_batch_result(gpu_result, result_path)
+    logger.info("GPU batch result written to %s", result_path)
 
     # Build output payload
-    payload = batch_result.to_dict()
+    payload = gpu_result.to_dict()
     payload["result_path"] = str(result_path)
 
     if args.json:
         _emit_json(payload, args.json)
     else:
-        _print_batch_result(batch_result)
+        _print_gpu_batch_result(gpu_result)
 
-    return 0 if batch_result.all_passed else 1
+    return 0 if gpu_result.batch_result.all_passed else 1
+
+
+def _print_gpu_batch_result(result: Any) -> None:
+    """Print GPU batch result in human-readable format."""
+    batch = result.batch_result
+    print("GPU Batch simulation completed:")
+    print(f"  Total jobs: {len(batch.jobs)}")
+    print(f"  Completed: {batch.n_completed}")
+    print(f"  Failed: {batch.n_failed}")
+    print(f"  Skipped: {batch.n_skipped}")
+    print(f"  Success rate: {batch.success_rate:.1f}%")
+    print(f"  Total time: {batch.total_time_sec:.2f}s")
+
+    # GPU-specific stats
+    print(f"\nGPU Execution Stats:")
+    print(f"  GPU jobs: {result.n_gpu_jobs}")
+    print(f"  CPU fallback jobs: {result.n_cpu_fallback_jobs}")
+    print(f"  OOM retries: {result.n_oom_retries}")
+    print(f"  OOM failures: {result.n_oom_failures}")
+
+    # GPU utilization metrics
+    if result.gpu_metrics:
+        print(f"\nGPU Utilization:")
+        for device_id, metrics in result.gpu_metrics.items():
+            print(f"  GPU {device_id} ({metrics.device_name}):")
+            print(f"    Jobs run: {metrics.total_jobs_run}")
+            print(f"    Avg utilization: {metrics.avg_utilization_percent:.1f}%")
+            print(f"    Peak utilization: {metrics.max_utilization_percent:.1f}%")
+            print(f"    Avg memory used: {metrics.avg_memory_used_mb:.0f} MB")
+            print(f"    Peak memory used: {metrics.max_memory_used_mb} MB")
+
+    if batch.config.validate_convergence:
+        print(f"\nConvergence:")
+        print(f"  Passed: {batch.n_convergence_passed}")
+        print(f"  Failed: {batch.n_convergence_failed}")
 
 
 def _cmd_sim_status(args: argparse.Namespace) -> int:
