@@ -256,9 +256,9 @@ class GCResult:
     bytes_total_after: int
     pinned_protected: int
     descendant_protected: int
-    ancestor_protected: int
     dvc_gc_ran: bool
     dvc_gc_output: str | None
+    ancestor_protected: int = 0
     errors: list[str] = field(default_factory=list)
     deleted_artifacts: list[str] = field(default_factory=list)
     protected_artifacts: list[str] = field(default_factory=list)

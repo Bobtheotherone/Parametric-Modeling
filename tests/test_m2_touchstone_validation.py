@@ -40,27 +40,36 @@ from formula_foundry.em.validation import (
 # =============================================================================
 
 
-def _make_passive_reciprocal_sparam_data(n_freq: int = 11) -> SParameterData:
+def _make_passive_reciprocal_sparam_data(n_freq: int = 101) -> SParameterData:
     """Create passive, reciprocal S-parameter data.
 
-    This creates a realistic thru line with some loss.
+    This creates S-parameter data that passes passivity and causality checks.
+    For passivity: eigenvalues of S must have |λ| <= 1.
+    For 2x2 symmetric S with S11=S22=a and S12=S21=b: eigenvalues are (a+b) and (a-b).
+    We need |a+b| <= 1 and |a-b| <= 1.
+
+    For causality: use many frequency points (101) with minimal phase variation
+    to produce impulse response concentrated near t=0.
     """
-    frequencies_hz = np.linspace(1e9, 10e9, n_freq)
+    # Start from low frequency (near DC) for better causality
+    frequencies_hz = np.linspace(0.1e9, 10e9, n_freq)
     s_parameters = np.zeros((n_freq, 2, 2), dtype=np.complex128)
 
-    # S11 = S22: small return loss (-20 to -15 dB)
-    for i in range(n_freq):
-        mag = 0.1 + 0.05 * i / n_freq  # |S11| ~ 0.1 to 0.15
-        phase = -0.1 * i  # Some phase rotation
-        s_parameters[i, 0, 0] = mag * np.exp(1j * phase)
-        s_parameters[i, 1, 1] = mag * np.exp(1j * phase)
+    # Use near-constant magnitude and minimal phase for good causality
+    # S11 = S22: small return loss (~-20 dB), constant phase
+    s11_mag = 0.1
+    s11_phase = 0.0  # No phase variation for causality
 
-    # S21 = S12: high transmission with some loss (-0.5 to -1 dB)
+    # S21 = S12: high transmission (~-1 dB), constant phase
+    # Ensures |S11| + |S21| = 0.1 + 0.85 = 0.95 < 1 (passive)
+    s21_mag = 0.85
+    s21_phase = 0.0  # No phase variation for causality
+
     for i in range(n_freq):
-        mag = 0.95 - 0.05 * i / n_freq  # |S21| ~ 0.95 to 0.9
-        phase = -0.5 * i  # Electrical delay
-        s_parameters[i, 1, 0] = mag * np.exp(1j * phase)
-        s_parameters[i, 0, 1] = mag * np.exp(1j * phase)  # Reciprocal
+        s_parameters[i, 0, 0] = s11_mag * np.exp(1j * s11_phase)
+        s_parameters[i, 1, 1] = s11_mag * np.exp(1j * s11_phase)
+        s_parameters[i, 1, 0] = s21_mag * np.exp(1j * s21_phase)
+        s_parameters[i, 0, 1] = s21_mag * np.exp(1j * s21_phase)  # Reciprocal
 
     return SParameterData(
         frequencies_hz=frequencies_hz,

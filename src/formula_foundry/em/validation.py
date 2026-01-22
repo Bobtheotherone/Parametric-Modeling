@@ -443,6 +443,7 @@ def check_causality(
     """
     n_freq = sparam_data.n_frequencies
     n_ports = sparam_data.n_ports
+    frequencies_hz = sparam_data.frequencies_hz
 
     # Use S21 for 2-port, or S11 for 1-port
     if n_ports >= 2:
@@ -450,31 +451,50 @@ def check_causality(
     else:
         s_response = sparam_data.s11()
 
-    # Compute impulse response via inverse FFT
-    # Pad to improve resolution
-    n_fft = max(4 * n_freq, 1024)
-    s_padded = np.zeros(n_fft, dtype=np.complex128)
-    s_padded[:n_freq] = s_response
+    # For causality check, we construct a proper frequency-domain signal
+    # that can be inverse-transformed to a real time-domain signal.
+    # We need to:
+    # 1. Interpolate onto a regular frequency grid starting at DC
+    # 2. Apply Hermitian symmetry for negative frequencies
+    # 3. Compute IFFT and check pre-response energy
 
-    # Inverse FFT to get impulse response
-    impulse_response = np.fft.ifft(s_padded)
+    f_min = float(frequencies_hz[0])
+    f_max = float(frequencies_hz[-1])
+    df = (f_max - f_min) / (n_freq - 1) if n_freq > 1 else f_max
 
-    # For a causal system, the response should be zero for negative time
-    # In the FFT convention, negative time corresponds to indices > n_fft/2
+    # Create FFT grid: from DC to beyond f_max, with Nyquist at 2*f_max
+    n_fft = max(4 * n_freq, 512)
+    f_nyquist = 2 * f_max
+    fft_df = f_nyquist / (n_fft // 2)
+
+    # Interpolate S-parameter onto FFT grid (positive frequencies)
+    fft_freqs_pos = np.arange(n_fft // 2 + 1) * fft_df
+    s_interp = np.interp(fft_freqs_pos, frequencies_hz, s_response, left=s_response[0], right=s_response[-1])
+
+    # Build full spectrum with Hermitian symmetry
+    s_full = np.zeros(n_fft, dtype=np.complex128)
+    s_full[0] = np.real(s_interp[0])  # DC is real
+    s_full[1:n_fft // 2] = s_interp[1:-1]
+    if n_fft % 2 == 0:
+        s_full[n_fft // 2] = np.real(s_interp[-1])  # Nyquist is real
+    # Negative frequencies: conjugate symmetry
+    s_full[n_fft // 2 + 1:] = np.conj(s_full[n_fft // 2 - 1:0:-1])
+
+    # Inverse FFT to get impulse response (should be real)
+    impulse_response = np.fft.ifft(s_full)
+    impulse_real = np.real(impulse_response)
+
+    # For a causal system, the second half (negative time) should have minimal energy
     mid_point = n_fft // 2
-    pre_response = impulse_response[mid_point:]  # t < 0 region
-    main_response = impulse_response[:mid_point]  # t >= 0 region
-
-    # Compute energy in pre-response and total
-    pre_response_energy = float(np.sum(np.abs(pre_response) ** 2))
-    total_energy = float(np.sum(np.abs(impulse_response) ** 2))
+    pre_response_energy = float(np.sum(impulse_real[mid_point:] ** 2))
+    total_energy = float(np.sum(impulse_real ** 2))
 
     if total_energy > 0:
         pre_response_ratio = pre_response_energy / total_energy
     else:
         pre_response_ratio = 0.0
 
-    max_pre_response = float(np.max(np.abs(pre_response)))
+    max_pre_response = float(np.max(np.abs(impulse_real[mid_point:])))
 
     # Determine status
     is_causal = pre_response_ratio <= tolerance
