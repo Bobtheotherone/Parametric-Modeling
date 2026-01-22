@@ -12,6 +12,12 @@ from .batch_runner import (
     load_batch_result_summary,
     write_batch_result,
 )
+from .oracle_adapter import (
+    OpenEMSAdapter,
+    OracleAdapter,
+    SimulationSetup,
+    ThirdsRuleConfig,
+)
 from .cli_main import build_parser
 from .convergence import (
     ConvergenceCheckResult,
@@ -177,6 +183,11 @@ from .sim_config_validation import (
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 
 __all__ = [
+    # OracleAdapter (REQ-M2-001, REQ-M2-002)
+    "OpenEMSAdapter",
+    "OracleAdapter",
+    "SimulationSetup",
+    "ThirdsRuleConfig",
     # Toolchain (existing)
     "DEFAULT_OPENEMS_LOCKFILE_PATH",
     "DEFAULT_OPENEMS_TOOLCHAIN_PATH",
