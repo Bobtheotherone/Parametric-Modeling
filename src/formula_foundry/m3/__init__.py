@@ -38,6 +38,18 @@ from formula_foundry.m3.lineage_graph import (
     LineageSubgraph,
     NodeNotFoundError,
 )
+from formula_foundry.m3.mlflow_config import (
+    M3RunContext,
+    M3RunMetadata,
+    M3Tracker,
+    M3TrackingError,
+    create_m3_run,
+    get_m3_tracker,
+    log_m3_artifact,
+    log_m3_metric,
+    log_m3_metrics,
+    setup_mlflow_environment,
+)
 from formula_foundry.m3.registry import ArtifactRegistry
 
 __all__ = [
@@ -64,10 +76,20 @@ __all__ = [
     "LineagePath",
     "LineageReference",
     "LineageSubgraph",
+    "M3RunContext",
+    "M3RunMetadata",
+    "M3Tracker",
+    "M3TrackingError",
     "NodeNotFoundError",
     "ParquetNotAvailableError",
     "Provenance",
     "SplitDefinition",
     "compute_manifest_hash",
     "compute_spec_id",
+    "create_m3_run",
+    "get_m3_tracker",
+    "log_m3_artifact",
+    "log_m3_metric",
+    "log_m3_metrics",
+    "setup_mlflow_environment",
 ]
