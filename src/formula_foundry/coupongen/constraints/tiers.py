@@ -5,9 +5,11 @@ This module implements a hierarchical constraint validation system:
 - Tier 1: Derived scalar constraints (computed from multiple parameters)
 - Tier 2: Analytic spatial constraints (geometric relationships)
 - Tier 3: Exact geometry collision detection
+- Tier 4: KiCad DRC external validation (REQ-M1-016)
 
 REQ-M1-008: Constraint system must support tiered validation
 REQ-M1-009: REJECT mode must fail with constraint IDs and reasons
+REQ-M1-016: DRC wrapper with JSON report parsing and Tier 4 integration
 """
 
 from __future__ import annotations
@@ -20,9 +22,9 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-ConstraintTier = Literal["T0", "T1", "T2", "T3"]
+ConstraintTier = Literal["T0", "T1", "T2", "T3", "T4"]
 
-_TIERS: tuple[ConstraintTier, ...] = ("T0", "T1", "T2", "T3")
+_TIERS: tuple[ConstraintTier, ...] = ("T0", "T1", "T2", "T3", "T4")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +34,7 @@ class ConstraintResult:
     Attributes:
         constraint_id: Unique identifier (e.g., "T0_TRACE_WIDTH_MIN")
         description: Human-readable description of the constraint
-        tier: Constraint tier (T0, T1, T2, T3)
+        tier: Constraint tier (T0, T1, T2, T3, T4)
         value: Actual value being checked
         limit: Limit value for the constraint
         margin: value - limit (positive means passing for min constraints)
