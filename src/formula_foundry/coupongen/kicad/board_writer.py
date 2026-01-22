@@ -221,8 +221,6 @@ class BoardWriter:
         # Add vias if discontinuity present
         if self.spec.discontinuity is not None:
             elements.extend(self._build_vias())
-            # Add stub tracks for return vias to satisfy DRC
-            elements.extend(self._build_return_via_stubs())
 
         # Add antipads and cutouts for F1 coupons
         if self._f1_composition is not None:
@@ -247,26 +245,12 @@ class BoardWriter:
         return result
 
     def _build_nets(self) -> list[SExprList]:
-        """Build net declarations.
-
-        For F1 coupons with return vias, each return via gets its own net
-        to avoid unconnected_items errors between separate return vias.
-        """
-        nets = [
+        """Build net declarations."""
+        return [
             ["net", 0, ""],
             ["net", 1, "SIG"],
             ["net", 2, "GND"],
         ]
-
-        # Add nets for return vias (one per via)
-        disc = self.spec.discontinuity
-        if disc is not None and disc.return_vias is not None:
-            count = disc.return_vias.count
-            for i in range(count):
-                net_id = 3 + i
-                nets.append(["net", net_id, f"RVIA{i}"])
-
-        return nets
 
     def _build_outline(self) -> list[SExprList]:
         """Build board outline as gr_rect on Edge.Cuts layer.
@@ -465,16 +449,14 @@ class BoardWriter:
 
         # Return vias if present - use F1 composition for correct positioning
         # (the F1 builder uses the same discontinuity position internally)
-        # Return vias use individual nets (one per via) to avoid unconnected_items
-        # errors while still satisfying via_dangling DRC checks with stub tracks.
+        # Note: Return vias are on net 0 (unconnected) because without actual
+        # ground plane fills, they have no copper connectivity. This avoids
+        # DRC "unconnected_items" errors for M1 test coupons.
         if disc.return_vias is not None:
             if self._f1_composition is not None and self._f1_composition.return_vias:
                 # Use pre-computed return via positions from the F1 builder
                 for i, return_via in enumerate(self._f1_composition.return_vias):
                     via_uuid = self._indexed_uuid("via.return", i)
-                    # Each return via gets its own net (3, 4, 5, ...) to avoid
-                    # unconnected_items errors between separate return vias
-                    return_net_id = 3 + i
                     vias.append(
                         [
                             "via",
@@ -482,7 +464,7 @@ class BoardWriter:
                             ["size", nm_to_mm(return_via.diameter_nm)],
                             ["drill", nm_to_mm(return_via.drill_nm)],
                             ["layers", return_via.layers[0], return_via.layers[1]],
-                            ["net", return_net_id],
+                            ["net", 0],
                             ["tstamp", via_uuid],
                         ]
                     )
@@ -497,7 +479,6 @@ class BoardWriter:
                     vx = center_x + int(radius * math.cos(angle))
                     vy = center_y + int(radius * math.sin(angle))
                     via_uuid = self._indexed_uuid("via.return", i)
-                    return_net_id = 3 + i
 
                     vias.append(
                         [
@@ -506,72 +487,12 @@ class BoardWriter:
                             ["size", nm_to_mm(int(rv.via.diameter_nm))],
                             ["drill", nm_to_mm(int(rv.via.drill_nm))],
                             ["layers", "F.Cu", "B.Cu"],
-                            ["net", return_net_id],
+                            ["net", 0],
                             ["tstamp", via_uuid],
                         ]
                     )
 
         return vias
-
-    def _build_return_via_stubs(self) -> list[SExprList]:
-        """Build minimal stub tracks for return vias to satisfy DRC.
-
-        Return vias span F.Cu to B.Cu but without ground plane fills, they
-        would trigger via_dangling warnings. These minimal stubs provide
-        copper on both layers at each return via position, making the
-        vias DRC-clean without requiring full ground plane fills.
-        """
-        stubs: list[SExprList] = []
-        disc = self.spec.discontinuity
-        lp = self._layout_plan
-
-        if disc is None or disc.return_vias is None or not lp.has_discontinuity:
-            return stubs
-
-        center_x = lp.x_disc_nm
-        assert center_x is not None
-        center_y = lp.y_centerline_nm
-
-        # Get return via positions
-        if self._f1_composition is not None and self._f1_composition.return_vias:
-            positions = [
-                (rv.position.x, rv.position.y)
-                for rv in self._f1_composition.return_vias
-            ]
-            stub_width_nm = self._f1_composition.return_vias[0].diameter_nm
-        else:
-            rv = disc.return_vias
-            radius = int(rv.radius_nm)
-            positions = [
-                (
-                    center_x + int(radius * math.cos(2 * math.pi * i / rv.count)),
-                    center_y + int(radius * math.sin(2 * math.pi * i / rv.count)),
-                )
-                for i in range(rv.count)
-            ]
-            stub_width_nm = int(rv.via.diameter_nm)
-
-        # Create short stub tracks on both F.Cu and B.Cu at each return via position
-        # A zero-length track isn't valid, so we create a minimal 1um track
-        # Each return via has its own net to avoid unconnected_items errors
-        stub_length_nm = 1000  # 1um stub length
-        for layer in ["F.Cu", "B.Cu"]:
-            for i, (vx, vy) in enumerate(positions):
-                stub_uuid = self._indexed_uuid(f"stub.return.{layer}", i)
-                return_net_id = 3 + i  # Same net as corresponding return via
-                stubs.append(
-                    [
-                        "segment",
-                        ["start", nm_to_mm(vx - stub_length_nm // 2), nm_to_mm(vy)],
-                        ["end", nm_to_mm(vx + stub_length_nm // 2), nm_to_mm(vy)],
-                        ["width", nm_to_mm(stub_width_nm)],
-                        ["layer", layer],
-                        ["net", return_net_id],
-                        ["tstamp", stub_uuid],
-                    ]
-                )
-
-        return stubs
 
     def _build_antipads(self) -> list[SExprList]:
         """Build antipad polygons for F1 coupons.
