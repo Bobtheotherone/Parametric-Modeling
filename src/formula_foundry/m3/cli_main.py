@@ -579,9 +579,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Verify registry consistency (ensure registry matches manifests)",
     )
     verify_parser.add_argument(
+        "--store",
+        action="store_true",
+        dest="check_store",
+        help="Verify store integrity (directory structure, file sizes)",
+    )
+    verify_parser.add_argument(
+        "--orphans",
+        action="store_true",
+        dest="check_orphans",
+        help="Detect orphan artifacts (not referenced by any dataset or pinned)",
+    )
+    verify_parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        dest="check_pipeline",
+        help="Verify pipeline cache validity (requires DVC)",
+    )
+    verify_parser.add_argument(
+        "--gc-check",
+        action="store_true",
+        dest="check_gc",
+        help="Run GC dry-run and verify pinned objects are preserved",
+    )
+    verify_parser.add_argument(
         "--full",
         action="store_true",
-        help="Run all verification checks (hash, lineage, manifest, registry)",
+        help="Run all verification checks (hash, lineage, manifest, registry, store, orphans)",
     )
     verify_parser.add_argument(
         "--repair",
@@ -3008,17 +3032,25 @@ def cmd_verify(
     check_lineage: bool,
     check_manifest: bool,
     check_registry: bool,
-    full: bool,
-    repair: bool,
-    quiet: bool,
+    check_store: bool = False,
+    check_orphans: bool = False,
+    check_pipeline: bool = False,
+    check_gc: bool = False,
+    full: bool = False,
+    repair: bool = False,
+    quiet: bool = False,
 ) -> int:
     """Verify artifact integrity: hashes, lineage consistency, and metadata validation.
 
-    This command performs comprehensive integrity verification:
+    This command performs comprehensive integrity verification per REQ-M3-009:
     1. Hash verification: Recompute content hashes and compare with stored digests
     2. Lineage consistency: Verify all referenced input artifacts exist
     3. Manifest validation: Check manifest structure against artifact.v1 schema
     4. Registry consistency: Ensure registry entries match actual manifests
+    5. Store integrity: Verify directory structure and file sizes
+    6. Orphan detection: Find artifacts not referenced by datasets or pinned
+    7. Pipeline cache validity: Verify DVC pipeline cache consistency
+    8. GC dry-run: Ensure pinned objects are preserved during garbage collection
 
     Args:
         artifact_id: Artifact ID to verify (if None, verifies all).
@@ -3029,6 +3061,10 @@ def cmd_verify(
         check_lineage: If True, check lineage consistency.
         check_manifest: If True, validate manifest schema.
         check_registry: If True, check registry consistency.
+        check_store: If True, verify store integrity (sizes, structure).
+        check_orphans: If True, detect orphan artifacts.
+        check_pipeline: If True, verify pipeline cache validity.
+        check_gc: If True, run GC dry-run validation.
         full: If True, run all verification checks.
         repair: If True, attempt to repair issues.
         quiet: If True, suppress non-error output.
@@ -3053,13 +3089,24 @@ def cmd_verify(
         do_lineage = True
         do_manifest = True
         do_registry = True
+        do_store = True
+        do_orphans = True
+        do_pipeline = False  # Pipeline check requires DVC and is expensive, not included in --full
+        do_gc = False  # GC check is expensive, not included in --full
     else:
         # Default: just hash verification unless something else specified
-        any_explicit = check_hash or check_lineage or check_manifest or check_registry
+        any_explicit = (
+            check_hash or check_lineage or check_manifest or check_registry
+            or check_store or check_orphans or check_pipeline or check_gc
+        )
         do_hash = check_hash or (not any_explicit and not skip_hash)
         do_lineage = check_lineage
         do_manifest = check_manifest
         do_registry = check_registry
+        do_store = check_store
+        do_orphans = check_orphans
+        do_pipeline = check_pipeline
+        do_gc = check_gc
 
     if skip_hash:
         do_hash = False
@@ -3103,30 +3150,15 @@ def cmd_verify(
     else:
         artifact_ids = store.list_manifests()
 
+    # Initialize result counters
+    verify_results: list[dict[str, Any]] = []
+    total_passed = 0
+    total_warnings = 0
+    total_errors = 0
+    repaired_count = 0
+
     if not artifact_ids:
-        if output_format == "json":
-            report = {
-                "schema_version": 1,
-                "generated_utc": _now_utc_iso(),
-                "verification_type": "m3_verify",
-                "checks_performed": {
-                    "hash": do_hash,
-                    "lineage": do_lineage,
-                    "manifest": do_manifest,
-                    "registry": do_registry,
-                },
-                "total_artifacts": 0,
-                "passed": 0,
-                "warnings": 0,
-                "errors": 0,
-                "artifacts": [],
-            }
-            sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        else:
-            _log("No artifacts found to verify.", suppress_log)
-        graph.close()
-        registry.close()
-        return 0
+        _log("No artifacts found to verify.", suppress_log)
 
     # Define valid types and roles for schema validation
     valid_types: set[str] = {
@@ -3173,13 +3205,6 @@ def cmd_verify(
         "supersedes",
     }
 
-    # Prepare verification results
-    verify_results: list[dict[str, Any]] = []
-    total_passed = 0
-    total_warnings = 0
-    total_errors = 0
-    repaired_count = 0
-
     _log(f"Verifying {len(artifact_ids)} artifact(s)...", suppress_log)
     checks_desc = []
     if do_hash:
@@ -3190,6 +3215,14 @@ def cmd_verify(
         checks_desc.append("manifest")
     if do_registry:
         checks_desc.append("registry")
+    if do_store:
+        checks_desc.append("store")
+    if do_orphans:
+        checks_desc.append("orphans")
+    if do_pipeline:
+        checks_desc.append("pipeline")
+    if do_gc:
+        checks_desc.append("gc")
     _log(f"Checks: {', '.join(checks_desc)}", suppress_log)
     _log("", suppress_log)
 
@@ -3345,6 +3378,48 @@ def cmd_verify(
                 if registry_check["issues"] and not registry_check.get("repaired"):
                     result["issues"].extend(registry_check["issues"])
 
+            # Check 5: Store integrity (file size verification)
+            if do_store:
+                store_check: dict[str, Any] = {"passed": True, "issues": []}
+
+                # Verify content file exists and size matches
+                try:
+                    object_path = store._object_path(manifest.content_hash.digest)
+                    if not object_path.exists():
+                        store_check["passed"] = False
+                        store_check["issues"].append("Content file missing from object store")
+                        has_error = True
+                    else:
+                        actual_size = object_path.stat().st_size
+                        if actual_size != manifest.byte_size:
+                            store_check["passed"] = False
+                            store_check["issues"].append(
+                                f"Size mismatch: manifest says {manifest.byte_size} bytes, "
+                                f"actual file is {actual_size} bytes"
+                            )
+                            has_error = True
+                        else:
+                            store_check["size_verified"] = True
+                            store_check["byte_size"] = actual_size
+
+                    # Verify manifest file exists
+                    manifest_path = store._manifest_path(art_id)
+                    if not manifest_path.exists():
+                        store_check["passed"] = False
+                        store_check["issues"].append("Manifest file missing")
+                        has_error = True
+                    else:
+                        store_check["manifest_exists"] = True
+
+                except Exception as e:
+                    store_check["passed"] = False
+                    store_check["issues"].append(f"Store integrity check error: {e}")
+                    has_error = True
+
+                result["checks"]["store"] = store_check
+                if not store_check["passed"]:
+                    result["issues"].extend(store_check["issues"])
+
         except ArtifactNotFoundError:
             result["status"] = "error"
             result["issues"].append(f"Manifest not found for artifact: {art_id}")
@@ -3367,6 +3442,158 @@ def cmd_verify(
 
         verify_results.append(result)
 
+    # Global checks (not per-artifact)
+    global_checks: dict[str, Any] = {}
+
+    # Check 6: Orphan artifact detection
+    if do_orphans:
+        orphan_check: dict[str, Any] = {"passed": True, "orphan_count": 0, "orphan_ids": []}
+
+        try:
+            # Get all artifact IDs
+            all_artifacts = set(store.list_manifests())
+
+            # Get artifacts referenced by datasets
+            datasets_dir = data_dir / "datasets"
+            referenced_by_dataset: set[str] = set()
+            if datasets_dir.exists():
+                for dataset_file in datasets_dir.glob("*.json"):
+                    try:
+                        dataset_data = json.loads(dataset_file.read_text(encoding="utf-8"))
+                        members = dataset_data.get("members", {}).get("artifacts", [])
+                        for member in members:
+                            referenced_by_dataset.add(member.get("artifact_id", ""))
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
+            # Get pinned artifacts from GC config
+            pinned_artifacts: set[str] = set()
+            gc_config_path = data_dir / "gc_config.json"
+            if gc_config_path.exists():
+                try:
+                    gc_config = json.loads(gc_config_path.read_text(encoding="utf-8"))
+                    pinned_artifacts.update(gc_config.get("pinned_artifacts", []))
+                    # Also get artifacts from pinned runs
+                    pinned_runs = gc_config.get("pinned_runs", [])
+                    for art_id in all_artifacts:
+                        try:
+                            manifest = store.get_manifest(art_id)
+                            if manifest.lineage.run_id in pinned_runs:
+                                pinned_artifacts.add(art_id)
+                        except Exception:
+                            pass
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            # Find orphans (not referenced and not pinned)
+            orphan_ids = all_artifacts - referenced_by_dataset - pinned_artifacts
+
+            # Filter: artifacts that are inputs to other artifacts are not orphans
+            for art_id in list(orphan_ids):
+                try:
+                    # Check if any other artifact references this one as input
+                    edges = graph.get_edges_from(art_id)
+                    if edges:
+                        orphan_ids.discard(art_id)
+                except Exception:
+                    pass
+
+            if orphan_ids:
+                orphan_check["passed"] = False
+                orphan_check["orphan_count"] = len(orphan_ids)
+                orphan_check["orphan_ids"] = sorted(orphan_ids)[:20]  # Limit to 20 for readability
+                if len(orphan_ids) > 20:
+                    orphan_check["more_orphans"] = len(orphan_ids) - 20
+                total_errors += 1
+
+        except Exception as e:
+            orphan_check["passed"] = False
+            orphan_check["error"] = str(e)
+            total_errors += 1
+
+        global_checks["orphans"] = orphan_check
+
+    # Check 7: Pipeline cache validity (DVC)
+    if do_pipeline:
+        pipeline_check: dict[str, Any] = {"passed": True}
+
+        dvc_yaml = project_root / "dvc.yaml"
+        if not dvc_yaml.exists():
+            pipeline_check["passed"] = True
+            pipeline_check["skipped"] = "No dvc.yaml found"
+        elif not shutil.which("dvc"):
+            pipeline_check["passed"] = True
+            pipeline_check["skipped"] = "DVC not installed"
+        else:
+            try:
+                # Run dvc status to check if pipeline is up to date
+                result_proc = subprocess.run(
+                    ["dvc", "status"],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=60,
+                )
+
+                if result_proc.returncode == 0:
+                    output = result_proc.stdout.strip()
+                    if not output or "Pipeline is up to date" in output or output == "{}":
+                        pipeline_check["passed"] = True
+                        pipeline_check["status"] = "up_to_date"
+                    else:
+                        pipeline_check["passed"] = False
+                        pipeline_check["status"] = "stale"
+                        pipeline_check["stale_stages"] = output
+                        total_warnings += 1
+                else:
+                    pipeline_check["passed"] = False
+                    pipeline_check["error"] = result_proc.stderr
+                    total_errors += 1
+
+            except subprocess.TimeoutExpired:
+                pipeline_check["passed"] = False
+                pipeline_check["error"] = "DVC status check timed out"
+                total_errors += 1
+            except Exception as e:
+                pipeline_check["passed"] = False
+                pipeline_check["error"] = str(e)
+                total_errors += 1
+
+        global_checks["pipeline"] = pipeline_check
+
+    # Check 8: GC dry-run validation
+    if do_gc:
+        from formula_foundry.m3.gc import GarbageCollector
+
+        gc_check: dict[str, Any] = {"passed": True}
+
+        try:
+            gc = GarbageCollector(data_dir, registry)
+            preview = gc.preview_gc(policy_name="laptop_default")
+
+            gc_check["would_delete_count"] = len(preview.get("would_delete", []))
+            gc_check["would_reclaim_bytes"] = preview.get("would_reclaim_bytes", 0)
+            gc_check["pinned_count"] = len(preview.get("pinned", []))
+
+            # Verify pinned artifacts would not be deleted
+            pinned_set = set(preview.get("pinned", []))
+            would_delete_set = set(preview.get("would_delete", []))
+
+            if pinned_set & would_delete_set:
+                gc_check["passed"] = False
+                gc_check["error"] = "GC would delete pinned artifacts"
+                gc_check["affected_pinned"] = list(pinned_set & would_delete_set)
+                total_errors += 1
+
+        except Exception as e:
+            gc_check["passed"] = False
+            gc_check["error"] = str(e)
+            # GC check failure is a warning, not error
+            total_warnings += 1
+
+        global_checks["gc"] = gc_check
+
     # Output results
     if output_format == "json":
         report = {
@@ -3378,6 +3605,10 @@ def cmd_verify(
                 "lineage": do_lineage,
                 "manifest": do_manifest,
                 "registry": do_registry,
+                "store": do_store,
+                "orphans": do_orphans,
+                "pipeline": do_pipeline,
+                "gc": do_gc,
             },
             "total_artifacts": len(artifact_ids),
             "passed": total_passed,
@@ -3385,6 +3616,7 @@ def cmd_verify(
             "errors": total_errors,
             "repaired_count": repaired_count,
             "artifacts": verify_results,
+            "global_checks": global_checks,
         }
         sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
     else:
@@ -3421,6 +3653,9 @@ def cmd_verify(
                 _log(f"    Registry consistency: {r_status}", quiet)
                 if checks["registry"].get("repaired"):
                     _log("      (Repaired)", quiet)
+            if "store" in checks:
+                s_status = "PASS" if checks["store"].get("passed") else "FAIL"
+                _log(f"    Store integrity: {s_status}", quiet)
 
             # Show issues
             if result.get("issues"):
@@ -3432,6 +3667,35 @@ def cmd_verify(
                 for repair_action in result["repaired"]:
                     _log(f"    Repaired: {repair_action}", quiet)
 
+            _log("", quiet)
+
+        # Global check results
+        if global_checks:
+            _log("Global Checks:", quiet)
+            if "orphans" in global_checks:
+                orphan_info = global_checks["orphans"]
+                o_status = "PASS" if orphan_info.get("passed") else "FAIL"
+                _log(f"  Orphan detection: {o_status}", quiet)
+                if not orphan_info.get("passed") and orphan_info.get("orphan_count"):
+                    _log(f"    Found {orphan_info['orphan_count']} orphan artifact(s)", quiet)
+                    if orphan_info.get("orphan_ids"):
+                        for oid in orphan_info["orphan_ids"][:5]:
+                            _log(f"      - {oid}", quiet)
+                        if len(orphan_info["orphan_ids"]) > 5:
+                            _log(f"      ... and {len(orphan_info['orphan_ids']) - 5} more", quiet)
+            if "pipeline" in global_checks:
+                pipeline_info = global_checks["pipeline"]
+                if pipeline_info.get("skipped"):
+                    _log(f"  Pipeline check: SKIPPED ({pipeline_info['skipped']})", quiet)
+                else:
+                    p_status = "PASS" if pipeline_info.get("passed") else "FAIL"
+                    _log(f"  Pipeline cache: {p_status}", quiet)
+            if "gc" in global_checks:
+                gc_info = global_checks["gc"]
+                g_status = "PASS" if gc_info.get("passed") else "FAIL"
+                _log(f"  GC dry-run: {g_status}", quiet)
+                if gc_info.get("would_delete_count"):
+                    _log(f"    Would delete {gc_info['would_delete_count']} artifact(s)", quiet)
             _log("", quiet)
 
         # Summary
@@ -3583,6 +3847,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_lineage=args.check_lineage,
             check_manifest=args.check_manifest,
             check_registry=args.check_registry,
+            check_store=args.check_store,
+            check_orphans=args.check_orphans,
+            check_pipeline=args.check_pipeline,
+            check_gc=args.check_gc,
             full=args.full,
             repair=args.repair,
             quiet=args.quiet,

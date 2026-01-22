@@ -585,6 +585,8 @@ class TestCmdVerifyFullCheck:
 
     def test_verify_full_pass(self, initialized_project: Path) -> None:
         """Full verification should pass when all checks pass."""
+        import json
+
         from formula_foundry.m3.artifact_store import ArtifactStore
         from formula_foundry.m3.registry import ArtifactRegistry
 
@@ -601,6 +603,11 @@ class TestCmdVerifyFullCheck:
         )
         registry.index_artifact(manifest)
         registry.close()
+
+        # Pin the artifact so it's not considered an orphan
+        gc_config_path = data_dir / "gc_config.json"
+        gc_config = {"pinned_artifacts": ["art-full-001"]}
+        gc_config_path.write_text(json.dumps(gc_config))
 
         result = cmd_verify(
             artifact_id="art-full-001",
@@ -722,6 +729,253 @@ class TestMainWithVerify:
         """Main with verify should fail without init."""
         result = main(["verify", "--root", str(tmp_path), "-q"])
         assert result == 2
+
+
+class TestCmdVerifyStoreIntegrity:
+    """Tests for store integrity verification."""
+
+    @pytest.fixture
+    def initialized_project(self, tmp_path: Path) -> Path:
+        """Initialize a project."""
+        cmd_init(root=tmp_path, force=False, quiet=True)
+        return tmp_path
+
+    def test_verify_store_pass(self, initialized_project: Path) -> None:
+        """Verify should pass when store integrity is valid."""
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = initialized_project / "data"
+        store = ArtifactStore(root=data_dir, generator="test", generator_version="1.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        manifest = store.put(
+            content=b"store integrity test data",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+            artifact_id="art-store-001",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        result = cmd_verify(
+            artifact_id="art-store-001",
+            root=initialized_project,
+            output_format="text",
+            check_hash=False,
+            skip_hash=True,
+            check_lineage=False,
+            check_manifest=False,
+            check_registry=False,
+            check_store=True,
+            full=False,
+            repair=False,
+            quiet=True,
+        )
+        assert result == 0
+
+    def test_verify_store_size_mismatch(self, initialized_project: Path) -> None:
+        """Verify should detect size mismatch."""
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = initialized_project / "data"
+        store = ArtifactStore(root=data_dir, generator="test", generator_version="1.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        manifest = store.put(
+            content=b"original content for size check",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+            artifact_id="art-size-mismatch",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        # Corrupt by changing the file size
+        object_path = data_dir / "objects" / manifest.content_hash.digest[:2] / manifest.content_hash.digest
+        object_path.write_bytes(b"smaller")
+
+        result = cmd_verify(
+            artifact_id="art-size-mismatch",
+            root=initialized_project,
+            output_format="text",
+            check_hash=False,
+            skip_hash=True,
+            check_lineage=False,
+            check_manifest=False,
+            check_registry=False,
+            check_store=True,
+            full=False,
+            repair=False,
+            quiet=True,
+        )
+        assert result == 2
+
+
+class TestCmdVerifyOrphanDetection:
+    """Tests for orphan artifact detection."""
+
+    @pytest.fixture
+    def initialized_project(self, tmp_path: Path) -> Path:
+        """Initialize a project."""
+        cmd_init(root=tmp_path, force=False, quiet=True)
+        return tmp_path
+
+    def test_verify_orphan_detection(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Verify should detect orphan artifacts."""
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = initialized_project / "data"
+        store = ArtifactStore(root=data_dir, generator="test", generator_version="1.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        # Create artifact without referencing it from a dataset or pinning it
+        manifest = store.put(
+            content=b"orphan artifact data",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+            artifact_id="art-orphan-detect",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        result = cmd_verify(
+            artifact_id=None,
+            root=initialized_project,
+            output_format="json",
+            check_hash=False,
+            skip_hash=True,
+            check_lineage=False,
+            check_manifest=False,
+            check_registry=False,
+            check_orphans=True,
+            full=False,
+            repair=False,
+            quiet=False,
+        )
+
+        captured = capsys.readouterr()
+        report = json.loads(captured.out)
+
+        assert "global_checks" in report
+        assert "orphans" in report["global_checks"]
+        assert report["global_checks"]["orphans"]["orphan_count"] == 1
+        assert "art-orphan-detect" in report["global_checks"]["orphans"]["orphan_ids"]
+        assert result == 2
+
+    def test_verify_no_orphans_when_pinned(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Verify should not flag pinned artifacts as orphans."""
+        from formula_foundry.m3.artifact_store import ArtifactStore
+        from formula_foundry.m3.registry import ArtifactRegistry
+
+        data_dir = initialized_project / "data"
+        store = ArtifactStore(root=data_dir, generator="test", generator_version="1.0.0")
+        registry = ArtifactRegistry(data_dir / "registry.db")
+
+        manifest = store.put(
+            content=b"pinned artifact data",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+            artifact_id="art-pinned",
+        )
+        registry.index_artifact(manifest)
+        registry.close()
+
+        # Pin the artifact
+        gc_config_path = data_dir / "gc_config.json"
+        gc_config = {"pinned_artifacts": ["art-pinned"]}
+        gc_config_path.write_text(json.dumps(gc_config))
+
+        result = cmd_verify(
+            artifact_id=None,
+            root=initialized_project,
+            output_format="json",
+            check_hash=False,
+            skip_hash=True,
+            check_lineage=False,
+            check_manifest=False,
+            check_registry=False,
+            check_orphans=True,
+            full=False,
+            repair=False,
+            quiet=False,
+        )
+
+        captured = capsys.readouterr()
+        report = json.loads(captured.out)
+
+        assert report["global_checks"]["orphans"]["passed"] is True
+        assert report["global_checks"]["orphans"]["orphan_count"] == 0
+        assert result == 0
+
+
+class TestCmdVerifyPipelineCheck:
+    """Tests for pipeline cache validity check."""
+
+    @pytest.fixture
+    def initialized_project(self, tmp_path: Path) -> Path:
+        """Initialize a project."""
+        cmd_init(root=tmp_path, force=False, quiet=True)
+        return tmp_path
+
+    def test_verify_pipeline_skipped_no_dvc(self, initialized_project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Verify should skip pipeline check when no dvc.yaml exists."""
+        result = cmd_verify(
+            artifact_id=None,
+            root=initialized_project,
+            output_format="json",
+            check_hash=False,
+            skip_hash=True,
+            check_lineage=False,
+            check_manifest=False,
+            check_registry=False,
+            check_pipeline=True,
+            full=False,
+            repair=False,
+            quiet=False,
+        )
+
+        captured = capsys.readouterr()
+        report = json.loads(captured.out)
+
+        assert "global_checks" in report
+        assert "pipeline" in report["global_checks"]
+        assert report["global_checks"]["pipeline"]["skipped"] == "No dvc.yaml found"
+        assert result == 0
+
+
+class TestCmdVerifyNewFlags:
+    """Tests for new command-line flags."""
+
+    def test_verify_parser_has_store_flag(self) -> None:
+        """Parser should have --store flag."""
+        parser = build_parser()
+        args = parser.parse_args(["verify", "--store"])
+        assert args.check_store is True
+
+    def test_verify_parser_has_orphans_flag(self) -> None:
+        """Parser should have --orphans flag."""
+        parser = build_parser()
+        args = parser.parse_args(["verify", "--orphans"])
+        assert args.check_orphans is True
+
+    def test_verify_parser_has_pipeline_flag(self) -> None:
+        """Parser should have --pipeline flag."""
+        parser = build_parser()
+        args = parser.parse_args(["verify", "--pipeline"])
+        assert args.check_pipeline is True
+
+    def test_verify_parser_has_gc_check_flag(self) -> None:
+        """Parser should have --gc-check flag."""
+        parser = build_parser()
+        args = parser.parse_args(["verify", "--gc-check"])
+        assert args.check_gc is True
 
 
 class TestCmdVerifyMultipleArtifacts:
