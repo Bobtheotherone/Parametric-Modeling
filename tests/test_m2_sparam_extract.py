@@ -1,6 +1,8 @@
-"""Tests for S-parameter extraction and post-processing (REQ-M2-007).
+"""Tests for S-parameter extraction and post-processing (REQ-M2-006, REQ-M2-007).
 
 This module tests the sparam_extract module which provides:
+- Windowing functions for time-domain signal processing (REQ-M2-006)
+- FFT-based S-parameter extraction from port signals (REQ-M2-006)
 - Touchstone and CSV file parsing
 - S-parameter computation from port signals
 - Frequency sweep interpolation
@@ -27,10 +29,17 @@ from formula_foundry.openems import (
     ExtractionConfig,
     ExtractionResult,
     FrequencySpec,
+    MultiPortSignalSet,
     PortSignalData,
     PortSpec,
+    WindowConfig,
+    WindowType,
     apply_deembedding,
+    apply_window,
     build_manifest_entry,
+    compute_window_metrics,
+    create_window,
+    extract_full_sparam_matrix,
     extract_sparams,
     extract_sparams_from_csv,
     extract_sparams_from_port_signals,
@@ -622,3 +631,333 @@ def test_canonical_hash_different_data(tmp_path: Path) -> None:
     result2 = extract_sparams_from_touchstone(ts_path2, config)
 
     assert result1.canonical_hash != result2.canonical_hash
+
+
+# =============================================================================
+# Windowing Function Tests (REQ-M2-006)
+# =============================================================================
+
+
+class TestWindowFunctions:
+    """Tests for window function generation and application."""
+
+    def test_create_window_none(self) -> None:
+        """REQ-M2-006: Rectangular (none) window is all ones."""
+        config = WindowConfig(window_type=WindowType.NONE, normalize=False)
+        window = create_window(100, config)
+
+        assert len(window) == 100
+        assert np.allclose(window, 1.0)
+
+    def test_create_window_hann(self) -> None:
+        """REQ-M2-006: Hann window has correct shape."""
+        config = WindowConfig(window_type=WindowType.HANN, normalize=False)
+        window = create_window(100, config)
+
+        assert len(window) == 100
+        # Hann window starts and ends at 0
+        assert window[0] < 0.01
+        assert window[-1] < 0.01
+        # Maximum at center
+        assert window[50] > 0.99
+
+    def test_create_window_hamming(self) -> None:
+        """REQ-M2-006: Hamming window has non-zero edges."""
+        config = WindowConfig(window_type=WindowType.HAMMING, normalize=False)
+        window = create_window(100, config)
+
+        assert len(window) == 100
+        # Hamming window doesn't go to zero at edges
+        assert 0.05 < window[0] < 0.15
+        assert 0.05 < window[-1] < 0.15
+
+    def test_create_window_blackman(self) -> None:
+        """REQ-M2-006: Blackman window has very small edges."""
+        config = WindowConfig(window_type=WindowType.BLACKMAN, normalize=False)
+        window = create_window(100, config)
+
+        assert len(window) == 100
+        # Blackman window edges very close to zero
+        assert window[0] < 0.01
+        assert window[-1] < 0.01
+
+    def test_create_window_kaiser(self) -> None:
+        """REQ-M2-006: Kaiser window beta controls shape."""
+        config_low = WindowConfig(window_type=WindowType.KAISER, kaiser_beta=5.0, normalize=False)
+        config_high = WindowConfig(window_type=WindowType.KAISER, kaiser_beta=20.0, normalize=False)
+
+        window_low = create_window(100, config_low)
+        window_high = create_window(100, config_high)
+
+        assert len(window_low) == 100
+        assert len(window_high) == 100
+        # Higher beta should have narrower main lobe (edges closer to 0)
+        assert window_high[0] < window_low[0]
+
+    def test_create_window_tukey(self) -> None:
+        """REQ-M2-006: Tukey window alpha controls taper."""
+        config_rect = WindowConfig(window_type=WindowType.TUKEY, tukey_alpha=0.0, normalize=False)
+        config_mid = WindowConfig(window_type=WindowType.TUKEY, tukey_alpha=0.5, normalize=False)
+        config_hann = WindowConfig(window_type=WindowType.TUKEY, tukey_alpha=1.0, normalize=False)
+
+        window_rect = create_window(100, config_rect)
+        window_mid = create_window(100, config_mid)
+        window_hann = create_window(100, config_hann)
+
+        # Alpha=0 should be all ones
+        assert np.allclose(window_rect, 1.0)
+        # Alpha=1 should match Hann
+        expected_hann = np.hanning(100)
+        assert np.allclose(window_hann, expected_hann)
+        # Mid should be flat in center, tapered at edges
+        assert window_mid[50] > 0.99
+        assert window_mid[0] < 0.5
+
+    def test_create_window_normalization(self) -> None:
+        """REQ-M2-006: Normalized window has mean closer to 1."""
+        config_norm = WindowConfig(window_type=WindowType.HANN, normalize=True)
+        config_unnorm = WindowConfig(window_type=WindowType.HANN, normalize=False)
+
+        window_norm = create_window(100, config_norm)
+        window_unnorm = create_window(100, config_unnorm)
+
+        # Normalized window should have mean closer to 1
+        assert np.abs(np.mean(window_norm) - 1.0) < np.abs(np.mean(window_unnorm) - 1.0)
+
+    def test_apply_window(self) -> None:
+        """REQ-M2-006: apply_window multiplies signal by window."""
+        signal = np.ones(100)
+        config = WindowConfig(window_type=WindowType.HANN, normalize=False)
+
+        windowed = apply_window(signal, config)
+
+        # Should equal the window itself when applied to ones
+        expected = create_window(100, config)
+        assert np.allclose(windowed, expected)
+
+
+class TestWindowMetrics:
+    """Tests for window function metrics computation."""
+
+    def test_compute_metrics_rectangular(self) -> None:
+        """REQ-M2-006: Rectangular window has coherent gain of 1."""
+        config = WindowConfig(window_type=WindowType.NONE)
+        metrics = compute_window_metrics(config, n_samples=1024)
+
+        assert "coherent_gain" in metrics
+        assert "noise_bandwidth_bins" in metrics
+        assert "processing_gain_db" in metrics
+        assert "scalloping_loss_db" in metrics
+
+        assert np.isclose(metrics["coherent_gain"], 1.0, atol=0.01)
+        assert np.isclose(metrics["noise_bandwidth_bins"], 1.0, atol=0.1)
+
+    def test_compute_metrics_hann(self) -> None:
+        """REQ-M2-006: Hann window has coherent gain of 0.5."""
+        config = WindowConfig(window_type=WindowType.HANN)
+        metrics = compute_window_metrics(config, n_samples=1024)
+
+        assert np.isclose(metrics["coherent_gain"], 0.5, atol=0.01)
+        assert np.isclose(metrics["noise_bandwidth_bins"], 1.5, atol=0.1)
+
+
+# =============================================================================
+# Windowed S-Parameter Extraction Tests (REQ-M2-006)
+# =============================================================================
+
+
+class TestWindowedSParameterExtraction:
+    """Tests for S-parameter extraction with windowing."""
+
+    def test_extract_with_default_window(self) -> None:
+        """REQ-M2-006: Extraction uses default window from config."""
+        config = ExtractionConfig(
+            frequency_spec=_make_test_frequency_spec(),
+            port_specs=_make_test_port_specs(),
+            window_config=WindowConfig(window_type=WindowType.HANN),
+        )
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.9, current_a=i1 * 0.9),
+        ]
+
+        result = extract_sparams_from_port_signals(signals, "P1", config)
+
+        assert "windowing" in result.metrics
+        assert result.metrics["windowing"]["window_type"] == "hann"
+
+    def test_extract_with_explicit_window(self) -> None:
+        """REQ-M2-006: Explicit window config overrides default."""
+        config = ExtractionConfig(
+            frequency_spec=_make_test_frequency_spec(),
+            port_specs=_make_test_port_specs(),
+            window_config=WindowConfig(window_type=WindowType.HANN),  # Default
+        )
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.9, current_a=i1 * 0.9),
+        ]
+
+        # Override with Blackman
+        window_config = WindowConfig(window_type=WindowType.BLACKMAN)
+        result = extract_sparams_from_port_signals(
+            signals, "P1", config, window_config=window_config
+        )
+
+        assert result.metrics["windowing"]["window_type"] == "blackman"
+
+    def test_extract_different_windows_produce_different_results(self) -> None:
+        """REQ-M2-006: Different windows produce different S-parameters."""
+        config = _make_test_extraction_config()
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.9, current_a=i1 * 0.9),
+        ]
+
+        result_none = extract_sparams_from_port_signals(
+            signals, "P1", config,
+            window_config=WindowConfig(window_type=WindowType.NONE)
+        )
+        result_hann = extract_sparams_from_port_signals(
+            signals, "P1", config,
+            window_config=WindowConfig(window_type=WindowType.HANN)
+        )
+
+        # Results should be different
+        assert not np.allclose(
+            result_none.s_parameters.s_parameters,
+            result_hann.s_parameters.s_parameters
+        )
+
+    def test_extract_kaiser_includes_beta_in_metrics(self) -> None:
+        """REQ-M2-006: Kaiser window includes beta in metrics."""
+        config = _make_test_extraction_config()
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.9, current_a=i1 * 0.9),
+        ]
+
+        window_config = WindowConfig(window_type=WindowType.KAISER, kaiser_beta=10.5)
+        result = extract_sparams_from_port_signals(
+            signals, "P1", config, window_config=window_config
+        )
+
+        assert result.metrics["windowing"]["window_type"] == "kaiser"
+        assert result.metrics["windowing"]["kaiser_beta"] == 10.5
+
+    def test_extract_tukey_includes_alpha_in_metrics(self) -> None:
+        """REQ-M2-006: Tukey window includes alpha in metrics."""
+        config = _make_test_extraction_config()
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.9, current_a=i1 * 0.9),
+        ]
+
+        window_config = WindowConfig(window_type=WindowType.TUKEY, tukey_alpha=0.3)
+        result = extract_sparams_from_port_signals(
+            signals, "P1", config, window_config=window_config
+        )
+
+        assert result.metrics["windowing"]["window_type"] == "tukey"
+        assert result.metrics["windowing"]["tukey_alpha"] == 0.3
+
+
+# =============================================================================
+# Multi-Excitation Extraction Tests (REQ-M2-006)
+# =============================================================================
+
+
+class TestMultiExcitationExtraction:
+    """Tests for complete S-matrix extraction from multi-port excitation."""
+
+    def test_extract_full_matrix(self) -> None:
+        """REQ-M2-006: Extract full S-matrix from multi-excitation data."""
+        config = _make_test_extraction_config()
+
+        n_samples = 1000
+        dt = 1e-12
+        time_s = np.arange(n_samples) * dt
+        v1 = np.sin(2 * np.pi * 5e9 * time_s)
+        i1 = v1 / 50.0
+
+        # P1 excited
+        signals_p1 = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.8, current_a=i1 * 0.8),
+        ]
+
+        # P2 excited
+        signals_p2 = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1 * 0.7, current_a=i1 * 0.7),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1, current_a=i1),
+        ]
+
+        signal_sets = MultiPortSignalSet(excitation_sets={"P1": signals_p1, "P2": signals_p2})
+        result = extract_full_sparam_matrix(signal_sets, config)
+
+        assert result.s_parameters.n_ports == 2
+        assert result.metrics["extraction_method"] == "multi_excitation"
+        assert "P1" in result.metrics["excitation_ports"]
+        assert "P2" in result.metrics["excitation_ports"]
+
+        # Check all S-parameters have values
+        s = result.s_parameters.s_parameters
+        assert not np.allclose(s[:, 0, 0], 0)  # S11
+        assert not np.allclose(s[:, 1, 0], 0)  # S21
+        assert not np.allclose(s[:, 0, 1], 0)  # S12
+        assert not np.allclose(s[:, 1, 1], 0)  # S22
+
+    def test_multi_port_signal_set_access(self) -> None:
+        """REQ-M2-006: MultiPortSignalSet provides proper access methods."""
+        n_samples = 100
+        time_s = np.arange(n_samples) * 1e-12
+        v1 = np.zeros(n_samples)
+        i1 = np.zeros(n_samples)
+
+        signals = [
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1, current_a=i1),
+        ]
+
+        signal_sets = MultiPortSignalSet(excitation_sets={"P1": signals, "P2": signals})
+
+        assert signal_sets.excitation_port_ids == ["P1", "P2"]
+        assert len(signal_sets.get_signals_for_excitation("P1")) == 2
+
+        with pytest.raises(KeyError):
+            signal_sets.get_signals_for_excitation("P_INVALID")

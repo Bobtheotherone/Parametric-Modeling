@@ -1,22 +1,25 @@
 """S-parameter extraction and post-processing for openEMS simulation results.
 
-This module implements REQ-M2-007: S-parameter extraction from openEMS
-simulation results with frequency sweep handling and structured output
-suitable for manifest inclusion.
+This module implements REQ-M2-006: S-parameter extraction pipeline from openEMS
+field data with windowing, FFT, and complex S-parameter computation.
 
 Key functionality:
 - Parse simulation output files (Touchstone, CSV)
 - Compute S11, S21, S12, S22 matrices from port voltage/current data
+- Apply windowing functions (Hann, Hamming, Blackman, Kaiser) to time-domain data
 - Handle frequency sweeps with proper interpolation
 - Produce structured output for manifest inclusion
 - Support de-embedding and reference plane shifting
 
 The extraction pipeline:
 1. Load raw port signal data from simulation
-2. Compute frequency-domain transfer functions via FFT
-3. Extract S-parameters at specified frequency points
-4. Apply de-embedding corrections if configured
-5. Package results in structured format for manifest
+2. Apply configurable windowing to time-domain signals
+3. Compute frequency-domain transfer functions via FFT
+4. Extract S-parameters at specified frequency points
+5. Apply de-embedding corrections if configured
+6. Package results in structured format for manifest
+
+REQ-M2-006: S-parameter extraction pipeline with windowing and FFT.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
@@ -53,6 +57,199 @@ C0_M_PER_S = 299_792_458.0  # Speed of light in m/s
 NM_TO_M = 1e-9
 
 
+# =============================================================================
+# Windowing Functions (REQ-M2-006)
+# =============================================================================
+
+
+class WindowType(str, Enum):
+    """Available window functions for time-domain signal processing.
+
+    Window functions are applied to time-domain data before FFT to reduce
+    spectral leakage and improve frequency resolution.
+
+    REQ-M2-006: Windowing for S-parameter extraction.
+    """
+
+    NONE = "none"
+    """No windowing (rectangular window). Best frequency resolution but highest leakage."""
+
+    HANN = "hann"
+    """Hann (Hanning) window. Good general-purpose window with moderate leakage."""
+
+    HAMMING = "hamming"
+    """Hamming window. Similar to Hann but slightly higher side lobes."""
+
+    BLACKMAN = "blackman"
+    """Blackman window. Lower side lobes but wider main lobe."""
+
+    KAISER = "kaiser"
+    """Kaiser window with configurable beta parameter for tunable trade-off."""
+
+    TUKEY = "tukey"
+    """Tukey (cosine-tapered) window. Useful for transient simulations."""
+
+
+@dataclass(frozen=True, slots=True)
+class WindowConfig:
+    """Configuration for time-domain windowing.
+
+    Attributes:
+        window_type: Type of window function to apply.
+        kaiser_beta: Beta parameter for Kaiser window (default 14 for good sidelobe suppression).
+        tukey_alpha: Alpha parameter for Tukey window (0.5 is typical).
+        normalize: Whether to normalize window to preserve signal energy.
+
+    REQ-M2-006: Windowing configuration for S-parameter extraction.
+    """
+
+    window_type: WindowType = WindowType.HANN
+    kaiser_beta: float = 14.0
+    tukey_alpha: float = 0.5
+    normalize: bool = True
+
+
+def create_window(n_samples: int, config: WindowConfig) -> FloatArray:
+    """Create a window function array.
+
+    Args:
+        n_samples: Number of samples in the window.
+        config: Window configuration.
+
+    Returns:
+        Window function as a 1D array.
+
+    REQ-M2-006: Window function generation.
+    """
+    if config.window_type == WindowType.NONE:
+        window = np.ones(n_samples)
+    elif config.window_type == WindowType.HANN:
+        window = np.hanning(n_samples)
+    elif config.window_type == WindowType.HAMMING:
+        window = np.hamming(n_samples)
+    elif config.window_type == WindowType.BLACKMAN:
+        window = np.blackman(n_samples)
+    elif config.window_type == WindowType.KAISER:
+        window = np.kaiser(n_samples, config.kaiser_beta)
+    elif config.window_type == WindowType.TUKEY:
+        window = _tukey_window(n_samples, config.tukey_alpha)
+    else:
+        raise ValueError(f"Unknown window type: {config.window_type}")
+
+    if config.normalize:
+        # Normalize to preserve signal energy
+        coherent_gain = np.sum(window) / n_samples
+        if coherent_gain > 0:
+            window = window / coherent_gain
+
+    return window
+
+
+def _tukey_window(n_samples: int, alpha: float) -> FloatArray:
+    """Create a Tukey (cosine-tapered) window.
+
+    The Tukey window is a rectangular window with cosine tapers at the ends.
+    Alpha controls the fraction of the window inside the cosine tapers:
+    - alpha=0: rectangular window
+    - alpha=1: Hann window
+
+    Args:
+        n_samples: Number of samples.
+        alpha: Taper fraction (0 to 1).
+
+    Returns:
+        Tukey window array.
+    """
+    if alpha <= 0:
+        return np.ones(n_samples)
+    if alpha >= 1:
+        return np.hanning(n_samples)
+
+    window = np.ones(n_samples)
+    # Number of points in the tapered region on each side
+    n_taper = int(alpha * n_samples / 2)
+
+    if n_taper > 0:
+        # Left taper
+        t_left = np.arange(n_taper)
+        window[:n_taper] = 0.5 * (1 - np.cos(np.pi * t_left / n_taper))
+
+        # Right taper
+        t_right = np.arange(n_taper)
+        window[-n_taper:] = 0.5 * (1 - np.cos(np.pi * (t_right + 1) / n_taper))[::-1]
+
+    return window
+
+
+def apply_window(signal: FloatArray, config: WindowConfig) -> FloatArray:
+    """Apply windowing to a time-domain signal.
+
+    Args:
+        signal: Time-domain signal array.
+        config: Window configuration.
+
+    Returns:
+        Windowed signal.
+
+    REQ-M2-006: Apply windowing to time-domain data.
+    """
+    window = create_window(len(signal), config)
+    return signal * window
+
+
+def compute_window_metrics(config: WindowConfig, n_samples: int = 1024) -> dict[str, float]:
+    """Compute window function metrics.
+
+    Returns useful metrics about the window function:
+    - coherent_gain: Ratio of windowed vs unwindowed DC response
+    - noise_bandwidth: Equivalent noise bandwidth (bins)
+    - processing_gain: Gain in SNR from windowing (dB)
+    - scalloping_loss: Maximum amplitude error for off-bin frequencies (dB)
+
+    Args:
+        config: Window configuration.
+        n_samples: Number of samples for computation.
+
+    Returns:
+        Dictionary of window metrics.
+
+    REQ-M2-006: Window function metrics for analysis.
+    """
+    window = create_window(n_samples, WindowConfig(
+        window_type=config.window_type,
+        kaiser_beta=config.kaiser_beta,
+        tukey_alpha=config.tukey_alpha,
+        normalize=False,  # Use unnormalized for metrics
+    ))
+
+    # Coherent gain
+    coherent_gain = np.sum(window) / n_samples
+
+    # Noise bandwidth (equivalent noise bandwidth in bins)
+    noise_bandwidth = np.sum(window**2) / (coherent_gain**2 * n_samples)
+
+    # Processing gain (dB)
+    processing_gain = 10 * np.log10(n_samples / noise_bandwidth) if noise_bandwidth > 0 else 0
+
+    # Scalloping loss (approximate based on window type)
+    scalloping_loss_table = {
+        WindowType.NONE: 3.92,
+        WindowType.HANN: 1.42,
+        WindowType.HAMMING: 1.75,
+        WindowType.BLACKMAN: 1.10,
+        WindowType.KAISER: 1.0,  # Varies with beta
+        WindowType.TUKEY: 2.0,   # Varies with alpha
+    }
+    scalloping_loss = scalloping_loss_table.get(config.window_type, 1.5)
+
+    return {
+        "coherent_gain": float(coherent_gain),
+        "noise_bandwidth_bins": float(noise_bandwidth),
+        "processing_gain_db": float(processing_gain),
+        "scalloping_loss_db": float(scalloping_loss),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractionConfig:
     """Configuration for S-parameter extraction.
@@ -63,6 +260,9 @@ class ExtractionConfig:
         reference_impedance_ohm: Reference impedance for S-parameters.
         deembed_enabled: Whether de-embedding is enabled.
         output_format: Output format for S-parameters.
+        window_config: Configuration for time-domain windowing (REQ-M2-006).
+
+    REQ-M2-006: Enhanced S-parameter extraction with windowing support.
     """
 
     frequency_spec: FrequencySpec
@@ -70,6 +270,7 @@ class ExtractionConfig:
     reference_impedance_ohm: float = 50.0
     deembed_enabled: bool = False
     output_format: Literal["touchstone", "csv", "both"] = "touchstone"
+    window_config: WindowConfig = field(default_factory=lambda: WindowConfig())
 
     @property
     def n_ports(self) -> int:
@@ -275,23 +476,34 @@ def extract_sparams_from_port_signals(
     port_signals: list[PortSignalData],
     excitation_port_id: str,
     config: ExtractionConfig,
+    *,
+    window_config: WindowConfig | None = None,
 ) -> ExtractionResult:
     """Extract S-parameters from time-domain port signals.
 
     This function computes S-parameters by:
-    1. FFT of incident and reflected waves at each port
-    2. Forming the S-matrix from wave ratios
+    1. Applying windowing to time-domain signals (REQ-M2-006)
+    2. Computing FFT of incident and reflected waves at each port
+    3. Forming the S-matrix from wave ratios
+
+    The windowing reduces spectral leakage when the simulation doesn't
+    capture an integer number of periods. For FDTD simulations that
+    run until field decay, a Tukey or Hann window is recommended.
 
     Args:
         port_signals: List of time-domain port signals.
         excitation_port_id: ID of the excited port.
         config: Extraction configuration.
+        window_config: Optional override for window configuration.
+            If None, uses config.window_config.
 
     Returns:
         ExtractionResult with S-parameter data.
 
     Raises:
         ValueError: If port configuration is invalid.
+
+    REQ-M2-006: S-parameter extraction with windowing and FFT.
     """
     n_ports = config.n_ports
     if len(port_signals) != n_ports:
@@ -301,6 +513,9 @@ def extract_sparams_from_port_signals(
     n_freq = len(target_freqs)
     z0 = config.reference_impedance_ohm
 
+    # Use provided window config or config default
+    win_config = window_config if window_config is not None else config.window_config
+
     # Map port IDs to indices
     port_id_to_idx = {spec.id: idx for idx, spec in enumerate(config.port_specs)}
 
@@ -309,26 +524,42 @@ def extract_sparams_from_port_signals(
         raise ValueError(f"Excitation port '{excitation_port_id}' not found")
     excite_idx = port_id_to_idx[excitation_port_id]
 
-    # Compute FFTs for each port
+    # Compute FFTs for each port with windowing (REQ-M2-006)
     port_ffts: dict[str, tuple[ComplexArray, ComplexArray, FloatArray]] = {}
     for signal in port_signals:
         dt = np.mean(np.diff(signal.time_s))
         n_samples = len(signal.time_s)
 
+        # Create window function
+        window = create_window(n_samples, win_config)
+
+        # Apply windowing to voltage and current signals (REQ-M2-006)
+        voltage_windowed = signal.voltage_v * window
+        current_windowed = signal.current_a * window
+
         # FFT frequencies
         fft_freqs = np.fft.rfftfreq(n_samples, dt)
 
-        # Compute incident and reflected waves
-        # a = (V + Z0*I) / (2*sqrt(Z0))
-        # b = (V - Z0*I) / (2*sqrt(Z0))
+        # Compute incident and reflected waves from windowed signals
+        # a = (V + Z0*I) / (2*sqrt(Z0)) - incident wave
+        # b = (V - Z0*I) / (2*sqrt(Z0)) - reflected wave
         sqrt_z0 = np.sqrt(z0)
-        v_fft = np.fft.rfft(signal.voltage_v)
-        i_fft = np.fft.rfft(signal.current_a)
+        v_fft = np.fft.rfft(voltage_windowed)
+        i_fft = np.fft.rfft(current_windowed)
 
         a_fft = (v_fft + z0 * i_fft) / (2 * sqrt_z0)
         b_fft = (v_fft - z0 * i_fft) / (2 * sqrt_z0)
 
         port_ffts[signal.port_id] = (a_fft, b_fft, fft_freqs)
+
+        logger.debug(
+            "Port %s: applied %s window to %d samples, FFT range %.3g-%.3g Hz",
+            signal.port_id,
+            win_config.window_type.value,
+            n_samples,
+            fft_freqs[1] if len(fft_freqs) > 1 else 0,
+            fft_freqs[-1] if len(fft_freqs) > 0 else 0,
+        )
 
     # Initialize S-parameter matrix
     s_parameters = np.zeros((n_freq, n_ports, n_ports), dtype=np.complex128)
@@ -337,17 +568,16 @@ def extract_sparams_from_port_signals(
     a_excite, _, fft_freqs = port_ffts[excitation_port_id]
 
     # Compute S-parameters: Sij = bj / ai (when port i is excited)
+    # This gives us one column of the S-matrix for single-port excitation
     for port_spec in config.port_specs:
         j = port_id_to_idx[port_spec.id]
         _, b_j, _ = port_ffts[port_spec.id]
 
-        # Interpolate to target frequencies
-        s_col = np.zeros(n_freq, dtype=np.complex128)
-        for f_idx, freq in enumerate(target_freqs):
-            # Find nearest FFT bin
-            bin_idx = np.argmin(np.abs(fft_freqs - freq))
-            if np.abs(a_excite[bin_idx]) > 1e-15:
-                s_col[f_idx] = b_j[bin_idx] / a_excite[bin_idx]
+        # Interpolate to target frequencies using linear interpolation
+        # in real/imag domain for smoothness
+        s_col = _interpolate_complex_spectrum(
+            fft_freqs, b_j, a_excite, target_freqs
+        )
 
         s_parameters[:, j, excite_idx] = s_col
 
@@ -362,8 +592,210 @@ def extract_sparams_from_port_signals(
     canonical = _sparam_canonical_json(sparam_data)
     canonical_hash = sha256_bytes(canonical.encode("utf-8"))
 
+    # Compute metrics including window info
+    metrics = _compute_extraction_metrics(sparam_data)
+    metrics["windowing"] = {
+        "window_type": win_config.window_type.value,
+        "normalize": win_config.normalize,
+    }
+    if win_config.window_type == WindowType.KAISER:
+        metrics["windowing"]["kaiser_beta"] = win_config.kaiser_beta
+    if win_config.window_type == WindowType.TUKEY:
+        metrics["windowing"]["tukey_alpha"] = win_config.tukey_alpha
+
+    return ExtractionResult(
+        s_parameters=sparam_data,
+        extraction_config=config,
+        source_files=[],
+        canonical_hash=canonical_hash,
+        metrics=metrics,
+    )
+
+
+def _interpolate_complex_spectrum(
+    fft_freqs: FloatArray,
+    numerator: ComplexArray,
+    denominator: ComplexArray,
+    target_freqs: FloatArray,
+    min_denominator: float = 1e-15,
+) -> ComplexArray:
+    """Interpolate complex ratio spectrum to target frequencies.
+
+    Performs interpolation of numerator/denominator ratio in the
+    real/imaginary domain for smoother results than magnitude/phase.
+
+    Args:
+        fft_freqs: FFT frequency bins.
+        numerator: Complex numerator spectrum.
+        denominator: Complex denominator spectrum.
+        target_freqs: Target frequency points.
+        min_denominator: Minimum denominator magnitude to avoid division by zero.
+
+    Returns:
+        Interpolated complex ratio at target frequencies.
+
+    REQ-M2-006: Proper interpolation for S-parameter extraction.
+    """
+    n_target = len(target_freqs)
+    result = np.zeros(n_target, dtype=np.complex128)
+
+    # Compute ratio at FFT frequencies (where denominator is significant)
+    valid_mask = np.abs(denominator) > min_denominator
+    ratio_valid = np.zeros_like(numerator)
+    ratio_valid[valid_mask] = numerator[valid_mask] / denominator[valid_mask]
+
+    # Only interpolate over frequency range with valid data
+    if not np.any(valid_mask):
+        logger.warning("No valid frequency bins for S-parameter interpolation")
+        return result
+
+    valid_freqs = fft_freqs[valid_mask]
+    valid_ratio = ratio_valid[valid_mask]
+
+    # Interpolate real and imaginary parts separately
+    for f_idx, freq in enumerate(target_freqs):
+        if freq < valid_freqs[0] or freq > valid_freqs[-1]:
+            # Outside valid range - use nearest or zero
+            if freq < valid_freqs[0]:
+                result[f_idx] = valid_ratio[0]
+            else:
+                result[f_idx] = valid_ratio[-1]
+        else:
+            # Linear interpolation
+            real_interp = np.interp(freq, valid_freqs, valid_ratio.real)
+            imag_interp = np.interp(freq, valid_freqs, valid_ratio.imag)
+            result[f_idx] = real_interp + 1j * imag_interp
+
+    return result
+
+
+@dataclass(slots=True)
+class MultiPortSignalSet:
+    """Signal data from multiple simulation runs with different port excitations.
+
+    For complete 2-port S-parameter extraction (S11, S21, S12, S22), you need
+    two simulation runs: one with port 1 excited and one with port 2 excited.
+    This class holds signal data from all such runs.
+
+    Attributes:
+        excitation_sets: Dict mapping excitation_port_id to list of PortSignalData.
+
+    REQ-M2-006: Multi-excitation data structure for complete S-matrix extraction.
+    """
+
+    excitation_sets: dict[str, list[PortSignalData]]
+
+    def get_signals_for_excitation(self, excitation_port_id: str) -> list[PortSignalData]:
+        """Get port signals for a specific excitation configuration."""
+        if excitation_port_id not in self.excitation_sets:
+            raise KeyError(f"No signals for excitation at port '{excitation_port_id}'")
+        return self.excitation_sets[excitation_port_id]
+
+    @property
+    def excitation_port_ids(self) -> list[str]:
+        """Get list of excitation port IDs."""
+        return list(self.excitation_sets.keys())
+
+
+def extract_full_sparam_matrix(
+    signal_sets: MultiPortSignalSet,
+    config: ExtractionConfig,
+    *,
+    window_config: WindowConfig | None = None,
+) -> ExtractionResult:
+    """Extract complete S-parameter matrix from multi-excitation simulation data.
+
+    For a 2-port network, this computes all four S-parameters (S11, S21, S12, S22)
+    by combining results from simulations with each port excited in turn.
+
+    The S-matrix columns are filled by:
+    - Column j from simulation with port j excited
+
+    Args:
+        signal_sets: Signal data from multiple simulations.
+        config: Extraction configuration.
+        window_config: Optional window configuration override.
+
+    Returns:
+        ExtractionResult with complete S-parameter matrix.
+
+    Raises:
+        ValueError: If signal sets don't match port configuration.
+
+    REQ-M2-006: Complete S-parameter matrix extraction for 2-port networks.
+
+    Example:
+        >>> # Run two simulations: one with P1 excited, one with P2 excited
+        >>> signal_sets = MultiPortSignalSet({
+        ...     "P1": [signals_p1_excited_for_p1, signals_p1_excited_for_p2],
+        ...     "P2": [signals_p2_excited_for_p1, signals_p2_excited_for_p2],
+        ... })
+        >>> result = extract_full_sparam_matrix(signal_sets, config)
+        >>> # result.s_parameters contains [S11, S21, S12, S22]
+    """
+    n_ports = config.n_ports
+    target_freqs = config.frequencies_hz()
+    n_freq = len(target_freqs)
+    z0 = config.reference_impedance_ohm
+
+    # Use provided window config or config default
+    win_config = window_config if window_config is not None else config.window_config
+
+    # Map port IDs to indices
+    port_id_to_idx = {spec.id: idx for idx, spec in enumerate(config.port_specs)}
+
+    # Initialize complete S-parameter matrix
+    s_parameters = np.zeros((n_freq, n_ports, n_ports), dtype=np.complex128)
+
+    # Process each excitation (each gives one column of S-matrix)
+    for excite_port_id in signal_sets.excitation_port_ids:
+        if excite_port_id not in port_id_to_idx:
+            logger.warning("Excitation port '%s' not in config, skipping", excite_port_id)
+            continue
+
+        excite_idx = port_id_to_idx[excite_port_id]
+        port_signals = signal_sets.get_signals_for_excitation(excite_port_id)
+
+        if len(port_signals) != n_ports:
+            raise ValueError(
+                f"Expected {n_ports} signals for excitation at {excite_port_id}, "
+                f"got {len(port_signals)}"
+            )
+
+        # Extract S-parameters for this excitation
+        result = extract_sparams_from_port_signals(
+            port_signals,
+            excite_port_id,
+            config,
+            window_config=win_config,
+        )
+
+        # Copy this column into the full S-matrix
+        s_parameters[:, :, excite_idx] = result.s_parameters.s_parameters[:, :, excite_idx]
+
+        logger.debug("Filled column %d (port %s excitation)", excite_idx, excite_port_id)
+
+    # Create final S-parameter data
+    sparam_data = SParameterData(
+        frequencies_hz=target_freqs,
+        s_parameters=s_parameters,
+        n_ports=n_ports,
+        reference_impedance_ohm=z0,
+        comment=f"Full {n_ports}-port S-matrix from multi-excitation extraction",
+    )
+
+    # Compute canonical hash
+    canonical = _sparam_canonical_json(sparam_data)
+    canonical_hash = sha256_bytes(canonical.encode("utf-8"))
+
     # Compute metrics
     metrics = _compute_extraction_metrics(sparam_data)
+    metrics["extraction_method"] = "multi_excitation"
+    metrics["excitation_ports"] = signal_sets.excitation_port_ids
+    metrics["windowing"] = {
+        "window_type": win_config.window_type.value,
+        "normalize": win_config.normalize,
+    }
 
     return ExtractionResult(
         s_parameters=sparam_data,
@@ -413,6 +845,28 @@ def load_port_signals_json(json_path: Path) -> list[PortSignalData]:
         )
 
     return signals
+
+
+def load_multi_port_signals_json(json_paths: dict[str, Path]) -> MultiPortSignalSet:
+    """Load multi-port signal data from multiple JSON files.
+
+    Each file contains signals from a simulation with a different port excited.
+
+    Args:
+        json_paths: Dict mapping excitation_port_id to JSON file path.
+
+    Returns:
+        MultiPortSignalSet with all signal data.
+
+    REQ-M2-006: Load multi-excitation data for complete S-matrix extraction.
+    """
+    excitation_sets: dict[str, list[PortSignalData]] = {}
+
+    for excite_port_id, json_path in json_paths.items():
+        signals = load_port_signals_json(json_path)
+        excitation_sets[excite_port_id] = signals
+
+    return MultiPortSignalSet(excitation_sets=excitation_sets)
 
 
 def apply_deembedding(
