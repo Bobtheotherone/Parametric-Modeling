@@ -939,6 +939,109 @@ def _get_container_digest() -> str | None:
     return None
 
 
+def _get_dvc_lock_hash(cwd: Path) -> str | None:
+    """Compute hash of dvc.lock file for provenance tracking.
+
+    The dvc.lock file captures the complete pipeline state including
+    all dependencies, parameters, and output hashes. Hashing it provides
+    a single value that represents the entire pipeline reproducibility.
+
+    Args:
+        cwd: Working directory containing dvc.lock.
+
+    Returns:
+        SHA256 hash of dvc.lock content, or None if file doesn't exist.
+    """
+    import hashlib
+
+    lock_path = cwd / "dvc.lock"
+    if not lock_path.exists():
+        return None
+
+    try:
+        content = lock_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()
+    except (OSError, PermissionError):
+        return None
+
+
+def _get_environment_stamp() -> dict[str, Any]:
+    """Capture environment variables relevant for reproducibility.
+
+    Returns a dictionary of environment variables that affect pipeline
+    execution, excluding sensitive values like API keys.
+    """
+    # Variables relevant for reproducibility
+    relevant_vars = [
+        "PYTHONHASHSEED",
+        "PYTHONDONTWRITEBYTECODE",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "CUDA_VISIBLE_DEVICES",
+        "TF_CPP_MIN_LOG_LEVEL",
+        "TORCH_CUDA_ARCH_LIST",
+        "MLFLOW_TRACKING_URI",
+        "DVC_NO_ANALYTICS",
+    ]
+
+    env_stamp: dict[str, Any] = {}
+    for var in relevant_vars:
+        value = os.environ.get(var)
+        if value is not None:
+            env_stamp[var] = value
+
+    return env_stamp
+
+
+def _write_run_json(
+    run_dir: Path,
+    metadata: RunMetadata,
+    quiet: bool = False,
+) -> Path:
+    """Write run metadata to runs/<run_id>/run.json.
+
+    This function creates the run directory and writes the metadata file.
+    It's called both at the start of a run (for resumability) and at the
+    end (with final status).
+
+    Args:
+        run_dir: Directory for this run (typically data/runs/<run_id>).
+        metadata: RunMetadata to serialize.
+        quiet: If True, suppress logging.
+
+    Returns:
+        Path to the written run.json file.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_json_path = run_dir / "run.json"
+
+    # Write atomically using temp file + rename
+    import tempfile
+
+    fd, tmp_path_str = tempfile.mkstemp(
+        suffix=".tmp",
+        prefix="run.json.",
+        dir=run_dir,
+    )
+    tmp_path = Path(tmp_path_str)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(metadata.to_json())
+            f.flush()
+            os.fsync(f.fileno())
+
+        # Atomic rename
+        tmp_path.rename(run_json_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+    _log(f"Wrote run metadata to {run_json_path}", quiet)
+    return run_json_path
+
+
 def _infer_run_type(stage: str) -> str:
     """Infer run type from stage name.
 
@@ -1140,6 +1243,7 @@ def _create_data_directories(data_dir: Path) -> None:
     (data_dir / "manifests").mkdir(parents=True, exist_ok=True)
     (data_dir / "mlflow" / "artifacts").mkdir(parents=True, exist_ok=True)
     (data_dir / "datasets").mkdir(parents=True, exist_ok=True)
+    (data_dir / "runs").mkdir(parents=True, exist_ok=True)
 
 
 def _init_artifact_store(data_dir: Path) -> None:
@@ -1272,6 +1376,8 @@ def cmd_run(
     python_version = _get_python_version()
     dvc_version = _get_dvc_version()
     container_digest = _get_container_digest()
+    dvc_lock_hash = _get_dvc_lock_hash(project_root)
+    environment_stamp = _get_environment_stamp()
 
     # Build toolchain list
     toolchain: list[ToolVersion] = [ToolVersion(name="python", version=python_version)]
@@ -1309,6 +1415,7 @@ def cmd_run(
         _log(f"  Git commit: {git_info.commit[:12]}", quiet)
         _log(f"  Git branch: {git_info.branch}", quiet)
         _log(f"  Git dirty: {git_info.dirty}", quiet)
+        _log(f"  DVC lock hash: {dvc_lock_hash[:12] if dvc_lock_hash else 'none'}...", quiet)
         _log(f"  Container: {container_digest or 'none'}", quiet)
         _log(f"  Command: dvc repro {stage}{' --force' if force else ''}", quiet)
         if parsed_tags:
@@ -1350,7 +1457,16 @@ def cmd_run(
         outputs=RunOutputs(),
         name=f"DVC stage: {stage}",
         tags=parsed_tags,
+        dvc_stage_hash=dvc_lock_hash,
+        annotations={"environment": environment_stamp} if environment_stamp else {},
     )
+
+    # Create run directory and write initial run.json (for resumability)
+    # Per design doc section 15.3, we write run.json early so that on restart
+    # we can detect incomplete runs and either resume or recompute
+    runs_dir = data_dir / "runs"
+    run_dir = runs_dir / run_id
+    run_json_path = _write_run_json(run_dir, run_metadata, quiet)
 
     # Initialize registry and record run start
     registry = ArtifactRegistry(registry_db)
@@ -1362,11 +1478,18 @@ def cmd_run(
         hostname=hostname,
         generator="m3_run",
         generator_version=__version__,
-        config={"stage": stage, "force": force, "run_type": effective_run_type},
+        config={
+            "stage": stage,
+            "force": force,
+            "run_type": effective_run_type,
+            "dvc_lock_hash": dvc_lock_hash,
+        },
     )
 
     _log(f"Run ID: {run_id}", quiet)
     _log(f"Git commit: {git_info.commit[:12]} ({git_info.branch})", quiet)
+    if dvc_lock_hash:
+        _log(f"DVC lock hash: {dvc_lock_hash[:12]}...", quiet)
     if container_digest:
         _log(f"Container: {container_digest}", quiet)
     _log("", quiet)
@@ -1420,6 +1543,12 @@ def cmd_run(
     run_metadata.duration_seconds = duration_seconds
     run_metadata.stages = [stage_execution]
 
+    # Capture DVC lock hash after run (may have changed if stage modified outputs)
+    dvc_lock_hash_after = _get_dvc_lock_hash(project_root)
+    if dvc_lock_hash_after and dvc_lock_hash_after != dvc_lock_hash:
+        run_metadata.dvc_stage_hash = dvc_lock_hash_after
+        _log(f"DVC lock updated: {dvc_lock_hash_after[:12]}...", quiet)
+
     if return_code != 0:
         run_metadata.error = {
             "error_type": "DVCError",
@@ -1427,6 +1556,12 @@ def cmd_run(
             "stage_name": stage,
             "recoverable": True,
         }
+
+    # Record log paths
+    run_metadata.log_paths = [str(run_json_path.relative_to(project_root))]
+
+    # Update run.json with final status (for resumability/auditing)
+    _write_run_json(run_dir, run_metadata, quiet)
 
     # Update run status in registry
     registry.update_run_status(
