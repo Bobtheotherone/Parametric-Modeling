@@ -262,3 +262,33 @@ def get_json_schema() -> dict[str, Any]:
     if COUPONSPEC_SCHEMA_PATH.exists():
         return json.loads(COUPONSPEC_SCHEMA_PATH.read_text(encoding="utf-8"))
     return COUPONSPEC_SCHEMA
+
+
+def validate_against_json_schema(data: dict[str, Any]) -> list[str]:
+    """Validate data against the CouponSpec JSON Schema.
+
+    Uses the jsonschema library (Draft 2020-12) to validate the input
+    data against the canonical JSON Schema file. This provides schema
+    validation independent of Pydantic for interoperability.
+
+    Args:
+        data: Dictionary containing the CouponSpec data.
+
+    Returns:
+        List of validation error messages (empty if valid).
+
+    Raises:
+        ImportError: If jsonschema package is not installed.
+    """
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError as exc:
+        raise ImportError("jsonschema is required for JSON Schema validation: pip install jsonschema") from exc
+
+    schema = get_json_schema()
+    validator = Draft202012Validator(schema)
+    errors = []
+    for error in validator.iter_errors(data):
+        path = ".".join(str(p) for p in error.absolute_path) or "(root)"
+        errors.append(f"{path}: {error.message}")
+    return errors

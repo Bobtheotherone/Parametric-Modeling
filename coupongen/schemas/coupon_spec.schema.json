@@ -334,7 +334,8 @@
     "TransmissionLine": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "layer", "w_nm", "gap_nm", "length_left_nm", "length_right_nm"],
+      "required": ["type", "layer", "w_nm", "gap_nm", "length_left_nm"],
+      "description": "Transmission line parameters. For F1 coupons, length_right_nm is derived from the continuity formula and should not be specified.",
       "properties": {
         "type": {
           "type": "string",
@@ -359,8 +360,12 @@
           "description": "Left section length in nanometers"
         },
         "length_right_nm": {
-          "$ref": "#/$defs/LengthNM",
-          "description": "Right section length in nanometers"
+          "anyOf": [
+            {"$ref": "#/$defs/LengthNM"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Right section length in nanometers. Optional for F1 coupons (derived from continuity formula). Required for F0 coupons."
         },
         "ground_via_fence": {
           "anyOf": [
