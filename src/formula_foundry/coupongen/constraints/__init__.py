@@ -118,6 +118,19 @@ from .tiers import (
     evaluate_tiered_constraints,
 )
 
+# Export DRC runner and Tier 4 constraint (REQ-M1-016)
+from .drc import (
+    DRCError,
+    DRCExitCode,
+    DRCReport,
+    DRCResult,
+    DRCSeverity,
+    DRCViolation,
+    Tier4DrcChecker,
+    check_drc_gate,
+    run_drc,
+)
+
 __all__ = [
     # Core constraint types (backward compatible)
     "ConstraintEvaluation",
@@ -191,4 +204,14 @@ __all__ = [
     "ConstraintMode",
     "SpecOrResolved",
     "create_constraint_engine",
+    # DRC runner and Tier 4 constraint (REQ-M1-016)
+    "DRCError",
+    "DRCExitCode",
+    "DRCReport",
+    "DRCResult",
+    "DRCSeverity",
+    "DRCViolation",
+    "Tier4DrcChecker",
+    "check_drc_gate",
+    "run_drc",
 ]
