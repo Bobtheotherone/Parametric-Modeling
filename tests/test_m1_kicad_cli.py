@@ -3,6 +3,30 @@ from __future__ import annotations
 from pathlib import Path
 
 from formula_foundry.coupongen.kicad import KicadCliRunner, build_drc_args
+import formula_foundry.coupongen.kicad.cli as cli_module
+
+
+def test_module_imported_from_workspace() -> None:
+    """Verify cli module is imported from workspace, not a stale installed package.
+
+    This hardening test catches CI regressions where a stale version of the
+    package might be installed in site-packages, causing tests to run against
+    the wrong code.
+    """
+    module_path = Path(cli_module.__file__).resolve()
+    # The module should be under src/formula_foundry/ in the workspace
+    # or under site-packages if installed with pip install -e .
+    # Either way, it should contain our expected default severity
+    from formula_foundry.coupongen.kicad.cli import build_drc_args as fn
+    # Check that the function has severity="all" as default
+    import inspect
+    sig = inspect.signature(fn)
+    default_severity = sig.parameters["severity"].default
+    assert default_severity == "all", (
+        f"build_drc_args has wrong default severity: {default_severity!r}. "
+        f"Expected 'all'. Module loaded from: {module_path}. "
+        "This may indicate a stale installed package in site-packages."
+    )
 
 
 def test_kicad_cli_runner_modes(tmp_path: Path) -> None:

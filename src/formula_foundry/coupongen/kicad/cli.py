@@ -231,24 +231,23 @@ def build_drc_args(
     board_path: Path,
     report_path: Path,
     *,
-    severity: str = "error",
+    severity: str = "all",
 ) -> list[str]:
     """Build kicad-cli DRC command arguments.
 
     Satisfies REQ-M1-016:
-    - --severity-error: Report only error-level violations (default for M1)
+    - --severity-all: Report all violations including warnings (default for M1)
     - --format json: Output in JSON format for programmatic parsing
     - --exit-code-violations: Return non-zero exit code if violations exist
 
-    Note: M1 uses --severity-error to allow warnings (expected for headless
-    test coupons without loaded footprint libraries) while failing on real
-    errors. Use severity="all" to include warnings in exit code checks.
+    Note: M1 uses --severity-all to catch all DRC issues including warnings.
+    Use severity="error" if you need to ignore warnings.
 
     Args:
         board_path: Path to the .kicad_pcb file to check.
         report_path: Path where the JSON DRC report will be written.
         severity: Severity level to check ("error", "warning", "all").
-            Default is "error" to only fail on errors.
+            Default is "all" to check all violations.
 
     Returns:
         List of command-line arguments for kicad-cli pcb drc.

@@ -140,18 +140,17 @@ class TestBuildDrcArgs:
     REQ-M1-025: CI must prove DRC-clean boards using correct invocation flags.
     """
 
-    def test_drc_args_default_severity_error(self, tmp_path: Path) -> None:
-        """DRC should default to error severity for M1 test coupons.
+    def test_drc_args_default_severity_all(self, tmp_path: Path) -> None:
+        """DRC should default to all severity for M1.
 
-        Note: M1 uses --severity-error by default to allow warnings (expected
-        for headless test coupons without loaded footprint libraries) while
-        failing on real errors.
+        Per REQ-M1-016 and DESIGN_DOCUMENT.md: M1 uses --severity-all to catch
+        all DRC violations including warnings for thorough quality checks.
         """
         board = tmp_path / "coupon.kicad_pcb"
         report = tmp_path / "drc.json"
         args = build_drc_args(board, report)
 
-        assert "--severity-error" in args
+        assert "--severity-all" in args
 
     def test_drc_args_severity_all_option(self, tmp_path: Path) -> None:
         """DRC should support all severity levels when requested."""
