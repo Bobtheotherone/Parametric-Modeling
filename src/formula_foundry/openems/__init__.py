@@ -182,6 +182,19 @@ from .toolchain import (
     parse_docker_image_ref,
     validate_openems_version,
 )
+from .sim_cache import (
+    CachedSimulationResult,
+    CacheMissError,
+    CacheCorruptionError,
+    CacheInvalidationError,
+    CacheStats,
+    SimulationCache,
+    SimulationCacheError,
+    SimulationCacheKey,
+    SolverVersion,
+    compute_sim_config_hash,
+    should_invalidate_cache,
+)
 from .sim_config_validation import (
     DEFAULT_MIN_CELLS_PER_WAVELENGTH,
     DEFAULT_MIN_PML_WAVELENGTHS,
@@ -395,4 +408,16 @@ __all__ = [
     "validate_sim_config",
     "write_sim_config_json",
     "write_validation_report",
+    # Simulation caching (REQ-M2-011)
+    "CachedSimulationResult",
+    "CacheMissError",
+    "CacheCorruptionError",
+    "CacheInvalidationError",
+    "CacheStats",
+    "SimulationCache",
+    "SimulationCacheError",
+    "SimulationCacheKey",
+    "SolverVersion",
+    "compute_sim_config_hash",
+    "should_invalidate_cache",
 ]
