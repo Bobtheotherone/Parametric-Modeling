@@ -317,9 +317,10 @@ class TestTieredConstraintSystem:
 
         proof = evaluate_tiered_constraints(spec, limits)
 
-        assert set(proof.tiers.keys()) == {"T0", "T1", "T2", "T3"}
+        assert set(proof.tiers.keys()) == {"T0", "T1", "T2", "T3", "T4"}
         for tier in ("T0", "T1", "T2", "T3"):
             assert len(proof.tiers[tier]) > 0
+        # T4 may be empty (DRC is external validation, not always run)
 
     def test_valid_spec_passes_all_tiers(self) -> None:
         """Valid spec should pass all constraint tiers."""
