@@ -41,18 +41,18 @@
     }
   },
   "gerber_extension_map": {
-    "F.Cu": "-F_Cu.gbr",
-    "B.Cu": "-B_Cu.gbr",
-    "In1.Cu": "-In1_Cu.gbr",
-    "In2.Cu": "-In2_Cu.gbr",
-    "In3.Cu": "-In3_Cu.gbr",
-    "In4.Cu": "-In4_Cu.gbr",
-    "F.Mask": "-F_Mask.gbr",
-    "B.Mask": "-B_Mask.gbr",
-    "F.SilkS": "-F_SilkS.gbr",
-    "B.SilkS": "-B_SilkS.gbr",
-    "F.Paste": "-F_Paste.gbr",
-    "B.Paste": "-B_Paste.gbr",
-    "Edge.Cuts": "-Edge_Cuts.gbr"
+    "F.Cu": "-F_Cu.gtl",
+    "B.Cu": "-B_Cu.gbl",
+    "In1.Cu": "-In1_Cu.g1",
+    "In2.Cu": "-In2_Cu.g2",
+    "In3.Cu": "-In3_Cu.g3",
+    "In4.Cu": "-In4_Cu.g4",
+    "F.Mask": "-F_Mask.gts",
+    "B.Mask": "-B_Mask.gbs",
+    "F.SilkS": "-F_Silkscreen.gto",
+    "B.SilkS": "-B_Silkscreen.gbo",
+    "F.Paste": "-F_Paste.gtp",
+    "B.Paste": "-B_Paste.gbp",
+    "Edge.Cuts": "-Edge_Cuts.gm1"
   }
 }
