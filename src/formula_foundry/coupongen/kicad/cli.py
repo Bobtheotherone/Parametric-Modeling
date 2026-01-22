@@ -13,18 +13,123 @@ Satisfies REQ-M1-015 through REQ-M1-017:
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 KicadCliMode = Literal["local", "docker"]
 
 # Default timeout for kicad-cli operations (5 minutes)
 DEFAULT_TIMEOUT_SEC: float = 300.0
+
+# Docker-accessible temp directory for WSL environments
+_WSL_DOCKER_TMP_BASE: Path | None = None
+
+
+def _is_wsl() -> bool:
+    """Detect if running in WSL environment."""
+    try:
+        with open("/proc/version", "r") as f:
+            return "microsoft" in f.read().lower()
+    except (FileNotFoundError, PermissionError):
+        return False
+
+
+def _is_path_docker_accessible(path: Path) -> bool:
+    """Check if a path is accessible to Docker Desktop on WSL.
+
+    In WSL2 with Docker Desktop, paths under /tmp are not accessible because
+    Docker Desktop runs in a separate namespace and can only access paths
+    under the Windows filesystem (/mnt/c, /mnt/d, etc.) or the user's home
+    directory.
+    """
+    if not _is_wsl():
+        return True  # Not WSL, assume Docker can access all paths
+
+    resolved = path.resolve()
+    path_str = str(resolved)
+
+    # Paths under /mnt/ are accessible (Windows filesystem)
+    if path_str.startswith("/mnt/"):
+        return True
+
+    # Paths under user's home directory are accessible
+    home = Path.home()
+    try:
+        resolved.relative_to(home)
+        return True
+    except ValueError:
+        pass
+
+    # /tmp and other system paths are not accessible to Docker Desktop
+    return False
+
+
+def _get_wsl_docker_tmp() -> Path:
+    """Get a Docker-accessible temp directory for WSL environments."""
+    global _WSL_DOCKER_TMP_BASE
+    if _WSL_DOCKER_TMP_BASE is None:
+        _WSL_DOCKER_TMP_BASE = Path.home() / ".coupongen_docker_tmp"
+        _WSL_DOCKER_TMP_BASE.mkdir(parents=True, exist_ok=True)
+    return _WSL_DOCKER_TMP_BASE
+
+
+@contextmanager
+def _docker_accessible_workdir(workdir: Path) -> Iterator[Path]:
+    """Context manager that provides a Docker-accessible working directory.
+
+    If the workdir is already Docker-accessible, yields it directly.
+    Otherwise, copies contents to a Docker-accessible temp directory,
+    yields that, and copies results back on exit.
+
+    Args:
+        workdir: Original working directory.
+
+    Yields:
+        Docker-accessible working directory path.
+    """
+    if _is_path_docker_accessible(workdir):
+        yield workdir
+        return
+
+    # Need to copy to a Docker-accessible location
+    tmp_base = _get_wsl_docker_tmp()
+    tmp_workdir = Path(tempfile.mkdtemp(dir=tmp_base, prefix="kicad_"))
+
+    try:
+        # Copy all files from workdir to tmp_workdir
+        for item in workdir.iterdir():
+            src = workdir / item.name
+            dst = tmp_workdir / item.name
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+        yield tmp_workdir
+
+        # Copy new/modified files back to original workdir
+        for item in tmp_workdir.iterdir():
+            src = tmp_workdir / item.name
+            dst = workdir / item.name
+            if src.is_dir():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(tmp_workdir, ignore_errors=True)
 
 
 class KicadCliError(Exception):
@@ -384,37 +489,58 @@ class KicadCliRunner:
 
         # Combine variable args with command args
         full_args = [*var_args, *args]
-        cmd = self.build_command(full_args, workdir=workdir)
 
         # Determine effective timeout
         effective_timeout: float | None = timeout if timeout is not None else self.default_timeout
         if effective_timeout is not None and effective_timeout <= 0:
             effective_timeout = None
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=workdir,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=effective_timeout,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise KicadCliTimeoutError(
-                timeout_sec=effective_timeout or 0,
-                command=cmd,
-            ) from e
+        # Use Docker-accessible workdir for Docker mode in WSL environments
+        if self.mode == "docker":
+            with _docker_accessible_workdir(workdir) as accessible_workdir:
+                cmd = self.build_command(full_args, workdir=accessible_workdir)
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        cwd=accessible_workdir,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                        timeout=effective_timeout,
+                    )
+                except subprocess.TimeoutExpired as e:
+                    raise KicadCliTimeoutError(
+                        timeout_sec=effective_timeout or 0,
+                        command=cmd,
+                    ) from e
 
-        # On returncode 3 (Failed to load board), collect debug diagnostics
-        if result.returncode == 3 and self.mode == "docker":
-            diagnostics = self._collect_debug_diagnostics(workdir)
-            result = subprocess.CompletedProcess(
-                args=result.args,
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=(result.stderr or "") + diagnostics,
-            )
+                # On returncode 3 (Failed to load board), collect debug diagnostics
+                if result.returncode == 3:
+                    diagnostics = self._collect_debug_diagnostics(accessible_workdir)
+                    result = subprocess.CompletedProcess(
+                        args=result.args,
+                        returncode=result.returncode,
+                        stdout=result.stdout,
+                        stderr=(result.stderr or "") + diagnostics,
+                    )
+        else:
+            # Local mode - no path translation needed
+            cmd = self.build_command(full_args, workdir=workdir)
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=workdir,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=effective_timeout,
+                )
+            except subprocess.TimeoutExpired as e:
+                raise KicadCliTimeoutError(
+                    timeout_sec=effective_timeout or 0,
+                    command=cmd,
+                ) from e
+
         return result
 
     def run_drc(

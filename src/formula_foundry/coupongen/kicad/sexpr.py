@@ -78,6 +78,7 @@ class SExprWriter:
         indent: Number of spaces per indentation level.
         inline_threshold: Maximum list length to keep on a single line.
         newline_after_first: Element names that should have newline after first child.
+        always_inline: Element names that should ALWAYS be inline regardless of length.
     """
 
     indent: int = 2
@@ -88,10 +89,7 @@ class SExprWriter:
                 "kicad_pcb",
                 "footprint",
                 "module",
-                "pad",
                 "zone",
-                "segment",
-                "via",
                 "gr_line",
                 "gr_rect",
                 "gr_circle",
@@ -102,14 +100,37 @@ class SExprWriter:
                 "fp_circle",
                 "fp_arc",
                 "fp_poly",
-                "net",
-                "layer",
-                "layers",
                 "general",
                 "setup",
             }
         )
     )
+    always_inline: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {
+                # Coordinate and property elements that KiCad expects inline
+                "at",
+                "start",
+                "end",
+                "size",
+                "drill",
+                "width",
+                "thickness",
+                "layer",
+                "net",
+                "tstamp",
+                "uuid",
+                # Pad elements - always inline for KiCad compatibility
+                "pad",
+                # Segment and via elements - can be inline
+                "segment",
+                "via",
+            }
+        )
+    )
+    # Note: "layers" is NOT in always_inline because:
+    # - Top-level (layers (0 "F.Cu" signal) ...) must be multiline
+    # - Pad's (layers F.Cu) will be inline due to short length
 
     def write(self, node: SExprNode) -> str:
         """Write S-expression node to string.
@@ -141,11 +162,29 @@ class SExprWriter:
         first = items[0]
         first_str = format_atom(first) if not isinstance(first, list) else ""
 
+        # Check if this element should ALWAYS be inline (KiCad property elements)
+        if first_str in self.always_inline:
+            inline = "(" + " ".join(self._format_inline(item) for item in items) + ")"
+            lines.append(prefix + inline)
+            return
+
+        # Check child lists for always_inline elements to avoid triggering multiline
+        def should_count_child(item: SExprNode) -> bool:
+            """Return True if child list should count toward multiline decision."""
+            if not isinstance(item, list) or not item:
+                return False
+            child_first = item[0]
+            child_str = format_atom(child_first) if not isinstance(child_first, list) else ""
+            # Don't count children that will be inline anyway
+            if child_str in self.always_inline:
+                return False
+            return len(item) > 2
+
         # Decide if we should use multiline format
         use_multiline = (
             len(items) > self.inline_threshold
             or first_str in self.newline_after_first
-            or any(isinstance(item, list) and len(item) > 2 for item in items[1:])
+            or any(should_count_child(item) for item in items[1:])
         )
 
         if not use_multiline:
