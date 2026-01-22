@@ -48,6 +48,24 @@ class TestArtifactRegistryInit:
 
         registry.close()
 
+    def test_initialize_creates_required_indexes(self, tmp_path: Path) -> None:
+        """Test that initialize creates indexes for fast lookup by artifact_id, spec_id, artifact_type."""
+        db_path = tmp_path / "registry.db"
+        registry = ArtifactRegistry(db_path)
+        registry.initialize()
+
+        conn = registry._get_connection()
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        indexes = {row[0] for row in cursor.fetchall()}
+        cursor.close()
+
+        # Required indexes per REQ-M3-003
+        assert "idx_artifacts_spec_id" in indexes
+        assert "idx_artifacts_type" in indexes
+        # artifact_id is PRIMARY KEY so has implicit index
+
+        registry.close()
+
     def test_initialize_idempotent(self, tmp_path: Path) -> None:
         """Test that initialize can be called multiple times safely."""
         db_path = tmp_path / "registry.db"
@@ -605,6 +623,129 @@ class TestArtifactsByHash:
         artifact_ids = {a.artifact_id for a in artifacts}
         assert m1.artifact_id in artifact_ids
         assert m2.artifact_id in artifact_ids
+
+        registry.close()
+
+
+class TestArtifactsBySpecId:
+    """Tests for finding artifacts by spec ID."""
+
+    def test_get_artifact_by_spec_id(self, tmp_path: Path) -> None:
+        """Test finding a single artifact by spec ID."""
+        store = ArtifactStore(tmp_path / "store")
+        registry = ArtifactRegistry(tmp_path / "registry.db")
+        registry.initialize()
+
+        m = store.put(
+            content=b"test content",
+            artifact_type="coupon_spec",
+            roles=["geometry"],
+            run_id="run-001",
+        )
+        registry.index_artifact(m)
+
+        record = registry.get_artifact_by_spec_id(m.spec_id)
+        assert record.artifact_id == m.artifact_id
+        assert record.spec_id == m.spec_id
+
+        registry.close()
+
+    def test_get_artifact_by_spec_id_not_found(self, tmp_path: Path) -> None:
+        """Test that get_artifact_by_spec_id raises for missing spec_id."""
+        registry = ArtifactRegistry(tmp_path / "registry.db")
+        registry.initialize()
+
+        with pytest.raises(ArtifactNotIndexedError):
+            registry.get_artifact_by_spec_id("nonexistent-spec-id")
+
+        registry.close()
+
+    def test_get_artifacts_by_spec_id(self, tmp_path: Path) -> None:
+        """Test finding all artifacts with a given spec ID."""
+        store = ArtifactStore(tmp_path / "store")
+        registry = ArtifactRegistry(tmp_path / "registry.db")
+        registry.initialize()
+
+        # Same content = same spec_id
+        content = b"shared content for spec_id test"
+        m1 = store.put(
+            content=content,
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+        m2 = store.put(
+            content=content,
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-002",
+        )
+
+        registry.index_artifact(m1)
+        registry.index_artifact(m2)
+
+        # Both should have the same spec_id
+        assert m1.spec_id == m2.spec_id
+
+        artifacts = registry.get_artifacts_by_spec_id(m1.spec_id)
+        assert len(artifacts) == 2
+        artifact_ids = {a.artifact_id for a in artifacts}
+        assert m1.artifact_id in artifact_ids
+        assert m2.artifact_id in artifact_ids
+
+        registry.close()
+
+    def test_query_artifacts_by_spec_id(self, tmp_path: Path) -> None:
+        """Test querying artifacts by spec_id filter."""
+        store = ArtifactStore(tmp_path / "store")
+        registry = ArtifactRegistry(tmp_path / "registry.db")
+        registry.initialize()
+
+        m1 = store.put(
+            content=b"content-1",
+            artifact_type="coupon_spec",
+            roles=["geometry"],
+            run_id="run-001",
+        )
+        m2 = store.put(
+            content=b"content-2",
+            artifact_type="coupon_spec",
+            roles=["geometry"],
+            run_id="run-001",
+        )
+
+        registry.index_artifact(m1)
+        registry.index_artifact(m2)
+
+        # Query by spec_id should return only matching artifact
+        results = registry.query_artifacts(spec_id=m1.spec_id)
+        assert len(results) == 1
+        assert results[0].artifact_id == m1.artifact_id
+        assert results[0].spec_id == m1.spec_id
+
+        registry.close()
+
+    def test_spec_id_stored_correctly(self, tmp_path: Path) -> None:
+        """Test that spec_id is stored and retrieved correctly."""
+        store = ArtifactStore(tmp_path / "store")
+        registry = ArtifactRegistry(tmp_path / "registry.db")
+        registry.initialize()
+
+        m = store.put(
+            content=b"some test content",
+            artifact_type="touchstone",
+            roles=["oracle_output"],
+            run_id="run-001",
+        )
+        registry.index_artifact(m)
+
+        record = registry.get_artifact(m.artifact_id)
+
+        # Verify spec_id matches what manifest computes
+        assert record.spec_id == m.spec_id
+        # spec_id should be a 12-character string
+        assert len(record.spec_id) == 12
+        assert record.spec_id.isalnum()
 
         registry.close()
 
