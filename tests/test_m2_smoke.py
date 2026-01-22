@@ -369,6 +369,7 @@ class TestManifestGenerationSmoke:
             "schema_version": 1,
             "simulation_hash": "a" * 64,
             "spec_hash": "b" * 64,
+            "sim_config_hash": "b" * 64,
             "geometry_hash": "c" * 64,
             "design_hash": "d" * 64,
             "coupon_family": "F1_SINGLE_ENDED_VIA",

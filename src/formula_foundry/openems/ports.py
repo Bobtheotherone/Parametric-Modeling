@@ -731,19 +731,25 @@ def calculate_cpwg_impedance(
         return 50.0  # Invalid geometry
 
     # Elliptic integral ratio approximation
+    # For CPW impedance: Z0 = (30 * pi / sqrt(epsilon_r_eff)) * K(k') / K(k)
+    # where k = w / (w + 2*g) and k' = sqrt(1 - k²)
     k_prime = math.sqrt(1 - k * k)
 
-    # Use different approximations based on k value
+    # Compute K(k')/K(k) ratio using standard approximations
+    # For small k (narrow trace, large gap): K(k') is large, K(k) is small, so ratio is large -> high Z0
+    # For large k (wide trace, small gap): K(k') is small, K(k) is large, so ratio is small -> low Z0
     if k <= 0.707:
-        # For small k, use logarithmic approximation
-        if k_prime > 0:
-            ratio = math.pi / math.log(2 * (1 + math.sqrt(k_prime)) / (1 - math.sqrt(k_prime)))
+        # For small k, use logarithmic approximation for K(k')/K(k)
+        if k_prime > 0 and k > 0:
+            # K(k')/K(k) ≈ (1/π) * ln(2(1+√k')/(1-√k')) for k ≤ 0.707
+            ratio = math.log(2 * (1 + math.sqrt(k_prime)) / (1 - math.sqrt(k_prime))) / math.pi
         else:
             ratio = 1.0
     else:
-        # For large k, use alternate approximation
-        if k > 0:
-            ratio = math.log(2 * (1 + math.sqrt(k)) / (1 - math.sqrt(k))) / math.pi
+        # For large k, use alternate approximation for K(k')/K(k)
+        if k > 0 and k_prime > 0:
+            # K(k')/K(k) ≈ π / ln(2(1+√k)/(1-√k)) for k > 0.707
+            ratio = math.pi / math.log(2 * (1 + math.sqrt(k)) / (1 - math.sqrt(k)))
         else:
             ratio = 1.0
 

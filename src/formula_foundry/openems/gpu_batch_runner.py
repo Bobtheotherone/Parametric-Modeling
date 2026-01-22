@@ -673,11 +673,6 @@ class GPUBatchSimulationRunner:
             }
 
             for future in as_completed(future_to_job):
-                if self._stop_requested and self.batch_config.fail_fast:
-                    for f in future_to_job:
-                        f.cancel()
-                    break
-
                 job = future_to_job[future]
                 try:
                     gpu_job_result = future.result()
@@ -715,6 +710,27 @@ class GPUBatchSimulationRunner:
                 if self.batch_config.fail_fast and job_result.status != SimulationStatus.COMPLETED:
                     logger.warning("Fail-fast triggered by job %s", job.job_id)
                     self._stop_requested = True
+
+                # Check stop request AFTER processing current result
+                if self._stop_requested and self.batch_config.fail_fast:
+                    for f in future_to_job:
+                        f.cancel()
+                    break
+
+            # Add SKIPPED results for any jobs that weren't processed
+            processed_job_ids = {r.job_id for r in results}
+            for job in sorted_jobs:
+                if job.job_id not in processed_job_ids:
+                    results.append(SimulationJobResult(
+                        job_id=job.job_id,
+                        status=SimulationStatus.SKIPPED,
+                        error="Batch stopped (fail_fast triggered)",
+                    ))
+                    # Update progress for skipped jobs
+                    with self._progress_lock:
+                        if self._progress:
+                            self._progress.skipped += 1
+                            self._progress.pending -= 1
 
         total_time = time.monotonic() - start_time
 
@@ -1166,15 +1182,17 @@ def estimate_gpu_batch_time(
     Args:
         n_jobs: Number of simulation jobs.
         gpu_config: GPU configuration.
-        batch_config: Batch configuration.
+        batch_config: Batch configuration (unused for GPU estimates).
         n_gpus: Number of available GPUs.
         avg_sim_time_sec: Average time per simulation.
 
     Returns:
         Estimated total time in seconds.
     """
+    # For GPU estimation, use only GPU slots (not RAM-limited batch_config workers)
+    # as GPU execution is limited by VRAM, not system RAM
     total_gpu_slots = n_gpus * gpu_config.max_concurrent_per_gpu
-    effective_workers = min(batch_config.effective_max_workers, total_gpu_slots)
+    effective_workers = max(1, total_gpu_slots)
     batches = (n_jobs + effective_workers - 1) // effective_workers
     return batches * avg_sim_time_sec
 

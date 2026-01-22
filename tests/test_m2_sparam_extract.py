@@ -912,19 +912,49 @@ class TestMultiExcitationExtraction:
         n_samples = 1000
         dt = 1e-12
         time_s = np.arange(n_samples) * dt
-        v1 = np.sin(2 * np.pi * 5e9 * time_s)
-        i1 = v1 / 50.0
+        z0 = 50.0  # Reference impedance
 
-        # P1 excited
+        # Create a signal waveform
+        v_wave = np.sin(2 * np.pi * 5e9 * time_s)
+
+        # S-parameter wave conventions:
+        # V+ = (V + I*Z0)/2 = forward/incident wave (toward load)
+        # V- = (V - I*Z0)/2 = reflected/outgoing wave (away from DUT)
+        # For S11 = V1-/V1+ and S21 = V2-/V1+
+
+        # P1 excited scenario:
+        # At P1: incident wave V1+ and reflected wave V1- (S11 related)
+        # At P2: outgoing/transmitted wave V2- (S21 related), no incident V2+=0
+        v1_plus = v_wave  # Incident at P1
+        v1_minus = 0.2 * np.sin(2 * np.pi * 5e9 * time_s + 0.3)  # Reflected at P1 (~20%)
+        v2_plus = 0.0  # No incident at P2
+        v2_minus = 0.8 * v_wave  # Transmitted to P2 (~80%)
+
+        # Convert back to V, I: V = V+ + V-, I = (V+ - V-)/Z0
+        v1_p1_exc = v1_plus + v1_minus
+        i1_p1_exc = (v1_plus - v1_minus) / z0
+        v2_p1_exc = v2_plus + v2_minus
+        i2_p1_exc = (v2_plus - v2_minus) / z0  # Negative since V- dominates
+
         signals_p1 = [
-            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1, current_a=i1),
-            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1 * 0.8, current_a=i1 * 0.8),
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1_p1_exc, current_a=i1_p1_exc),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v2_p1_exc, current_a=i2_p1_exc),
         ]
 
-        # P2 excited
+        # P2 excited scenario (reciprocal):
+        v2_plus_p2 = v_wave  # Incident at P2
+        v2_minus_p2 = 0.2 * np.sin(2 * np.pi * 5e9 * time_s + 0.3)  # Reflected at P2
+        v1_plus_p2 = 0.0  # No incident at P1
+        v1_minus_p2 = 0.8 * v_wave  # Transmitted to P1
+
+        v1_p2_exc = v1_plus_p2 + v1_minus_p2
+        i1_p2_exc = (v1_plus_p2 - v1_minus_p2) / z0
+        v2_p2_exc = v2_plus_p2 + v2_minus_p2
+        i2_p2_exc = (v2_plus_p2 - v2_minus_p2) / z0
+
         signals_p2 = [
-            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1 * 0.7, current_a=i1 * 0.7),
-            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v1, current_a=i1),
+            PortSignalData(port_id="P1", time_s=time_s, voltage_v=v1_p2_exc, current_a=i1_p2_exc),
+            PortSignalData(port_id="P2", time_s=time_s, voltage_v=v2_p2_exc, current_a=i2_p2_exc),
         ]
 
         signal_sets = MultiPortSignalSet(excitation_sets={"P1": signals_p1, "P2": signals_p2})

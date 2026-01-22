@@ -370,7 +370,7 @@ class EngineSpec(_SpecBase):
     Supports both CPU-based engines (basic, sse, multithreaded) and GPU
     acceleration when available. GPU mode requires NVIDIA Container Toolkit
     and a CUDA-capable GPU. Set use_gpu=True and optionally specify
-    gpu_device_id and gpu_memory_fraction.
+    gpu_device_id, gpu_memory_fraction, or gpu_memory_limit_mb.
     """
 
     type: Literal["basic", "sse", "sse-compressed", "multithreaded"] = Field("multithreaded", description="Engine type")
@@ -379,6 +379,9 @@ class EngineSpec(_SpecBase):
     gpu_device_id: int | None = Field(None, ge=0, description="CUDA device ID (None = auto-select first available)")
     gpu_memory_fraction: float | None = Field(
         None, ge=0.1, le=1.0, description="Fraction of GPU memory to use (0.1-1.0, None = auto)"
+    )
+    gpu_memory_limit_mb: int | None = Field(
+        None, ge=256, description="GPU memory limit in MB (minimum 256 MB, None = auto)"
     )
 
 

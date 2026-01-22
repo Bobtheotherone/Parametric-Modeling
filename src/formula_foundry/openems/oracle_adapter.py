@@ -282,6 +282,7 @@ class OpenEMSAdapter(OracleAdapter):
         # Reconstruct ResolvedDesign from manifest
         resolved_data = manifest["resolved_design"]
         resolved = ResolvedDesign(
+            schema_version=resolved_data.get("schema_version", 1),
             coupon_family=manifest["coupon_family"],
             parameters_nm=resolved_data.get("parameters_nm", {}),
             derived_features=manifest.get("derived_features", {}),
