@@ -336,6 +336,7 @@ class TestGCResult:
             bytes_total_after=9000000,
             pinned_protected=5,
             descendant_protected=3,
+            ancestor_protected=2,
             dvc_gc_ran=False,
             dvc_gc_output=None,
         )
@@ -344,6 +345,7 @@ class TestGCResult:
         assert d["policy_name"] == "test"
         assert d["artifacts_deleted"] == 10
         assert d["bytes_freed"] == 1000000
+        assert d["ancestor_protected"] == 2
 
     def test_to_json(self) -> None:
         result = GCResult(
@@ -358,6 +360,7 @@ class TestGCResult:
             bytes_total_after=9000000,
             pinned_protected=5,
             descendant_protected=3,
+            ancestor_protected=2,
             dvc_gc_ran=False,
             dvc_gc_output=None,
         )
@@ -365,6 +368,7 @@ class TestGCResult:
         j = result.to_json()
         parsed = json.loads(j)
         assert parsed["policy_name"] == "test"
+        assert parsed["ancestor_protected"] == 2
 
 
 class TestFormatBytes:
@@ -422,3 +426,306 @@ class TestGCCandidateShouldDelete:
             reasons_to_keep=[],
         )
         assert candidate.should_delete is False
+
+
+class TestAncestorProtection:
+    """Tests for ancestor-of-pinned protection in garbage collection."""
+
+    @pytest.fixture
+    def gc_with_lineage(self, tmp_path: Path):
+        """Set up a GC environment with store, registry, lineage, and test artifacts."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "objects").mkdir()
+        (data_dir / "manifests").mkdir()
+
+        store = ArtifactStore(
+            root=data_dir,
+            generator="test",
+            generator_version="1.0.0",
+        )
+        store._ensure_dirs()
+
+        registry_db = data_dir / "registry.db"
+        registry = ArtifactRegistry(registry_db)
+        registry.initialize()
+
+        lineage_db = data_dir / "lineage.sqlite"
+        lineage = LineageGraph(lineage_db)
+        lineage.initialize()
+
+        gc = GarbageCollector(
+            data_dir=data_dir,
+            store=store,
+            registry=registry,
+            lineage=lineage,
+        )
+
+        return {
+            "data_dir": data_dir,
+            "store": store,
+            "registry": registry,
+            "lineage": lineage,
+            "gc": gc,
+        }
+
+    def test_ancestor_protected_when_descendant_is_pinned(self, gc_with_lineage) -> None:
+        """Ancestors of pinned artifacts should be protected from deletion."""
+        store = gc_with_lineage["store"]
+        registry = gc_with_lineage["registry"]
+        lineage = gc_with_lineage["lineage"]
+        gc = gc_with_lineage["gc"]
+
+        # Create an ancestor artifact (root input)
+        ancestor_manifest = store.put(
+            content=b"ancestor content",
+            artifact_type="other",
+            roles=["root_input"],
+            run_id="run-001",
+        )
+        registry.index_artifact(ancestor_manifest)
+
+        # Add the ancestor node to lineage graph
+        lineage.add_node(
+            artifact_id=ancestor_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=ancestor_manifest.content_hash.digest,
+        )
+
+        # Create a descendant artifact that depends on the ancestor
+        descendant_manifest = store.put(
+            content=b"descendant content",
+            artifact_type="other",
+            roles=["final_output"],
+            run_id="run-001",
+        )
+        registry.index_artifact(descendant_manifest)
+
+        # Add descendant node to lineage
+        lineage.add_node(
+            artifact_id=descendant_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=descendant_manifest.content_hash.digest,
+        )
+
+        # Add edge from ancestor to descendant (ancestor -> descendant)
+        lineage.add_edge(
+            source_id=ancestor_manifest.artifact_id,
+            target_id=descendant_manifest.artifact_id,
+            relation="derived_from",
+        )
+
+        # Pin the descendant
+        gc.pin_artifact(artifact_id=descendant_manifest.artifact_id, reason="test pinned")
+
+        # Create a policy with very short retention but keep_ancestors_of_pinned=True
+        policy = RetentionPolicy(
+            name="test_policy",
+            keep_min_age_days=0,  # Would delete everything by age
+            keep_min_count=0,  # Would delete everything by count
+            keep_pinned=True,
+            keep_ancestors_of_pinned=True,
+        )
+
+        to_delete, to_keep = gc.compute_candidates(policy)
+
+        # Both should be kept: descendant is pinned, ancestor is ancestor_of_pinned
+        assert len(to_keep) == 2
+        assert len(to_delete) == 0
+
+        # Verify the ancestor is kept because it's an ancestor of the pinned descendant
+        ancestor_candidate = next(
+            (c for c in to_keep if c.artifact_id == ancestor_manifest.artifact_id), None
+        )
+        assert ancestor_candidate is not None
+        assert "ancestor_of_pinned" in ancestor_candidate.reasons_to_keep
+
+    def test_ancestor_not_protected_when_disabled(self, gc_with_lineage) -> None:
+        """When keep_ancestors_of_pinned=False, ancestors can be deleted."""
+        store = gc_with_lineage["store"]
+        registry = gc_with_lineage["registry"]
+        lineage = gc_with_lineage["lineage"]
+        gc = gc_with_lineage["gc"]
+
+        # Create an ancestor artifact
+        ancestor_manifest = store.put(
+            content=b"ancestor content",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+        registry.index_artifact(ancestor_manifest)
+        lineage.add_node(
+            artifact_id=ancestor_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=ancestor_manifest.content_hash.digest,
+        )
+
+        # Create a descendant
+        descendant_manifest = store.put(
+            content=b"descendant content",
+            artifact_type="other",
+            roles=["final_output"],
+            run_id="run-001",
+        )
+        registry.index_artifact(descendant_manifest)
+        lineage.add_node(
+            artifact_id=descendant_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=descendant_manifest.content_hash.digest,
+        )
+        lineage.add_edge(
+            source_id=ancestor_manifest.artifact_id,
+            target_id=descendant_manifest.artifact_id,
+            relation="derived_from",
+        )
+
+        # Pin the descendant
+        gc.pin_artifact(artifact_id=descendant_manifest.artifact_id, reason="test pinned")
+
+        # Create a policy with keep_ancestors_of_pinned=False
+        policy = RetentionPolicy(
+            name="test_policy",
+            keep_min_age_days=0,
+            keep_min_count=0,
+            keep_pinned=True,
+            keep_with_descendants=False,  # Disable this too
+            keep_ancestors_of_pinned=False,  # Disable ancestor protection
+        )
+
+        to_delete, to_keep = gc.compute_candidates(policy)
+
+        # Only the pinned descendant should be kept
+        assert len(to_keep) == 1
+        assert to_keep[0].artifact_id == descendant_manifest.artifact_id
+
+        # The ancestor should be a deletion candidate
+        assert len(to_delete) == 1
+        assert to_delete[0].artifact_id == ancestor_manifest.artifact_id
+
+    def test_get_ancestors_of_pinned(self, gc_with_lineage) -> None:
+        """Test that get_ancestors_of_pinned returns correct set of ancestors."""
+        store = gc_with_lineage["store"]
+        registry = gc_with_lineage["registry"]
+        lineage = gc_with_lineage["lineage"]
+        gc = gc_with_lineage["gc"]
+
+        # Create a chain: root -> middle -> pinned
+        root_manifest = store.put(
+            content=b"root content",
+            artifact_type="other",
+            roles=["root_input"],
+            run_id="run-001",
+        )
+        registry.index_artifact(root_manifest)
+        lineage.add_node(
+            artifact_id=root_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=root_manifest.content_hash.digest,
+        )
+
+        middle_manifest = store.put(
+            content=b"middle content",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+        registry.index_artifact(middle_manifest)
+        lineage.add_node(
+            artifact_id=middle_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=middle_manifest.content_hash.digest,
+        )
+
+        pinned_manifest = store.put(
+            content=b"pinned content",
+            artifact_type="other",
+            roles=["final_output"],
+            run_id="run-001",
+        )
+        registry.index_artifact(pinned_manifest)
+        lineage.add_node(
+            artifact_id=pinned_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=pinned_manifest.content_hash.digest,
+        )
+
+        # Create edges: root -> middle -> pinned
+        lineage.add_edge(
+            source_id=root_manifest.artifact_id,
+            target_id=middle_manifest.artifact_id,
+            relation="derived_from",
+        )
+        lineage.add_edge(
+            source_id=middle_manifest.artifact_id,
+            target_id=pinned_manifest.artifact_id,
+            relation="derived_from",
+        )
+
+        # Pin the final artifact
+        gc.pin_artifact(artifact_id=pinned_manifest.artifact_id, reason="test pinned")
+
+        # Get ancestors of pinned
+        ancestors = gc.get_ancestors_of_pinned()
+
+        # Should contain both root and middle, but not the pinned artifact itself
+        assert len(ancestors) == 2
+        assert root_manifest.artifact_id in ancestors
+        assert middle_manifest.artifact_id in ancestors
+        assert pinned_manifest.artifact_id not in ancestors
+
+    def test_gc_result_tracks_ancestor_protected(self, gc_with_lineage) -> None:
+        """GCResult should track how many artifacts were protected as ancestors."""
+        store = gc_with_lineage["store"]
+        registry = gc_with_lineage["registry"]
+        lineage = gc_with_lineage["lineage"]
+        gc = gc_with_lineage["gc"]
+
+        # Create ancestor -> descendant chain
+        ancestor_manifest = store.put(
+            content=b"ancestor",
+            artifact_type="other",
+            roles=["intermediate"],
+            run_id="run-001",
+        )
+        registry.index_artifact(ancestor_manifest)
+        lineage.add_node(
+            artifact_id=ancestor_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=ancestor_manifest.content_hash.digest,
+        )
+
+        descendant_manifest = store.put(
+            content=b"descendant",
+            artifact_type="other",
+            roles=["final_output"],
+            run_id="run-001",
+        )
+        registry.index_artifact(descendant_manifest)
+        lineage.add_node(
+            artifact_id=descendant_manifest.artifact_id,
+            artifact_type="other",
+            content_hash_digest=descendant_manifest.content_hash.digest,
+        )
+        lineage.add_edge(
+            source_id=ancestor_manifest.artifact_id,
+            target_id=descendant_manifest.artifact_id,
+            relation="derived_from",
+        )
+
+        gc.pin_artifact(artifact_id=descendant_manifest.artifact_id, reason="test")
+
+        # Run GC with policy that would delete by age
+        policy = RetentionPolicy(
+            name="test",
+            keep_min_age_days=0,
+            keep_min_count=0,
+            keep_pinned=True,
+            keep_ancestors_of_pinned=True,
+        )
+
+        result = gc.run(policy=policy, dry_run=True, run_dvc_gc=False)
+
+        # Check that ancestor_protected is tracked
+        assert result.ancestor_protected == 1
+        assert result.pinned_protected == 1
