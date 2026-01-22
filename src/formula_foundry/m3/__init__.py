@@ -60,12 +60,21 @@ from formula_foundry.m3.mlflow_config import (
     log_m3_metrics,
     setup_mlflow_environment,
 )
-from formula_foundry.m3.registry import ArtifactRegistry
+from formula_foundry.m3.registry import (
+    ArtifactNotIndexedError,
+    ArtifactRecord,
+    ArtifactRegistry,
+    DatasetRecord,
+    RegistryError,
+    RunRecord,
+)
 
 __all__ = [
     "ArtifactExistsError",
     "ArtifactManifest",
     "ArtifactNotFoundError",
+    "ArtifactNotIndexedError",
+    "ArtifactRecord",
     "ArtifactRegistry",
     "ArtifactStore",
     "ArtifactStoreError",
@@ -73,6 +82,7 @@ __all__ = [
     "DatasetMember",
     "DatasetNotFoundError",
     "DatasetProvenance",
+    "DatasetRecord",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "DatasetSnapshotReader",
@@ -92,6 +102,8 @@ __all__ = [
     "NodeNotFoundError",
     "ParquetNotAvailableError",
     "Provenance",
+    "RegistryError",
+    "RunRecord",
     "SplitDefinition",
     "StoreLock",
     "compute_manifest_hash",
