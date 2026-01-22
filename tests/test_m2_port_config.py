@@ -7,6 +7,8 @@ These tests validate:
 - De-embedding support for reference plane shifting
 - Port builder functionality
 - Integration with SimulationSpec
+- Gaussian pulse excitation with configurable bandwidth
+- Port impedance validation against transmission line Z0
 """
 
 from __future__ import annotations
@@ -14,14 +16,21 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+import warnings
+
 from formula_foundry.openems import (
     BoardOutlineSpec,
     DeembedConfigSpec,
     DeembedSpec,
     DeembedType,
     DiscontinuitySpec,
+    ExcitationSpec,
+    GaussianPulseSpec,
     GeometrySpec,
+    ImpedanceMismatchError,
+    ImpedanceMismatchWarning,
     ImpedanceSpec,
+    ImpedanceValidationResult,
     LayerSpec,
     PortBuilder,
     PortGeometrySpec,
@@ -32,7 +41,10 @@ from formula_foundry.openems import (
     TransmissionLineSpec,
     WaveguidePortSpec,
     build_ports_from_resolved,
+    calculate_cpwg_impedance,
     load_simulationspec,
+    validate_port_impedance,
+    validate_ports_against_geometry,
     waveguide_port_to_basic_port_spec,
 )
 from formula_foundry.openems.geometry import StackupMaterialsSpec
@@ -695,3 +707,273 @@ class TestPortPosition:
         )
         with pytest.raises(AttributeError):
             pos.x_nm = 2_000_000  # type: ignore[misc]
+
+
+# =============================================================================
+# Gaussian Pulse Excitation Tests (REQ-M2-005)
+# =============================================================================
+
+
+class TestGaussianPulseSpec:
+    """Tests for GaussianPulseSpec model."""
+
+    def test_basic_gaussian_pulse(self) -> None:
+        """Basic Gaussian pulse with fc_hz should validate."""
+        pulse = GaussianPulseSpec(f0_hz=5_000_000_000, fc_hz=10_000_000_000)
+        assert pulse.f0_hz == 5_000_000_000
+        assert pulse.fc_hz == 10_000_000_000
+        assert pulse.compute_fc_hz() == 10_000_000_000
+
+    def test_bandwidth_hz_specification(self) -> None:
+        """Bandwidth can be specified in Hz."""
+        pulse = GaussianPulseSpec(
+            f0_hz=5_000_000_000,  # 5 GHz
+            bandwidth_hz=8_000_000_000,  # 8 GHz bandwidth
+        )
+        # fc = bandwidth / 2 = 4 GHz
+        assert pulse.compute_fc_hz() == 4_000_000_000
+
+    def test_bandwidth_ratio_specification(self) -> None:
+        """Bandwidth can be specified as ratio of f0."""
+        pulse = GaussianPulseSpec(
+            f0_hz=10_000_000_000,  # 10 GHz
+            bandwidth_ratio=2.0,  # f0 ± f0
+        )
+        # fc = f0 * ratio / 2 = 10 GHz
+        assert pulse.compute_fc_hz() == 10_000_000_000
+
+    def test_bandwidth_ratio_priority(self) -> None:
+        """bandwidth_ratio takes priority over other specifications."""
+        pulse = GaussianPulseSpec(
+            f0_hz=10_000_000_000,
+            fc_hz=5_000_000_000,  # Would give fc=5GHz
+            bandwidth_hz=4_000_000_000,  # Would give fc=2GHz
+            bandwidth_ratio=1.0,  # Should give fc=5GHz
+        )
+        # bandwidth_ratio takes priority: fc = 10 * 1.0 / 2 = 5 GHz
+        assert pulse.compute_fc_hz() == 5_000_000_000
+
+    def test_compute_frequency_range(self) -> None:
+        """Pulse should compute min/max frequencies correctly."""
+        pulse = GaussianPulseSpec(
+            f0_hz=10_000_000_000,  # 10 GHz center
+            fc_hz=5_000_000_000,  # 5 GHz cutoff
+        )
+        # f_min = f0 - fc = 5 GHz
+        assert pulse.compute_f_min_hz() == 5_000_000_000
+        # f_max = f0 + fc = 15 GHz
+        assert pulse.compute_f_max_hz() == 15_000_000_000
+
+    def test_no_bandwidth_raises_error(self) -> None:
+        """Missing bandwidth specification should raise error."""
+        pulse = GaussianPulseSpec(f0_hz=5_000_000_000)
+        with pytest.raises(ValueError, match="requires fc_hz"):
+            pulse.compute_fc_hz()
+
+
+class TestExcitationSpecEnhancements:
+    """Tests for enhanced ExcitationSpec with bandwidth configuration."""
+
+    def test_basic_excitation(self) -> None:
+        """Basic excitation with f0 and fc should validate."""
+        exc = ExcitationSpec(
+            type="gaussian",
+            f0_hz=5_000_000_000,
+            fc_hz=10_000_000_000,
+        )
+        assert exc.type == "gaussian"
+        assert exc.compute_effective_fc_hz() == 10_000_000_000
+
+    def test_bandwidth_ratio_in_excitation(self) -> None:
+        """Excitation should support bandwidth_ratio."""
+        exc = ExcitationSpec(
+            type="gaussian",
+            f0_hz=10_000_000_000,
+            fc_hz=5_000_000_000,  # Will be overridden
+            bandwidth_ratio=2.0,
+        )
+        # bandwidth_ratio priority: fc = 10 * 2 / 2 = 10 GHz
+        assert exc.compute_effective_fc_hz() == 10_000_000_000
+
+    def test_to_gaussian_pulse(self) -> None:
+        """Excitation should convert to GaussianPulseSpec."""
+        exc = ExcitationSpec(
+            type="gaussian",
+            f0_hz=5_000_000_000,
+            fc_hz=8_000_000_000,
+            bandwidth_ratio=1.5,
+        )
+        pulse = exc.to_gaussian_pulse()
+        assert isinstance(pulse, GaussianPulseSpec)
+        assert pulse.f0_hz == 5_000_000_000
+        assert pulse.bandwidth_ratio == 1.5
+
+    def test_covers_frequency_range(self) -> None:
+        """Excitation should check frequency range coverage."""
+        exc = ExcitationSpec(
+            type="gaussian",
+            f0_hz=10_000_000_000,  # 10 GHz
+            fc_hz=8_000_000_000,  # 8 GHz cutoff -> range 2-18 GHz
+        )
+
+        # Should cover 5-15 GHz
+        assert exc.covers_frequency_range(5_000_000_000, 15_000_000_000)
+
+        # Should NOT cover 1-20 GHz (extends beyond pulse spectrum)
+        assert not exc.covers_frequency_range(1_000_000_000, 20_000_000_000)
+
+
+# =============================================================================
+# Impedance Validation Tests (REQ-M2-005)
+# =============================================================================
+
+
+class TestCPWGImpedanceCalculation:
+    """Tests for CPWG impedance calculation."""
+
+    def test_calculate_typical_cpwg(self) -> None:
+        """Calculate impedance for typical CPWG dimensions."""
+        z0 = calculate_cpwg_impedance(
+            w_nm=300_000,  # 300 um signal width
+            gap_nm=180_000,  # 180 um gap
+            er=4.2,  # FR4
+        )
+        # Should be in reasonable range for CPWG
+        assert 30.0 < z0 < 80.0
+
+    def test_narrow_trace_higher_impedance(self) -> None:
+        """Narrower trace should have higher impedance."""
+        z_narrow = calculate_cpwg_impedance(w_nm=200_000, gap_nm=180_000, er=4.2)
+        z_wide = calculate_cpwg_impedance(w_nm=400_000, gap_nm=180_000, er=4.2)
+        assert z_narrow > z_wide
+
+    def test_larger_gap_higher_impedance(self) -> None:
+        """Larger gap should have higher impedance."""
+        z_small_gap = calculate_cpwg_impedance(w_nm=300_000, gap_nm=100_000, er=4.2)
+        z_large_gap = calculate_cpwg_impedance(w_nm=300_000, gap_nm=250_000, er=4.2)
+        assert z_large_gap > z_small_gap
+
+    def test_invalid_dimensions_fallback(self) -> None:
+        """Invalid dimensions should return 50 Ohm fallback."""
+        assert calculate_cpwg_impedance(w_nm=0, gap_nm=180_000, er=4.2) == 50.0
+        assert calculate_cpwg_impedance(w_nm=300_000, gap_nm=0, er=4.2) == 50.0
+
+
+class TestImpedanceValidation:
+    """Tests for port impedance validation."""
+
+    def test_validate_matching_impedance(self) -> None:
+        """Matching impedance should be valid."""
+        port = WaveguidePortSpec(
+            id="P1",
+            position_nm=(0, 0, 0),
+            direction="x",
+            impedance=ImpedanceSpec(z0_ohm=50.0),
+        )
+        result = validate_port_impedance(port, line_z0_ohm=48.5)
+
+        assert result.is_valid
+        assert result.mismatch_percent < 10.0
+        assert "matches" in result.message.lower()
+
+    def test_validate_warning_level_mismatch(self) -> None:
+        """Moderate mismatch should trigger warning."""
+        port = WaveguidePortSpec(
+            id="P1",
+            position_nm=(0, 0, 0),
+            direction="x",
+            impedance=ImpedanceSpec(z0_ohm=50.0),
+        )
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = validate_port_impedance(
+                port,
+                line_z0_ohm=42.0,  # ~19% mismatch
+                tolerance_percent=10.0,
+                error_threshold_percent=25.0,
+            )
+
+            # Should be valid but warn
+            assert result.is_valid
+            assert result.mismatch_percent > 10.0
+            assert len(w) == 1
+            assert issubclass(w[0].category, ImpedanceMismatchWarning)
+
+    def test_validate_error_level_mismatch(self) -> None:
+        """Large mismatch should raise error."""
+        port = WaveguidePortSpec(
+            id="P1",
+            position_nm=(0, 0, 0),
+            direction="x",
+            impedance=ImpedanceSpec(z0_ohm=50.0),
+        )
+
+        with pytest.raises(ImpedanceMismatchError) as exc_info:
+            validate_port_impedance(
+                port,
+                line_z0_ohm=35.0,  # ~43% mismatch
+                error_threshold_percent=25.0,
+            )
+
+        assert exc_info.value.result.mismatch_percent > 25.0
+        assert not exc_info.value.result.is_valid
+
+    def test_validate_strict_mode(self) -> None:
+        """Strict mode should use tolerance as error threshold."""
+        port = WaveguidePortSpec(
+            id="P1",
+            position_nm=(0, 0, 0),
+            direction="x",
+            impedance=ImpedanceSpec(z0_ohm=50.0),
+        )
+
+        # In strict mode, even warning-level mismatch fails is_valid
+        result = validate_port_impedance(
+            port,
+            line_z0_ohm=44.0,  # ~14% mismatch
+            tolerance_percent=10.0,
+            strict=True,
+        )
+
+        assert not result.is_valid
+        assert result.mismatch_percent > 10.0
+
+
+class TestValidatePortsAgainstGeometry:
+    """Tests for validating ports against geometry."""
+
+    def test_validate_all_ports(self, sample_geometry_spec: GeometrySpec) -> None:
+        """Validate all ports against geometry."""
+        builder = PortBuilder(geometry=sample_geometry_spec)
+        p1, p2 = builder.build_transmission_line_ports((-25_000_000, 0), (25_000_000, 0))
+
+        results = validate_ports_against_geometry(
+            [p1, p2],
+            sample_geometry_spec,
+            tolerance_percent=20.0,  # Relaxed for test
+            error_threshold_percent=50.0,
+        )
+
+        assert len(results) == 2
+        assert all(isinstance(r, ImpedanceValidationResult) for r in results)
+
+    def test_validation_result_attributes(self, sample_geometry_spec: GeometrySpec) -> None:
+        """Validation results should have all required attributes."""
+        builder = PortBuilder(geometry=sample_geometry_spec)
+        port = builder.build_connector_port("P1", (0, 0))
+
+        results = validate_ports_against_geometry(
+            [port],
+            sample_geometry_spec,
+            tolerance_percent=50.0,
+            error_threshold_percent=75.0,
+        )
+
+        result = results[0]
+        assert result.port_id == "P1"
+        assert result.port_z0_ohm == 50.0
+        assert result.line_z0_ohm > 0
+        assert 0 <= result.mismatch_percent <= 100
+        assert isinstance(result.is_valid, bool)
+        assert result.tolerance_percent == 50.0
