@@ -77,9 +77,12 @@ from .geometry_adapter import (
 )
 from .manifest import (
     ConvergenceMetrics,
+    GPUDeviceInfo,
     M2ManifestBuilder,
     MeshStatistics,
     PortConfiguration,
+    SolverVersionInfo,
+    SParamFileHashes,
     build_m2_manifest,
     load_m2_manifest,
     manifest_hash,
@@ -334,11 +337,14 @@ __all__ = [
     "load_multi_port_signals_json",
     "load_port_signals_json",
     "write_extraction_result",
-    # M2 Manifest generation (REQ-M2-018)
+    # M2 Manifest generation (REQ-M2-018, REQ-M2-008)
     "ConvergenceMetrics",
+    "GPUDeviceInfo",
     "M2ManifestBuilder",
     "MeshStatistics",
     "PortConfiguration",
+    "SolverVersionInfo",
+    "SParamFileHashes",
     "build_m2_manifest",
     "load_m2_manifest",
     "manifest_hash",

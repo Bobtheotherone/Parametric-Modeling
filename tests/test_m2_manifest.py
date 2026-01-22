@@ -1,4 +1,4 @@
-"""Tests for M2 manifest generation (REQ-M2-018).
+"""Tests for M2 manifest generation (REQ-M2-018, REQ-M2-008).
 
 This module tests the M2 manifest generation functionality including:
 - MeshStatistics computation
@@ -8,6 +8,12 @@ This module tests the M2 manifest generation functionality including:
 - Full manifest building
 - Manifest validation
 - Manifest I/O
+
+REQ-M2-008 extensions tested:
+- SolverVersionInfo for solver provenance
+- GPUDeviceInfo for GPU device tracking
+- SParamFileHashes for S-parameter file integrity
+- sim_config_hash for simulation configuration provenance
 """
 
 from __future__ import annotations
@@ -21,10 +27,13 @@ from formula_foundry.coupongen.resolve import design_hash, resolve
 from formula_foundry.coupongen.spec import CouponSpec
 from formula_foundry.openems import (
     ConvergenceMetrics,
+    GPUDeviceInfo,
     M2ManifestBuilder,
     MeshStatistics,
     PortConfiguration,
     SimulationRunner,
+    SolverVersionInfo,
+    SParamFileHashes,
     build_m2_manifest,
     load_m2_manifest,
     manifest_hash,
@@ -783,6 +792,7 @@ class TestManifestValidation:
             "ports": [{}],
             "outputs": [],
             "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
         }
 
         errors = validate_m2_manifest(manifest)
@@ -807,6 +817,7 @@ class TestManifestValidation:
             "ports": [{}],
             "outputs": [],
             "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
         }
 
         errors = validate_m2_manifest(manifest)
@@ -831,6 +842,7 @@ class TestManifestValidation:
             "ports": [{}],
             "outputs": [],
             "lineage": {},  # Missing git_sha and timestamp_utc
+            "sim_config_hash": "g" * 64,
         }
 
         errors = validate_m2_manifest(manifest)
@@ -856,8 +868,583 @@ class TestManifestValidation:
             "ports": [],  # Empty
             "outputs": [],
             "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
         }
 
         errors = validate_m2_manifest(manifest)
 
         assert any("at least one port" in e for e in errors)
+
+
+# =============================================================================
+# REQ-M2-008: SolverVersionInfo Tests
+# =============================================================================
+
+
+class TestSolverVersionInfo:
+    """Tests for SolverVersionInfo dataclass (REQ-M2-008)."""
+
+    def test_to_dict_minimal(self) -> None:
+        """Test SolverVersionInfo.to_dict with minimal fields."""
+        solver_info = SolverVersionInfo(
+            openems_version="0.0.35",
+        )
+
+        result = solver_info.to_dict()
+
+        assert result["openems_version"] == "0.0.35"
+        assert result["mode"] == "local"
+        assert "csxcad_version" not in result
+        assert "docker_image" not in result
+
+    def test_to_dict_full(self) -> None:
+        """Test SolverVersionInfo.to_dict with all fields."""
+        solver_info = SolverVersionInfo(
+            openems_version="0.0.35",
+            csxcad_version="0.6.2",
+            mode="docker",
+            docker_image="ghcr.io/thliebig/openems:0.0.35@sha256:abc123",
+        )
+
+        result = solver_info.to_dict()
+
+        assert result["openems_version"] == "0.0.35"
+        assert result["csxcad_version"] == "0.6.2"
+        assert result["mode"] == "docker"
+        assert result["docker_image"] == "ghcr.io/thliebig/openems:0.0.35@sha256:abc123"
+
+    def test_to_dict_none_version(self) -> None:
+        """Test SolverVersionInfo.to_dict when version is unknown."""
+        solver_info = SolverVersionInfo(
+            openems_version=None,
+            mode="local",
+        )
+
+        result = solver_info.to_dict()
+
+        assert result["openems_version"] is None
+        assert result["mode"] == "local"
+
+
+# =============================================================================
+# REQ-M2-008: GPUDeviceInfo Tests
+# =============================================================================
+
+
+class TestGPUDeviceInfo:
+    """Tests for GPUDeviceInfo dataclass (REQ-M2-008)."""
+
+    def test_to_dict_minimal(self) -> None:
+        """Test GPUDeviceInfo.to_dict with minimal fields."""
+        gpu_info = GPUDeviceInfo(
+            device_id=0,
+            device_name="NVIDIA A100",
+        )
+
+        result = gpu_info.to_dict()
+
+        assert result["device_id"] == 0
+        assert result["device_name"] == "NVIDIA A100"
+        assert "compute_capability" not in result
+        assert "memory_total_mb" not in result
+        assert "driver_version" not in result
+        assert "cuda_version" not in result
+
+    def test_to_dict_full(self) -> None:
+        """Test GPUDeviceInfo.to_dict with all fields."""
+        gpu_info = GPUDeviceInfo(
+            device_id=0,
+            device_name="NVIDIA A100",
+            compute_capability="8.0",
+            memory_total_mb=40960,
+            driver_version="535.104.05",
+            cuda_version="12.2",
+        )
+
+        result = gpu_info.to_dict()
+
+        assert result["device_id"] == 0
+        assert result["device_name"] == "NVIDIA A100"
+        assert result["compute_capability"] == "8.0"
+        assert result["memory_total_mb"] == 40960
+        assert result["driver_version"] == "535.104.05"
+        assert result["cuda_version"] == "12.2"
+
+
+# =============================================================================
+# REQ-M2-008: SParamFileHashes Tests
+# =============================================================================
+
+
+class TestSParamFileHashes:
+    """Tests for SParamFileHashes dataclass (REQ-M2-008)."""
+
+    def test_to_dict_empty(self) -> None:
+        """Test SParamFileHashes.to_dict with no hashes."""
+        hashes = SParamFileHashes()
+
+        result = hashes.to_dict()
+
+        assert result == {}
+
+    def test_to_dict_touchstone_only(self) -> None:
+        """Test SParamFileHashes.to_dict with only touchstone hash."""
+        hashes = SParamFileHashes(
+            touchstone_hash="a" * 64,
+        )
+
+        result = hashes.to_dict()
+
+        assert result["touchstone_hash"] == "a" * 64
+        assert "csv_hash" not in result
+        assert "additional_files" not in result
+
+    def test_to_dict_full(self) -> None:
+        """Test SParamFileHashes.to_dict with all fields."""
+        hashes = SParamFileHashes(
+            touchstone_hash="a" * 64,
+            csv_hash="b" * 64,
+            additional_files={
+                "sparams_raw.json": "c" * 64,
+                "port_signals.json": "d" * 64,
+            },
+        )
+
+        result = hashes.to_dict()
+
+        assert result["touchstone_hash"] == "a" * 64
+        assert result["csv_hash"] == "b" * 64
+        assert result["additional_files"]["sparams_raw.json"] == "c" * 64
+        assert result["additional_files"]["port_signals.json"] == "d" * 64
+
+
+# =============================================================================
+# REQ-M2-008: Extended M2ManifestBuilder Tests
+# =============================================================================
+
+
+class TestM2ManifestBuilderREQM2008:
+    """Tests for M2ManifestBuilder REQ-M2-008 extensions."""
+
+    def test_builder_with_solver_version(self, tmp_path: Path) -> None:
+        """Test builder with solver version info (REQ-M2-008)."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        solver_info = SolverVersionInfo(
+            openems_version="0.0.35",
+            csxcad_version="0.6.2",
+            mode="docker",
+        )
+
+        builder = M2ManifestBuilder(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+        builder.with_solver_version(solver_info)
+        manifest = builder.build()
+
+        assert "solver_version" in manifest
+        assert manifest["solver_version"]["openems_version"] == "0.0.35"
+        assert manifest["solver_version"]["csxcad_version"] == "0.6.2"
+        assert manifest["solver_version"]["mode"] == "docker"
+
+    def test_builder_with_solver_version_from_metadata(self, tmp_path: Path) -> None:
+        """Test builder with solver version from runner metadata (REQ-M2-008)."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        # Simulate version_metadata() output from OpenEMSRunner
+        version_metadata = {
+            "mode": "docker",
+            "docker_image": "ghcr.io/thliebig/openems:0.0.35",
+            "openems_version": "0.0.35",
+            "csxcad_version": "0.6.2",
+        }
+
+        builder = M2ManifestBuilder(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+        builder.with_solver_version_from_metadata(version_metadata)
+        manifest = builder.build()
+
+        assert "solver_version" in manifest
+        assert manifest["solver_version"]["openems_version"] == "0.0.35"
+        assert manifest["solver_version"]["docker_image"] == "ghcr.io/thliebig/openems:0.0.35"
+
+    def test_builder_with_gpu_device_info(self, tmp_path: Path) -> None:
+        """Test builder with GPU device info (REQ-M2-008)."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        gpu_info = GPUDeviceInfo(
+            device_id=0,
+            device_name="NVIDIA RTX 4090",
+            compute_capability="8.9",
+            memory_total_mb=24576,
+        )
+
+        builder = M2ManifestBuilder(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+        builder.with_gpu_device_info(gpu_info)
+        manifest = builder.build()
+
+        assert "gpu_device_info" in manifest
+        assert manifest["gpu_device_info"]["device_id"] == 0
+        assert manifest["gpu_device_info"]["device_name"] == "NVIDIA RTX 4090"
+        assert manifest["gpu_device_info"]["compute_capability"] == "8.9"
+        assert manifest["gpu_device_info"]["memory_total_mb"] == 24576
+
+    def test_builder_with_sparam_file_hashes(self, tmp_path: Path) -> None:
+        """Test builder with S-parameter file hashes (REQ-M2-008)."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        sparam_hashes = SParamFileHashes(
+            touchstone_hash="a" * 64,
+            csv_hash="b" * 64,
+        )
+
+        builder = M2ManifestBuilder(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+        builder.with_sparam_file_hashes(sparam_hashes)
+        manifest = builder.build()
+
+        assert "sparam_file_hashes" in manifest
+        assert manifest["sparam_file_hashes"]["touchstone_hash"] == "a" * 64
+        assert manifest["sparam_file_hashes"]["csv_hash"] == "b" * 64
+
+    def test_builder_includes_sim_config_hash(self, tmp_path: Path) -> None:
+        """Test builder always includes sim_config_hash (REQ-M2-008)."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        builder = M2ManifestBuilder(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+        manifest = builder.build()
+
+        # sim_config_hash should always be present and match spec_hash
+        assert "sim_config_hash" in manifest
+        assert len(manifest["sim_config_hash"]) == 64
+        assert manifest["sim_config_hash"] == manifest["spec_hash"]
+
+    def test_builder_full_req_m2_008_chain(self, tmp_path: Path) -> None:
+        """Test builder with all REQ-M2-008 fields via chaining."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = (
+            M2ManifestBuilder(
+                spec=simulation,
+                geometry=geometry,
+                simulation_result=result,
+            )
+            .with_solver_version(
+                SolverVersionInfo(openems_version="0.0.35", mode="docker")
+            )
+            .with_gpu_device_info(
+                GPUDeviceInfo(device_id=0, device_name="NVIDIA A100")
+            )
+            .with_sparam_file_hashes(
+                SParamFileHashes(touchstone_hash="x" * 64)
+            )
+            .with_convergence_from_spec()
+            .with_m1_manifest("y" * 64)
+            .with_git_sha("z" * 40)
+            .with_timestamp("2025-01-01T00:00:00Z")
+            .build()
+        )
+
+        # Verify all REQ-M2-008 fields present
+        assert "sim_config_hash" in manifest
+        assert "solver_version" in manifest
+        assert "gpu_device_info" in manifest
+        assert "sparam_file_hashes" in manifest
+
+        # Verify design_hash links to upstream (already present)
+        assert "design_hash" in manifest
+        assert manifest["design_hash"] == geometry.design_hash
+
+
+# =============================================================================
+# REQ-M2-008: Extended build_m2_manifest Tests
+# =============================================================================
+
+
+class TestBuildM2ManifestREQM2008:
+    """Tests for build_m2_manifest REQ-M2-008 extensions."""
+
+    def test_build_with_solver_version(self, tmp_path: Path) -> None:
+        """Test build_m2_manifest with solver version."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = build_m2_manifest(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+            solver_version=SolverVersionInfo(
+                openems_version="0.0.35",
+                csxcad_version="0.6.2",
+            ),
+        )
+
+        assert "solver_version" in manifest
+        assert manifest["solver_version"]["openems_version"] == "0.0.35"
+
+    def test_build_with_gpu_device_info(self, tmp_path: Path) -> None:
+        """Test build_m2_manifest with GPU device info."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = build_m2_manifest(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+            gpu_device_info=GPUDeviceInfo(
+                device_id=0,
+                device_name="NVIDIA A100",
+            ),
+        )
+
+        assert "gpu_device_info" in manifest
+        assert manifest["gpu_device_info"]["device_name"] == "NVIDIA A100"
+
+    def test_build_with_sparam_file_hashes(self, tmp_path: Path) -> None:
+        """Test build_m2_manifest with S-param file hashes."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = build_m2_manifest(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+            sparam_file_hashes=SParamFileHashes(
+                touchstone_hash="h" * 64,
+            ),
+        )
+
+        assert "sparam_file_hashes" in manifest
+        assert manifest["sparam_file_hashes"]["touchstone_hash"] == "h" * 64
+
+    def test_build_always_includes_sim_config_hash(self, tmp_path: Path) -> None:
+        """Test build_m2_manifest always includes sim_config_hash."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = build_m2_manifest(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+        )
+
+        assert "sim_config_hash" in manifest
+        assert len(manifest["sim_config_hash"]) == 64
+
+
+# =============================================================================
+# REQ-M2-008: Extended Validation Tests
+# =============================================================================
+
+
+class TestManifestValidationREQM2008:
+    """Tests for manifest validation with REQ-M2-008 fields."""
+
+    def test_missing_sim_config_hash(self) -> None:
+        """Test validation catches missing sim_config_hash."""
+        manifest = {
+            "schema_version": 1,
+            "simulation_hash": "a" * 64,
+            "spec_hash": "b" * 64,
+            "geometry_hash": "c" * 64,
+            "design_hash": "d" * 64,
+            "coupon_family": "F1_SINGLE_ENDED_VIA",
+            "toolchain": {},
+            "toolchain_hash": "e" * 64,
+            "frequency_sweep": {},
+            "excitation": {},
+            "boundaries": {},
+            "mesh_config": {},
+            "ports": [{}],
+            "outputs": [],
+            "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            # Missing sim_config_hash
+        }
+
+        errors = validate_m2_manifest(manifest)
+
+        assert any("sim_config_hash" in e for e in errors)
+
+    def test_invalid_sim_config_hash(self) -> None:
+        """Test validation catches invalid sim_config_hash."""
+        manifest = {
+            "schema_version": 1,
+            "simulation_hash": "a" * 64,
+            "spec_hash": "b" * 64,
+            "geometry_hash": "c" * 64,
+            "design_hash": "d" * 64,
+            "coupon_family": "F1_SINGLE_ENDED_VIA",
+            "toolchain": {},
+            "toolchain_hash": "e" * 64,
+            "frequency_sweep": {},
+            "excitation": {},
+            "boundaries": {},
+            "mesh_config": {},
+            "ports": [{}],
+            "outputs": [],
+            "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "tooshort",  # Invalid
+        }
+
+        errors = validate_m2_manifest(manifest)
+
+        assert any("sim_config_hash" in e and "64-character" in e for e in errors)
+
+    def test_invalid_solver_version_structure(self) -> None:
+        """Test validation catches invalid solver_version structure."""
+        manifest = {
+            "schema_version": 1,
+            "simulation_hash": "a" * 64,
+            "spec_hash": "b" * 64,
+            "geometry_hash": "c" * 64,
+            "design_hash": "d" * 64,
+            "coupon_family": "F1_SINGLE_ENDED_VIA",
+            "toolchain": {},
+            "toolchain_hash": "e" * 64,
+            "frequency_sweep": {},
+            "excitation": {},
+            "boundaries": {},
+            "mesh_config": {},
+            "ports": [{}],
+            "outputs": [],
+            "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
+            "solver_version": {"openems_version": "0.0.35"},  # Missing mode
+        }
+
+        errors = validate_m2_manifest(manifest)
+
+        assert any("solver_version.mode" in e for e in errors)
+
+    def test_invalid_gpu_device_info_structure(self) -> None:
+        """Test validation catches invalid gpu_device_info structure."""
+        manifest = {
+            "schema_version": 1,
+            "simulation_hash": "a" * 64,
+            "spec_hash": "b" * 64,
+            "geometry_hash": "c" * 64,
+            "design_hash": "d" * 64,
+            "coupon_family": "F1_SINGLE_ENDED_VIA",
+            "toolchain": {},
+            "toolchain_hash": "e" * 64,
+            "frequency_sweep": {},
+            "excitation": {},
+            "boundaries": {},
+            "mesh_config": {},
+            "ports": [{}],
+            "outputs": [],
+            "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
+            "gpu_device_info": {"device_id": 0},  # Missing device_name
+        }
+
+        errors = validate_m2_manifest(manifest)
+
+        assert any("gpu_device_info.device_name" in e for e in errors)
+
+    def test_invalid_sparam_file_hashes_structure(self) -> None:
+        """Test validation catches invalid sparam_file_hashes structure."""
+        manifest = {
+            "schema_version": 1,
+            "simulation_hash": "a" * 64,
+            "spec_hash": "b" * 64,
+            "geometry_hash": "c" * 64,
+            "design_hash": "d" * 64,
+            "coupon_family": "F1_SINGLE_ENDED_VIA",
+            "toolchain": {},
+            "toolchain_hash": "e" * 64,
+            "frequency_sweep": {},
+            "excitation": {},
+            "boundaries": {},
+            "mesh_config": {},
+            "ports": [{}],
+            "outputs": [],
+            "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2025-01-01T00:00:00Z"},
+            "sim_config_hash": "g" * 64,
+            "sparam_file_hashes": {"touchstone_hash": "short"},  # Invalid hash
+        }
+
+        errors = validate_m2_manifest(manifest)
+
+        assert any("sparam_file_hashes.touchstone_hash" in e for e in errors)
+
+    def test_valid_manifest_with_all_req_m2_008_fields(self, tmp_path: Path) -> None:
+        """Test validation passes with all REQ-M2-008 fields."""
+        simulation, geometry = _build_test_inputs()
+        runner = SimulationRunner(mode="stub")
+        output_dir = tmp_path / "run"
+
+        result = runner.run(simulation, geometry, output_dir=output_dir)
+
+        manifest = build_m2_manifest(
+            spec=simulation,
+            geometry=geometry,
+            simulation_result=result,
+            solver_version=SolverVersionInfo(
+                openems_version="0.0.35",
+                mode="docker",
+            ),
+            gpu_device_info=GPUDeviceInfo(
+                device_id=0,
+                device_name="NVIDIA A100",
+            ),
+            sparam_file_hashes=SParamFileHashes(
+                touchstone_hash="h" * 64,
+            ),
+        )
+
+        errors = validate_m2_manifest(manifest)
+
+        assert errors == []
