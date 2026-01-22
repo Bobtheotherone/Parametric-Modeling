@@ -698,11 +698,6 @@ def _compute_f1_layout(
         length_right = xR - xD (derived to ensure segments meet)
 
     where xL is the left signal pad X and xR is the right signal pad X.
-
-    For via transitions:
-    - The left segment is on the specified trace_layer (e.g., F.Cu)
-    - The via transitions from trace_layer to the back layer (B.Cu)
-    - The right segment is on B.Cu so the via is properly connected
     """
     # Discontinuity position: xD = xL + length_left
     x_disc_nm = left_port.signal_pad_x_nm + length_left_nm
@@ -717,12 +712,7 @@ def _compute_f1_layout(
             f"Derived right length would be negative ({derived_right_length})."
         )
 
-    # Determine the via transition target layer
-    # For via transitions, left trace is on trace_layer, right trace is on B.Cu
-    # This ensures the via properly connects both layers
-    via_target_layer = "B.Cu" if trace_layer == "F.Cu" else "F.Cu"
-
-    # Left segment: from left signal pad to discontinuity (on entry layer)
+    # Left segment: from left signal pad to discontinuity
     left_segment = SegmentPlan(
         x_start_nm=left_port.signal_pad_x_nm,
         x_end_nm=x_disc_nm,
@@ -733,14 +723,13 @@ def _compute_f1_layout(
         label="left",
     )
 
-    # Right segment: from discontinuity to right signal pad (on exit layer)
-    # The via transitions from trace_layer to via_target_layer
+    # Right segment: from discontinuity to right signal pad
     right_segment = SegmentPlan(
         x_start_nm=x_disc_nm,
         x_end_nm=right_port.signal_pad_x_nm,
         y_nm=right_port.signal_pad_y_nm,
         width_nm=trace_width_nm,
-        layer=via_target_layer,
+        layer=trace_layer,
         net_name="SIG",
         label="right",
     )
