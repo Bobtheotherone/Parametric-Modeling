@@ -463,3 +463,264 @@ class TestGlobalTracker:
 
         # Clean up
         logger._tracker = None
+
+
+# ---------------------------------------------------------------------------
+# Test SR (Symbolic Regression) run tracking
+# ---------------------------------------------------------------------------
+
+
+class TestSRRunTracking:
+    """Test experiment tracking for SR (Symbolic Regression) runs.
+
+    Verifies REQ-M3-006: Configure MLflow tracking for SR runs with
+    hyperparameters, metrics, and artifact references.
+    """
+
+    def test_sr_run_hyperparameters(self, tmp_path: Path) -> None:
+        """Test logging SR run hyperparameters."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-001",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+        ) as ctx:
+            # Log SR hyperparameters as specified in config/mlflow.yaml
+            ctx.log_param("formula_complexity", 10)
+            ctx.log_param("dataset_version", "v1.0.0")
+            ctx.log_param("search_algorithm", "genetic_programming")
+
+            # Verify params are stored in metadata
+            assert ctx.metadata.params["formula_complexity"] == 10
+            assert ctx.metadata.params["dataset_version"] == "v1.0.0"
+            assert ctx.metadata.params["search_algorithm"] == "genetic_programming"
+
+    def test_sr_run_metrics(self, tmp_path: Path) -> None:
+        """Test logging SR run metrics."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-002",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+        ) as ctx:
+            # Log SR metrics as specified in config/mlflow.yaml
+            ctx.log_metric("rmse", 0.05)
+            ctx.log_metric("r_squared", 0.95)
+            ctx.log_metric("formula_complexity_score", 8.5)
+            ctx.log_metric("parsimony_score", 0.75)
+
+            # Verify metrics are stored in metadata
+            assert ctx.metadata.metrics["rmse"] == [(0.05, None)]
+            assert ctx.metadata.metrics["r_squared"] == [(0.95, None)]
+            assert ctx.metadata.metrics["formula_complexity_score"] == [(8.5, None)]
+            assert ctx.metadata.metrics["parsimony_score"] == [(0.75, None)]
+
+    def test_sr_run_metrics_with_steps(self, tmp_path: Path) -> None:
+        """Test logging SR run metrics with step numbers (for training curves)."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-003",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+        ) as ctx:
+            # Log metrics across generations/iterations
+            for step in range(5):
+                ctx.log_metric("rmse", 0.1 - step * 0.01, step=step)
+
+            # Verify all steps are recorded
+            assert len(ctx.metadata.metrics["rmse"]) == 5
+            assert ctx.metadata.metrics["rmse"][0] == (0.1, 0)
+            # Use approximate comparison for floating point
+            value, recorded_step = ctx.metadata.metrics["rmse"][4]
+            assert abs(value - 0.06) < 1e-9
+            assert recorded_step == 4
+
+    def test_sr_run_artifact_references(self, tmp_path: Path) -> None:
+        """Test logging artifact references (not duplicating large files)."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-004",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+        ) as ctx:
+            # Log artifact reference (simulating discovered formula output)
+            ctx.log_artifact(
+                logical_path="formulas/best_formula.json",
+                digest="abc123def456" * 5 + "ab",  # 64 char digest
+                size_bytes=2048,
+            )
+
+            # Verify run context maintains the reference (actual logging depends on MLflow)
+            assert ctx.metadata.run_id.startswith("m3run-")
+
+    def test_sr_run_batch_metrics(self, tmp_path: Path) -> None:
+        """Test logging multiple metrics at once."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-005",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+        ) as ctx:
+            # Log batch metrics
+            ctx.log_metrics({
+                "rmse": 0.03,
+                "r_squared": 0.97,
+                "formula_complexity_score": 5.2,
+            })
+
+            # Verify all metrics logged
+            assert "rmse" in ctx.metadata.metrics
+            assert "r_squared" in ctx.metadata.metrics
+            assert "formula_complexity_score" in ctx.metadata.metrics
+
+    def test_sr_run_tags(self, tmp_path: Path) -> None:
+        """Test setting SR run tags."""
+        from formula_foundry.m3.mlflow_config import M3Tracker
+
+        tracker = M3Tracker(project_root=tmp_path)
+
+        with tracker.start_run(
+            run_name="sr-run-006",
+            experiment_name="ff-m5-symbolic",
+            stage_name="symbolic_regression",
+            tags={"git_sha": "a" * 40},
+        ) as ctx:
+            # Add more tags
+            ctx.set_tag("dataset_hash", "b" * 64)
+            ctx.set_tags({"formula_type": "polynomial", "order": "3"})
+
+            # Verify tags
+            assert ctx.metadata.tags["git_sha"] == "a" * 40
+            assert ctx.metadata.tags["dataset_hash"] == "b" * 64
+            assert ctx.metadata.tags["formula_type"] == "polynomial"
+            assert ctx.metadata.tags["order"] == "3"
+
+
+class TestM3RunMetadata:
+    """Test M3RunMetadata serialization."""
+
+    def test_metadata_to_dict(self, tmp_path: Path) -> None:
+        """Test M3RunMetadata.to_dict()."""
+        from formula_foundry.m3.mlflow_config import M3RunMetadata
+
+        metadata = M3RunMetadata(
+            run_id="m3run-test-001",
+            experiment_id="exp-001",
+            mlflow_run_id="mlflow-run-001",
+            started_utc="2024-01-15T10:00:00Z",
+            hostname="test-host",
+            username="testuser",
+            stage_name="symbolic_regression",
+            tags={"git_sha": "abc123"},
+            params={"complexity": 10},
+            metrics={"rmse": [(0.05, None)]},
+        )
+
+        d = metadata.to_dict()
+
+        assert d["run_id"] == "m3run-test-001"
+        assert d["experiment_id"] == "exp-001"
+        assert d["mlflow_run_id"] == "mlflow-run-001"
+        assert d["started_utc"] == "2024-01-15T10:00:00Z"
+        assert d["hostname"] == "test-host"
+        assert d["username"] == "testuser"
+        assert d["stage_name"] == "symbolic_regression"
+        assert d["tags"] == {"git_sha": "abc123"}
+        assert d["params"] == {"complexity": 10}
+        assert d["metrics"] == {"rmse": [(0.05, None)]}
+
+    def test_metadata_to_json(self, tmp_path: Path) -> None:
+        """Test M3RunMetadata.to_json()."""
+        from formula_foundry.m3.mlflow_config import M3RunMetadata
+
+        metadata = M3RunMetadata(
+            run_id="m3run-test-002",
+            experiment_id="exp-002",
+            mlflow_run_id="mlflow-run-002",
+            started_utc="2024-01-15T11:00:00Z",
+            hostname="test-host",
+        )
+
+        json_str = metadata.to_json()
+
+        # Should be valid JSON
+        import json as json_mod
+
+        parsed = json_mod.loads(json_str)
+        assert parsed["run_id"] == "m3run-test-002"
+
+
+class TestM3TrackerHelperFunctions:
+    """Test M3 tracker helper functions."""
+
+    def test_setup_mlflow_environment(self, tmp_path: Path) -> None:
+        """Test setup_mlflow_environment creates directories."""
+        import os
+
+        from formula_foundry.m3.mlflow_config import setup_mlflow_environment
+
+        # Create a minimal mlflow.yaml config
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "mlflow.yaml").write_text("""
+tracking:
+  backend_store_uri: "sqlite:///data/mlflow/mlruns.db"
+  artifact_root: "data/mlflow/artifacts"
+  default_experiment: "test"
+""")
+
+        config = setup_mlflow_environment(project_root=tmp_path)
+
+        # Verify directories created
+        assert (tmp_path / "data" / "mlflow" / "artifacts").exists()
+        assert (tmp_path / "data" / "mlflow").exists()
+
+        # Verify environment variables set
+        assert "MLFLOW_TRACKING_URI" in os.environ
+        assert "MLFLOW_ARTIFACT_ROOT" in os.environ
+
+    def test_get_m3_tracker_singleton(self, tmp_path: Path) -> None:
+        """Test get_m3_tracker returns singleton instance."""
+        from formula_foundry.m3 import mlflow_config
+
+        # Reset singleton
+        mlflow_config._m3_tracker = None
+
+        tracker1 = mlflow_config.get_m3_tracker(project_root=tmp_path)
+        tracker2 = mlflow_config.get_m3_tracker()
+
+        assert tracker1 is tracker2
+
+        # Clean up
+        mlflow_config._m3_tracker = None
+
+    def test_log_m3_metric_noop(self) -> None:
+        """Test log_m3_metric works without active run."""
+        from formula_foundry.m3.mlflow_config import log_m3_metric
+
+        # Should not raise even without active run
+        log_m3_metric("test_metric", 1.0)
+        log_m3_metric("test_metric", 2.0, step=1)
+
+    def test_log_m3_metrics_noop(self) -> None:
+        """Test log_m3_metrics works without active run."""
+        from formula_foundry.m3.mlflow_config import log_m3_metrics
+
+        # Should not raise even without active run
+        log_m3_metrics({"metric1": 1.0, "metric2": 2.0})
+        log_m3_metrics({"metric1": 1.5}, step=1)
