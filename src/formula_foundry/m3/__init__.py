@@ -34,6 +34,7 @@ from formula_foundry.m3.dataset_snapshot import (
     DatasetSnapshotReader,
     DatasetSnapshotWriter,
     DatasetStatistics,
+    IncrementalSnapshotBuilder,
     ParquetNotAvailableError,
     SplitDefinition,
     compute_manifest_hash,
@@ -77,7 +78,11 @@ __all__ = [
     "DatasetSnapshotReader",
     "DatasetSnapshotWriter",
     "DatasetStatistics",
+<<<<<<< HEAD
     "FileLock",
+=======
+    "IncrementalSnapshotBuilder",
+>>>>>>> task/20260122T044813Z/M3-DATASET-SNAPSHOT
     "Lineage",
     "LineageEdge",
     "LineageGraph",
