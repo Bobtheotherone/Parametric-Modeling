@@ -38,3 +38,4 @@ venv/
 /.dvc/tmp/
 /artifacts/
 /data/
+mlflow.db
