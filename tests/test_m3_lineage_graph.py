@@ -826,6 +826,182 @@ class TestThreadSafety:
         graph.close()
 
 
+class TestSpecializedQueries:
+    """Tests for specialized query methods."""
+
+    def test_find_ancestors_by_type(self, tmp_path: Path) -> None:
+        """Test finding ancestors filtered by artifact type."""
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        # Create: spec -> design -> board -> touchstone
+        graph.add_node("spec-001", "coupon_spec", "h1")
+        graph.add_node("design-001", "resolved_design", "h2")
+        graph.add_node("board-001", "kicad_board", "h3")
+        graph.add_node("touchstone-001", "touchstone", "h4")
+
+        graph.add_edge("spec-001", "design-001", "derived_from")
+        graph.add_edge("design-001", "board-001", "derived_from")
+        graph.add_edge("board-001", "touchstone-001", "derived_from")
+
+        # Find coupon_spec ancestors of touchstone
+        specs = graph.find_ancestors_by_type("touchstone-001", "coupon_spec")
+        assert len(specs) == 1
+        assert specs[0].artifact_id == "spec-001"
+
+        # Find resolved_design ancestors
+        designs = graph.find_ancestors_by_type("touchstone-001", "resolved_design")
+        assert len(designs) == 1
+        assert designs[0].artifact_id == "design-001"
+
+        graph.close()
+
+    def test_find_descendants_by_type(self, tmp_path: Path) -> None:
+        """Test finding descendants filtered by artifact type."""
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        # Create: spec -> design -> gerber, touchstone
+        graph.add_node("spec-001", "coupon_spec", "h1")
+        graph.add_node("design-001", "resolved_design", "h2")
+        graph.add_node("gerber-001", "gerber", "h3")
+        graph.add_node("touchstone-001", "touchstone", "h4")
+
+        graph.add_edge("spec-001", "design-001", "derived_from")
+        graph.add_edge("design-001", "gerber-001", "derived_from")
+        graph.add_edge("design-001", "touchstone-001", "derived_from")
+
+        # Find touchstone descendants of spec
+        touchstones = graph.find_descendants_by_type("spec-001", "touchstone")
+        assert len(touchstones) == 1
+        assert touchstones[0].artifact_id == "touchstone-001"
+
+        graph.close()
+
+    def test_trace_sparam_to_geometry(self, tmp_path: Path) -> None:
+        """Test tracing S-parameter artifact back to geometry."""
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        # Create typical simulation pipeline:
+        # spec -> design -> sim_config -> touchstone
+        graph.add_node("spec-001", "coupon_spec", "h1")
+        graph.add_node("design-001", "resolved_design", "h2")
+        graph.add_node("sim-config", "em_simulation_config", "h3")
+        graph.add_node("touchstone-001", "touchstone", "h4")
+
+        graph.add_edge("spec-001", "design-001", "derived_from")
+        graph.add_edge("design-001", "sim-config", "config_from")
+        graph.add_edge("sim-config", "touchstone-001", "derived_from")
+
+        geometries = graph.trace_sparam_to_geometry("touchstone-001")
+
+        # Should find both spec and design
+        geometry_ids = {g.artifact_id for g in geometries}
+        assert geometry_ids == {"spec-001", "design-001"}
+
+        graph.close()
+
+    def test_get_artifact_run_info(self, tmp_path: Path) -> None:
+        """Test getting artifact run information."""
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        graph.add_node(
+            artifact_id="art-001",
+            artifact_type="touchstone",
+            content_hash_digest="abc123",
+            run_id="run-2026-001",
+            stage_name="simulation",
+            created_utc="2026-01-20T10:00:00Z",
+        )
+
+        info = graph.get_artifact_run_info("art-001")
+
+        assert info["artifact_id"] == "art-001"
+        assert info["run_id"] == "run-2026-001"
+        assert info["stage_name"] == "simulation"
+        assert info["created_utc"] == "2026-01-20T10:00:00Z"
+
+        graph.close()
+
+    def test_get_full_lineage_chain(self, tmp_path: Path) -> None:
+        """Test getting the full lineage chain in topological order."""
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        # Create: root1, root2 -> mid -> leaf
+        graph.add_node("root1", "coupon_spec", "h1")
+        graph.add_node("root2", "config", "h2")
+        graph.add_node("mid", "resolved_design", "h3")
+        graph.add_node("leaf", "touchstone", "h4")
+
+        graph.add_edge("root1", "mid", "derived_from")
+        graph.add_edge("root2", "mid", "config_from")
+        graph.add_edge("mid", "leaf", "derived_from")
+
+        chain = graph.get_full_lineage_chain("leaf")
+
+        # Chain should be in topological order (roots first, leaf last)
+        chain_ids = [c["artifact_id"] for c in chain]
+        assert len(chain_ids) == 4
+
+        # Roots should come before mid, mid before leaf
+        assert chain_ids.index("root1") < chain_ids.index("mid")
+        assert chain_ids.index("root2") < chain_ids.index("mid")
+        assert chain_ids.index("mid") < chain_ids.index("leaf")
+
+        graph.close()
+
+    def test_find_ancestors_by_role_with_store(self, tmp_path: Path) -> None:
+        """Test finding ancestors by role using artifact store."""
+        from formula_foundry.m3.artifact_store import ArtifactStore, LineageReference
+
+        store = ArtifactStore(tmp_path / "store")
+        graph = LineageGraph(tmp_path / "lineage.sqlite")
+        graph.initialize()
+
+        # Create spec with geometry role
+        spec_manifest = store.put(
+            content=b"spec content",
+            artifact_type="coupon_spec",
+            roles=["geometry", "root_input"],
+            run_id="run-001",
+            artifact_id="spec-001",
+        )
+        graph.add_manifest(spec_manifest)
+
+        # Create design with geometry role
+        design_manifest = store.put(
+            content=b"design content",
+            artifact_type="resolved_design",
+            roles=["geometry"],
+            run_id="run-001",
+            artifact_id="design-001",
+            inputs=[LineageReference(artifact_id="spec-001", relation="derived_from")],
+        )
+        graph.add_manifest(design_manifest)
+
+        # Create touchstone without geometry role
+        ts_manifest = store.put(
+            content=b"touchstone content",
+            artifact_type="touchstone",
+            roles=["oracle_output"],
+            run_id="run-001",
+            artifact_id="touchstone-001",
+            inputs=[LineageReference(artifact_id="design-001", relation="derived_from")],
+        )
+        graph.add_manifest(ts_manifest)
+
+        # Find geometry-role ancestors
+        geometry_ancestors = graph.find_ancestors_by_role("touchstone-001", "geometry", store=store)
+
+        geometry_ids = {g.artifact_id for g in geometry_ancestors}
+        assert geometry_ids == {"spec-001", "design-001"}
+
+        graph.close()
+
+
 class TestComplexLineage:
     """Tests for complex lineage scenarios."""
 
