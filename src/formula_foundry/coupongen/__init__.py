@@ -77,7 +77,14 @@ from .layer_validation import (
 from .manifest import ManifestPaths, build_manifest, load_manifest, toolchain_hash, write_manifest
 from .paths import FOOTPRINT_LIB_DIR, REPO_ROOT
 from .resolve import ResolvedDesign, design_hash, resolve, resolved_design_canonical_json
-from .spec import COUPONSPEC_SCHEMA, CouponSpec, load_couponspec
+from .spec import (
+    COUPONSPEC_SCHEMA,
+    COUPONSPEC_SCHEMA_PATH,
+    CouponSpec,
+    get_json_schema,
+    load_couponspec,
+    validate_against_json_schema,
+)
 from .stackups import (
     STACKUP_SCHEMA,
     STACKUPS_DIR,
@@ -111,6 +118,7 @@ from .units import LengthNM, parse_length_nm
 __all__ = [
     # Schemas
     "COUPONSPEC_SCHEMA",
+    "COUPONSPEC_SCHEMA_PATH",
     "FAB_PROFILE_SCHEMA",
     "STACKUP_SCHEMA",
     # Paths
@@ -180,6 +188,7 @@ __all__ = [
     "evaluate_constraints",
     "export_fab",
     "generate_kicad",
+    "get_json_schema",
     "load_couponspec",
     "load_manifest",
     "load_spec",
@@ -191,6 +200,7 @@ __all__ = [
     "resolved_design_canonical_json",
     "run_drc",
     "toolchain_hash",
+    "validate_against_json_schema",
     "validate_family",
     "validate_spec",
     "write_manifest",

@@ -14,6 +14,7 @@ from formula_foundry.coupongen.spec import (
     get_json_schema,
     load_couponspec,
     load_couponspec_from_file,
+    validate_against_json_schema,
 )
 
 
@@ -241,3 +242,83 @@ def test_load_couponspec_file_not_found_raises() -> None:
     """Missing file must raise FileNotFoundError."""
     with pytest.raises(FileNotFoundError, match="not found"):
         load_couponspec_from_file("/nonexistent/path/to/spec.json")
+
+
+def test_json_schema_validates_with_jsonschema_library() -> None:
+    """REQ-M1-001: JSON Schema must be valid and usable by jsonschema library."""
+    jsonschema = pytest.importorskip("jsonschema")
+    from jsonschema import Draft202012Validator
+
+    schema = get_json_schema()
+
+    # Schema must be a valid JSON Schema draft 2020-12
+    Draft202012Validator.check_schema(schema)
+
+    # A valid spec must pass validation
+    data = _example_spec_data()
+    validator = Draft202012Validator(schema)
+    errors = list(validator.iter_errors(data))
+    assert len(errors) == 0, f"Valid spec should pass: {errors}"
+
+    # An invalid spec must fail validation
+    invalid_data = _example_spec_data()
+    del invalid_data["schema_version"]  # type: ignore[arg-type]
+    errors = list(validator.iter_errors(invalid_data))
+    assert len(errors) > 0, "Invalid spec without schema_version should fail"
+
+
+def test_json_schema_length_right_nm_optional() -> None:
+    """REQ-M1-001: length_right_nm should be optional (derived for F1 coupons)."""
+    jsonschema = pytest.importorskip("jsonschema")
+    from jsonschema import Draft202012Validator
+
+    schema = get_json_schema()
+    validator = Draft202012Validator(schema)
+
+    # F1-style spec without length_right_nm should be valid
+    data = _example_spec_data()
+    del data["transmission_line"]["length_right_nm"]  # type: ignore[arg-type]
+    errors = list(validator.iter_errors(data))
+    assert len(errors) == 0, f"F1-style spec without length_right_nm should pass: {errors}"
+
+
+def test_pydantic_and_json_schema_in_sync() -> None:
+    """REQ-M1-001: Pydantic model and JSON Schema file must have matching required fields."""
+    schema = get_json_schema()
+
+    # Check top-level required fields
+    required = set(schema.get("required", []))
+    expected_required = {
+        "schema_version",
+        "coupon_family",
+        "toolchain",
+        "fab_profile",
+        "stackup",
+        "board",
+        "connectors",
+        "transmission_line",
+        "constraints",
+        "export",
+    }
+    assert required == expected_required, f"Required fields mismatch: {required} vs {expected_required}"
+
+    # Check that discontinuity is optional (anyOf with null)
+    props = schema.get("properties", {})
+    disc_schema = props.get("discontinuity", {})
+    assert "anyOf" in disc_schema or "default" in disc_schema, "discontinuity should be optional"
+
+
+def test_validate_against_json_schema_valid() -> None:
+    """REQ-M1-001: validate_against_json_schema should return empty list for valid specs."""
+    data = _example_spec_data()
+    errors = validate_against_json_schema(data)
+    assert len(errors) == 0, f"Valid spec should pass: {errors}"
+
+
+def test_validate_against_json_schema_invalid() -> None:
+    """REQ-M1-001: validate_against_json_schema should return errors for invalid specs."""
+    data = _example_spec_data()
+    del data["schema_version"]  # type: ignore[arg-type]
+    errors = validate_against_json_schema(data)
+    assert len(errors) > 0, "Invalid spec without schema_version should fail"
+    assert any("schema_version" in err for err in errors)
