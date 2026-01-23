@@ -33,6 +33,12 @@ DEFAULT_TIMEOUT_SEC: float = 300.0
 # Docker-accessible temp directory for WSL environments
 _WSL_DOCKER_TMP_BASE: Path | None = None
 
+# Environment variable overrides for WSL workaround
+# COUPONGEN_DOCKER_TMP_BASE: Override the temp directory location for Docker-accessible workdirs
+# COUPONGEN_DISABLE_WSL_WORKDIR_COPY: Set to "1" to disable the WSL workdir copy workaround
+_ENV_DOCKER_TMP_BASE = "COUPONGEN_DOCKER_TMP_BASE"
+_ENV_DISABLE_WSL_COPY = "COUPONGEN_DISABLE_WSL_WORKDIR_COPY"
+
 
 def _is_wsl() -> bool:
     """Detect if running in WSL environment."""
@@ -50,7 +56,13 @@ def _is_path_docker_accessible(path: Path) -> bool:
     Docker Desktop runs in a separate namespace and can only access paths
     under the Windows filesystem (/mnt/c, /mnt/d, etc.) or the user's home
     directory.
+
+    Can be disabled via COUPONGEN_DISABLE_WSL_WORKDIR_COPY=1 environment variable.
     """
+    # Allow disabling the WSL workaround via env var
+    if os.environ.get(_ENV_DISABLE_WSL_COPY) == "1":
+        return True
+
     if not _is_wsl():
         return True  # Not WSL, assume Docker can access all paths
 
@@ -74,10 +86,17 @@ def _is_path_docker_accessible(path: Path) -> bool:
 
 
 def _get_wsl_docker_tmp() -> Path:
-    """Get a Docker-accessible temp directory for WSL environments."""
+    """Get a Docker-accessible temp directory for WSL environments.
+
+    Can be overridden via COUPONGEN_DOCKER_TMP_BASE environment variable.
+    """
     global _WSL_DOCKER_TMP_BASE
     if _WSL_DOCKER_TMP_BASE is None:
-        _WSL_DOCKER_TMP_BASE = Path.home() / ".coupongen_docker_tmp"
+        env_override = os.environ.get(_ENV_DOCKER_TMP_BASE)
+        if env_override:
+            _WSL_DOCKER_TMP_BASE = Path(env_override)
+        else:
+            _WSL_DOCKER_TMP_BASE = Path.home() / ".coupongen_docker_tmp"
         _WSL_DOCKER_TMP_BASE.mkdir(parents=True, exist_ok=True)
     return _WSL_DOCKER_TMP_BASE
 
@@ -447,6 +466,18 @@ class KicadCliRunner:
                 diagnostics.append("[TIMEOUT]")
             except Exception as e:
                 diagnostics.append(f"[ERROR: {e}]")
+
+        # Check for WSL mount issue
+        if _is_wsl():
+            diagnostics.append("\n--- WSL Mount Check ---")
+            diagnostics.append(
+                "Running in WSL. If /workspace appears empty, this indicates a Docker "
+                "Desktop mount issue. Paths under /tmp are not accessible to Docker Desktop "
+                "in WSL2. The workaround should copy files to ~/.coupongen_docker_tmp/, "
+                "but if you see this error, the workaround may not have triggered."
+            )
+            diagnostics.append(f"Original workdir: {workdir}")
+            diagnostics.append(f"Is docker accessible: {_is_path_docker_accessible(workdir)}")
 
         diagnostics.append("\n" + "=" * 60)
         return "\n".join(diagnostics)

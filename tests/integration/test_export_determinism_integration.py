@@ -675,12 +675,13 @@ class TestLayerSetValidation:
         export_paths = _get_export_paths_from_manifest(manifest)
 
         # Validate layer set using the layer_validation module
+        # Manifest paths include fab/ prefix (e.g., fab/gerbers/..., fab/drill/...)
         try:
             validation_result = validate_layer_set(
                 export_paths=export_paths,
                 copper_layers=copper_layers,
                 family=coupon_family,
-                gerber_dir="gerbers/",
+                gerber_dir="fab/gerbers/",
                 strict=True,
             )
             assert validation_result.passed, (
@@ -752,7 +753,7 @@ class TestF0LayerSetComplete:
         layer_set = get_layer_set_for_copper_count(copper_layers)
 
         # Verify required layers are in exports
-        gerber_exports = [p for p in export_paths if p.startswith("gerbers/")]
+        gerber_exports = [p for p in export_paths if p.startswith("fab/gerbers/")]
 
         assert len(gerber_exports) >= len(layer_set.required), (
             f"Expected at least {len(layer_set.required)} gerber exports, "
@@ -824,7 +825,7 @@ class TestF1LayerSetComplete:
         layer_set = get_layer_set_for_copper_count(copper_layers)
 
         # Verify required layers are in exports
-        gerber_exports = [p for p in export_paths if p.startswith("gerbers/")]
+        gerber_exports = [p for p in export_paths if p.startswith("fab/gerbers/")]
 
         assert len(gerber_exports) >= len(layer_set.required), (
             f"Expected at least {len(layer_set.required)} gerber exports, "
@@ -908,11 +909,13 @@ class TestFullDeterminismSuite:
             assert len(drill_files) > 0, f"No drill files (run {run_idx + 1})"
 
             # Verify layer set
+            # Manifest paths include fab/ prefix (e.g., fab/gerbers/..., fab/drill/...)
             export_paths = _get_export_paths_from_manifest(manifest)
             result_validation = validate_layer_set(
                 export_paths=export_paths,
                 copper_layers=copper_layers,
                 family=coupon_family,
+                gerber_dir="fab/gerbers/",
                 strict=False,
             )
             assert result_validation.passed, (

@@ -752,11 +752,12 @@ class TestG4GoldenSpecsExportCompleteness:
         export_paths = [e["path"] for e in manifest["exports"]]
 
         # Validate layer set with strict=True (oracle path)
+        # Manifest paths include fab/ prefix (e.g., fab/gerbers/..., fab/drill/...)
         validation_result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=copper_layers,
             family=family,
-            gerber_dir="gerbers/",
+            gerber_dir="fab/gerbers/",
             strict=True,
         )
         assert validation_result.passed is True, (

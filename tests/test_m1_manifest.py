@@ -154,9 +154,10 @@ def test_manifest_required_fields(tmp_path: Path) -> None:
     assert "exclusions" in drc_summary
 
     exports = {entry["path"]: entry["hash"] for entry in manifest["exports"]}
+    # Export paths include fab/ prefix (files are under output_dir/fab/)
     expected_exports = {
-        "gerbers/F.Cu.gbr": canonical_hash_export_text("G04 Created*\nX0Y0D02*\n"),
-        "drill/drill.drl": canonical_hash_export_text("M48\n"),
+        "fab/gerbers/F.Cu.gbr": canonical_hash_export_text("G04 Created*\nX0Y0D02*\n"),
+        "fab/drill/drill.drl": canonical_hash_export_text("M48\n"),
     }
     assert exports == expected_exports
 
