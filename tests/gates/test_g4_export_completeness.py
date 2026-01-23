@@ -120,6 +120,21 @@ class _FakeExportRunner:
         if self.copper_layers >= 6:
             copper_layer_names = ["F.Cu", "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "B.Cu"]
 
+        # KiCad Gerber extension mapping (industry-standard extensions)
+        layer_extension_map = {
+            "F.Cu": ".gtl",
+            "B.Cu": ".gbl",
+            "In1.Cu": ".g1",
+            "In2.Cu": ".g2",
+            "In3.Cu": ".g3",
+            "In4.Cu": ".g4",
+            "F.Mask": ".gts",
+            "B.Mask": ".gbs",
+            "F.SilkS": ".gto",
+            "B.SilkS": ".gbo",
+            "Edge.Cuts": ".gm1",
+        }
+
         layers = [
             *[(layer, f"G04 {layer}*") for layer in copper_layer_names],
             ("F.SilkS", "G04 Top Silkscreen*"),
@@ -134,9 +149,10 @@ class _FakeExportRunner:
                 f"{self.seed}:{layer_name}".encode()
             ).hexdigest()[:8]
             content = f"{content_start}\nG04 Hash={content_hash}*\nX0Y0D02*\nM02*\n"
-            # Convert layer name to KiCad filename format: board-F_Cu.gbr
+            # Convert layer name to KiCad filename format with proper extension
             kicad_layer = layer_name.replace(".", "_")
-            kicad_filename = f"{board_name}-{kicad_layer}.gbr"
+            extension = layer_extension_map.get(layer_name, ".gbr")
+            kicad_filename = f"{board_name}-{kicad_layer}{extension}"
             (out_dir / kicad_filename).write_text(content, encoding="utf-8")
 
         return subprocess.CompletedProcess(
@@ -331,38 +347,50 @@ class TestG4LayerExtraction:
     """Gate G4 tests for layer extraction from export paths."""
 
     def test_extracts_copper_layers(self) -> None:
-        """Should extract copper layer names from Gerber paths."""
+        """Should extract copper layer names from Gerber paths.
+
+        Uses KiCad's standard Gerber extensions (.gtl, .gbl) per layer_sets.json.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert "F.Cu" in layers
         assert "B.Cu" in layers
 
     def test_extracts_inner_copper_layers(self) -> None:
-        """Should extract inner copper layer names."""
+        """Should extract inner copper layer names.
+
+        Uses KiCad's standard inner layer extensions (.g1, .g2).
+        """
         export_paths = [
-            "gerbers/board-In1_Cu.gbr",
-            "gerbers/board-In2_Cu.gbr",
+            "gerbers/board-In1_Cu.g1",
+            "gerbers/board-In2_Cu.g2",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert "In1.Cu" in layers
         assert "In2.Cu" in layers
 
     def test_extracts_mask_layers(self) -> None:
-        """Should extract mask layer names."""
+        """Should extract mask layer names.
+
+        Uses KiCad's standard soldermask extensions (.gts, .gbs).
+        """
         export_paths = [
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert "F.Mask" in layers
         assert "B.Mask" in layers
 
     def test_extracts_edge_cuts(self) -> None:
-        """Should extract Edge.Cuts layer."""
-        export_paths = ["gerbers/board-Edge_Cuts.gbr"]
+        """Should extract Edge.Cuts layer.
+
+        Uses KiCad's standard mechanical layer extension (.gm1).
+        """
+        export_paths = ["gerbers/board-Edge_Cuts.gm1"]
         layers = extract_layers_from_exports(export_paths)
         assert "Edge.Cuts" in layers
 
@@ -376,10 +404,13 @@ class TestG4LayerExtraction:
         assert len(layers) == 0
 
     def test_respects_gerber_dir_filter(self) -> None:
-        """Should only extract from specified gerber directory."""
+        """Should only extract from specified gerber directory.
+
+        Uses KiCad's standard extensions (.gtl, .gbl).
+        """
         export_paths = [
-            "fab/board-F_Cu.gbr",
-            "other/board-B_Cu.gbr",
+            "fab/board-F_Cu.gtl",
+            "other/board-B_Cu.gbl",
         ]
         layers = extract_layers_from_exports(export_paths, gerber_dir="fab/")
         assert "F.Cu" in layers
@@ -395,22 +426,27 @@ class TestG4LayerExtraction:
 class TestG4LayerSetValidation:
     """Gate G4 tests for layer set validation logic."""
 
-    def test_valid_4_layer_set_passes(self) -> None:
-        """Complete 4-layer export set should pass validation."""
+    def test_valid_4_layer_set_passes_strict(self) -> None:
+        """Complete 4-layer export set should pass validation with strict=True.
+
+        Uses KiCad's standard Gerber extensions per layer_sets.json.
+        This is the oracle pass-case: a complete export must not trigger
+        LayerSetValidationError when strict=True.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-In1_Cu.gbr",
-            "gerbers/board-In2_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-In1_Cu.g1",
+            "gerbers/board-In2_Cu.g2",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
         result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=4,
             family="F1_SINGLE_ENDED_VIA",
-            strict=False,
+            strict=True,
         )
         assert result.passed is True
         assert len(result.missing_layers) == 0
@@ -418,12 +454,12 @@ class TestG4LayerSetValidation:
     def test_missing_inner_layers_fails(self) -> None:
         """Missing inner copper layers should fail validation."""
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
             # Missing In1.Cu, In2.Cu
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
         result = validate_layer_set(
             export_paths=export_paths,
@@ -436,12 +472,15 @@ class TestG4LayerSetValidation:
         assert "In2.Cu" in result.missing_layers
 
     def test_missing_mask_layers_fails(self) -> None:
-        """Missing mask layers should fail validation."""
+        """Missing mask layers should fail validation.
+
+        Uses KiCad's standard Gerber extensions per layer_sets.json.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
             # Missing F.Mask, B.Mask
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
         result = validate_layer_set(
             export_paths=export_paths,
@@ -454,12 +493,15 @@ class TestG4LayerSetValidation:
         assert "B.Mask" in result.missing_layers
 
     def test_missing_edge_cuts_fails(self) -> None:
-        """Missing Edge.Cuts should fail validation."""
+        """Missing Edge.Cuts should fail validation.
+
+        Uses KiCad's standard Gerber extensions per layer_sets.json.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
             # Missing Edge.Cuts
         ]
         result = validate_layer_set(
@@ -473,7 +515,7 @@ class TestG4LayerSetValidation:
 
     def test_strict_mode_raises_exception(self) -> None:
         """Strict mode should raise LayerSetValidationError on failure."""
-        export_paths = ["gerbers/board-F_Cu.gbr"]
+        export_paths = ["gerbers/board-F_Cu.gtl"]
         with pytest.raises(LayerSetValidationError) as exc_info:
             validate_layer_set(
                 export_paths=export_paths,
@@ -483,21 +525,26 @@ class TestG4LayerSetValidation:
             )
         assert exc_info.value.result.passed is False
 
-    def test_validation_result_has_all_fields(self) -> None:
-        """Validation result should have all required fields."""
+    def test_validation_result_has_all_fields_strict(self) -> None:
+        """Validation result should have all required fields with strict=True.
+
+        Uses KiCad's standard Gerber extensions per layer_sets.json.
+        This is an oracle pass-case: complete exports must pass strict validation.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
         result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=2,
             family="F0_CAL_THRU_LINE",
-            strict=False,
+            strict=True,
         )
+        assert result.passed is True
         assert hasattr(result, "passed")
         assert hasattr(result, "missing_layers")
         assert hasattr(result, "expected_layers")
@@ -672,20 +719,26 @@ class TestG4GoldenSpecsExportCompleteness:
             f"Spec {spec_path.name}: Expected ≥1 drill export, got {len(drill_exports)}"
         )
 
-    def test_golden_spec_layer_set_valid(self, tmp_path: Path) -> None:
-        """Golden spec exports should have valid layer sets."""
-        specs = _collect_golden_specs()
-        if not specs:
-            pytest.skip("No golden specs available")
+    @pytest.mark.parametrize(
+        "spec_path",
+        _collect_golden_specs(),
+        ids=lambda p: p.name,
+    )
+    def test_golden_spec_layer_set_valid_strict(
+        self, spec_path: Path, tmp_path: Path
+    ) -> None:
+        """Each golden spec export should have valid layer sets with strict=True.
 
+        This is the oracle pass-case for layer validation: ALL golden specs
+        must produce exports that pass strict layer set validation.
+        Per M1 oracle requirements, we validate EVERY golden spec (not just specs[0]).
+        """
         from formula_foundry.coupongen import build_coupon
 
-        # Test first spec
-        spec_path = specs[0]
         spec = load_spec(spec_path)
         copper_layers = spec.stackup.copper_layers
         family = spec.coupon_family
-        runner = _FakeExportRunner(seed="test", copper_layers=copper_layers)
+        runner = _FakeExportRunner(seed=spec_path.name, copper_layers=copper_layers)
 
         result = build_coupon(
             spec,
@@ -698,16 +751,17 @@ class TestG4GoldenSpecsExportCompleteness:
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
         export_paths = [e["path"] for e in manifest["exports"]]
 
-        # Validate layer set
+        # Validate layer set with strict=True (oracle path)
         validation_result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=copper_layers,
             family=family,
             gerber_dir="gerbers/",
-            strict=False,
+            strict=True,
         )
-        assert validation_result.passed, (
-            f"Layer validation failed: missing {validation_result.missing_layers}"
+        assert validation_result.passed is True, (
+            f"Layer validation failed for {spec_path.name}: "
+            f"missing {validation_result.missing_layers}"
         )
 
 
@@ -739,9 +793,21 @@ class TestG4GerberExtensionMapping:
         assert "B.Mask" in ext_map
 
     def test_extension_format(self) -> None:
-        """Extensions should end with .gbr."""
+        """Extensions should use standard KiCad Gerber extensions.
+
+        KiCad uses industry-standard extensions:
+        - .gtl, .gbl for top/bottom copper
+        - .g1, .g2, etc. for inner copper layers
+        - .gts, .gbs for soldermask
+        - .gto, .gbo for silkscreen
+        - .gm1 for mechanical/edge cuts
+        """
         ext_map = get_gerber_extension_map()
+        # Verify extensions are valid KiCad Gerber formats
+        valid_extensions = {".gtl", ".gbl", ".g1", ".g2", ".g3", ".g4",
+                           ".gts", ".gbs", ".gto", ".gbo", ".gtp", ".gbp", ".gm1"}
         for layer, ext in ext_map.items():
-            assert ext.endswith(".gbr"), (
-                f"Layer {layer} extension should end with .gbr, got {ext}"
+            ext_suffix = "." + ext.split(".")[-1]
+            assert ext_suffix in valid_extensions, (
+                f"Layer {layer} extension should be a valid KiCad Gerber extension, got {ext}"
             )

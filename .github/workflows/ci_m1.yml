@@ -186,6 +186,7 @@ jobs:
         gate:
           - gate_g1
           - gate_g2
+          - gate_g4
 
     steps:
       - name: Checkout repository

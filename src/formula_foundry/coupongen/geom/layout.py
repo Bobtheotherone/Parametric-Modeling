@@ -698,6 +698,10 @@ def _compute_f1_layout(
         length_right = xR - xD (derived to ensure segments meet)
 
     where xL is the left signal pad X and xR is the right signal pad X.
+
+    For proper via transition, the left segment uses the entry layer (e.g., F.Cu)
+    and the right segment uses the exit layer (B.Cu). The signal via connects
+    both layers, ensuring DRC clean (no via_dangling warnings).
     """
     # Discontinuity position: xD = xL + length_left
     x_disc_nm = left_port.signal_pad_x_nm + length_left_nm
@@ -712,24 +716,30 @@ def _compute_f1_layout(
             f"Derived right length would be negative ({derived_right_length})."
         )
 
-    # Left segment: from left signal pad to discontinuity
+    # Determine entry and exit layers for via transition
+    # Entry layer is from spec (typically F.Cu), exit layer is B.Cu for 4-layer boards
+    entry_layer = trace_layer
+    exit_layer = "B.Cu" if trace_layer == "F.Cu" else "F.Cu"
+
+    # Left segment: from left signal pad to discontinuity (entry layer)
     left_segment = SegmentPlan(
         x_start_nm=left_port.signal_pad_x_nm,
         x_end_nm=x_disc_nm,
         y_nm=left_port.signal_pad_y_nm,
         width_nm=trace_width_nm,
-        layer=trace_layer,
+        layer=entry_layer,
         net_name="SIG",
         label="left",
     )
 
-    # Right segment: from discontinuity to right signal pad
+    # Right segment: from discontinuity to right signal pad (exit layer)
+    # This ensures the signal via connects traces on both layers
     right_segment = SegmentPlan(
         x_start_nm=x_disc_nm,
         x_end_nm=right_port.signal_pad_x_nm,
         y_nm=right_port.signal_pad_y_nm,
         width_nm=trace_width_nm,
-        layer=trace_layer,
+        layer=exit_layer,
         net_name="SIG",
         label="right",
     )
