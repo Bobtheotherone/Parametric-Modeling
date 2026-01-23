@@ -1,0 +1,91 @@
+(kicad_pcb
+  (version 20240101)
+  (generator coupongen)
+  (general
+    (thickness 1.6))
+  (paper A4)
+  (layers
+    (0 F.Cu signal)
+    (1 In1.Cu signal)
+    (2 In2.Cu signal)
+    (31 B.Cu signal)
+    (32 B.Adhes user)
+    (33 F.Adhes user)
+    (34 B.Paste user)
+    (35 F.Paste user)
+    (36 B.SilkS user)
+    (37 F.SilkS user)
+    (38 B.Mask user)
+    (39 F.Mask user)
+    (40 Dwgs.User user)
+    (41 Cmts.User user)
+    (42 Eco1.User user)
+    (43 Eco2.User user)
+    (44 Edge.Cuts user)
+    (45 Margin user)
+    (46 B.CrtYd user)
+    (47 F.CrtYd user)
+    (48 B.Fab user)
+    (49 F.Fab user))
+  (net
+    0
+    "")
+  (net
+    1
+    SIG)
+  (net
+    2
+    GND)
+  (gr_rect
+    (start 0 -10)
+    (end 80 10)
+    (layer
+      Edge.Cuts)
+    (width 0.1)
+    (tstamp 697aa7f2-1b8a-5f59-b1d6-5e089c49c8ed))
+  (footprint
+    Coupongen_Connectors:SMA_EndLaunch_Generic
+    (layer
+      F.Cu)
+    (at
+      5
+      0
+      180)
+    (tstamp 9c378f12-3e7f-5b2d-af21-bc0302c4d1a1))
+  (footprint
+    Coupongen_Connectors:SMA_EndLaunch_Generic
+    (layer
+      F.Cu)
+    (at
+      75
+      0
+      0)
+    (tstamp a5d226b7-5d3d-519a-9e9a-1759b7a3d918))
+  (segment
+    (start 5 0)
+    (end 29 0)
+    (width 0.25)
+    (layer
+      F.Cu)
+    (net
+      1)
+    (tstamp 53f70853-2baa-5ba9-b66d-754ee891899a))
+  (segment
+    (start 29 0)
+    (end 75 0)
+    (width 0.25)
+    (layer
+      F.Cu)
+    (net
+      1)
+    (tstamp 3aff7d59-32f1-55bf-b3ca-40e1f431f912))
+  (via
+    (at 29 0)
+    (size 0.65)
+    (drill 0.3)
+    (layers
+      F.Cu
+      B.Cu)
+    (net
+      1)
+    (tstamp bd221253-13e9-5f30-815f-524bbcec28b4)))

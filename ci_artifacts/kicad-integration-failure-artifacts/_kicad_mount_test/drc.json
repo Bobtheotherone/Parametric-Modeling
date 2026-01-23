@@ -1,0 +1,185 @@
+{
+    "$schema": "https://schemas.kicad.org/drc.v1.json",
+    "coordinate_units": "mm",
+    "date": "2026-01-22T00:31:40+0000",
+    "kicad_version": "9.0.7",
+    "schematic_parity": [],
+    "source": "coupon.kicad_pcb",
+    "unconnected_items": [
+        {
+            "description": "Missing connection between items",
+            "items": [
+                {
+                    "description": "Via [GND] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": -1.0
+                    },
+                    "uuid": "7892e9e9-abf1-57b2-a580-a5ace0fd330c"
+                },
+                {
+                    "description": "Via [GND] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": 1.0
+                    },
+                    "uuid": "c6f6bba1-7878-5fc5-bbd0-c02b94d9f17e"
+                }
+            ],
+            "severity": "error",
+            "type": "unconnected_items"
+        }
+    ],
+    "violations": [
+        {
+            "description": "Items not allowed (keepout area)",
+            "items": [
+                {
+                    "description": "Via [SIG] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": 0.0
+                    },
+                    "uuid": "bd221253-13e9-5f30-815f-524bbcec28b4"
+                }
+            ],
+            "severity": "error",
+            "type": "items_not_allowed"
+        },
+        {
+            "description": "Track has unconnected end",
+            "items": [
+                {
+                    "description": "Track [SIG] on F.Cu, length 14.0000 mm",
+                    "pos": {
+                        "x": 1.0,
+                        "y": 0.0
+                    },
+                    "uuid": "53f70853-2baa-5ba9-b66d-754ee891899a"
+                }
+            ],
+            "severity": "warning",
+            "type": "track_dangling"
+        },
+        {
+            "description": "Track has unconnected end",
+            "items": [
+                {
+                    "description": "Track [SIG] on F.Cu, length 14.0000 mm",
+                    "pos": {
+                        "x": 15.0,
+                        "y": 0.0
+                    },
+                    "uuid": "3aff7d59-32f1-55bf-b3ca-40e1f431f912"
+                }
+            ],
+            "severity": "warning",
+            "type": "track_dangling"
+        },
+        {
+            "description": "Via is not connected or connected on only one layer",
+            "items": [
+                {
+                    "description": "Via [SIG] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": 0.0
+                    },
+                    "uuid": "bd221253-13e9-5f30-815f-524bbcec28b4"
+                }
+            ],
+            "severity": "warning",
+            "type": "via_dangling"
+        },
+        {
+            "description": "Via is not connected or connected on only one layer",
+            "items": [
+                {
+                    "description": "Via [SIG] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 16.0,
+                        "y": 0.0
+                    },
+                    "uuid": "b7df4407-a210-55aa-bc1f-56460d27a381"
+                }
+            ],
+            "severity": "warning",
+            "type": "via_dangling"
+        },
+        {
+            "description": "Via is not connected or connected on only one layer",
+            "items": [
+                {
+                    "description": "Via [GND] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": 1.0
+                    },
+                    "uuid": "c6f6bba1-7878-5fc5-bbd0-c02b94d9f17e"
+                }
+            ],
+            "severity": "warning",
+            "type": "via_dangling"
+        },
+        {
+            "description": "Via is not connected or connected on only one layer",
+            "items": [
+                {
+                    "description": "Via [SIG] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 14.0,
+                        "y": 0.0
+                    },
+                    "uuid": "b5212b21-4436-5578-96db-606a27f2a802"
+                }
+            ],
+            "severity": "warning",
+            "type": "via_dangling"
+        },
+        {
+            "description": "Via is not connected or connected on only one layer",
+            "items": [
+                {
+                    "description": "Via [GND] on F.Cu - B.Cu",
+                    "pos": {
+                        "x": 15.0,
+                        "y": -1.0
+                    },
+                    "uuid": "7892e9e9-abf1-57b2-a580-a5ace0fd330c"
+                }
+            ],
+            "severity": "warning",
+            "type": "via_dangling"
+        },
+        {
+            "description": "The current configuration does not include the footprint library 'Coupongen_Connectors'.",
+            "items": [
+                {
+                    "description": "Footprint <no reference designator>",
+                    "pos": {
+                        "x": 1.0,
+                        "y": 0.0
+                    },
+                    "uuid": "9c378f12-3e7f-5b2d-af21-bc0302c4d1a1"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        },
+        {
+            "description": "The current configuration does not include the footprint library 'Coupongen_Connectors'.",
+            "items": [
+                {
+                    "description": "Footprint <no reference designator>",
+                    "pos": {
+                        "x": 29.0,
+                        "y": 0.0
+                    },
+                    "uuid": "a5d226b7-5d3d-519a-9e9a-1759b7a3d918"
+                }
+            ],
+            "severity": "warning",
+            "type": "lib_footprint_issues"
+        }
+    ]
+}

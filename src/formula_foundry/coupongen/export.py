@@ -290,18 +290,22 @@ class ExportPipeline:
 
         # Stage 5: Export Gerbers and drill
         fab_dir = output_dir / "fab"
-        export_hashes = self._export_fab(board_path, fab_dir, evaluation.spec.toolchain.kicad)
+        export_hashes_raw = self._export_fab(board_path, fab_dir, evaluation.spec.toolchain.kicad)
 
         # Stage 6: Validate layer set (per Section 13.5.3)
+        # Use raw paths (gerbers/...) for layer validation since it expects that format
         layer_validation_result: LayerValidationResult | None = None
         if self._validate_layers:
             layer_validation_result = validate_layer_set(
-                export_paths=list(export_hashes.keys()),
+                export_paths=list(export_hashes_raw.keys()),
                 copper_layers=evaluation.spec.stackup.copper_layers,
                 family=evaluation.spec.coupon_family,
                 gerber_dir="gerbers/",
                 strict=True,
             )
+
+        # Add fab/ prefix to export paths so manifest paths match actual file locations
+        export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
 
         # Write manifest
         toolchain_meta = self._build_toolchain_meta(evaluation.spec)

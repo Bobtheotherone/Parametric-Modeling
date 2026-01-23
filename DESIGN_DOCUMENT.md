@@ -1,2807 +1,3902 @@
-# Milestone Design Document
+# M4 Design Document
 
-**Milestone:** M1 — Parametric coupon generator: Geometry DSL -> KiCad/Gerbers with strict constraints
+**Milestone:** M4 — Network processing oracle
 
-**Repo capability unlocked:** Deterministically generate manufacturable, DRC-clean high-speed interconnect coupons (via/launch discontinuities) from a parametric geometry DSL, producing KiCad source + fabrication Gerbers/drills + a cryptographically hashed manifest suitable for simulation + equation discovery.
+Network processing oracle: Vector Fitting + Passivity/Causality enforcement + SPICE export
 
----
+This document specifies Milestone M4 as a production-grade "network processing oracle" that turns raw frequency-domain network data (primarily S-parameters from openEMS / measurement) into compact, stable, passive, causal macromodels with auditable guarantees and exportable SPICE subcircuits. This milestone is a hard prerequisite for the overarching mission: discovering a novel parametric equation for network behavior by learning how rational-model parameters (poles/residues/sections) vary with geometry.
 
-## 0. Executive intent
+The central engineering idea is:
 
-This milestone exists to make the physics dataset (and therefore downstream symbolic discovery) trustworthy and repeatable. If M1 is implemented correctly, then:
+Every EM-simulated (or measured) coupon becomes a “well-posed rational object” (passive/causal/stable) that downstream symbolic regression can safely learn from.
 
-1. The AI can propose a design vector x (within constraints).
-2. The repo compiles x into a deterministic coupon geometry (no hand edits).
-3. The output is:
+## 1. Mission alignment and why M4 is non-negotiable
+### 1.1 Role in the full discovery pipeline
 
-   - a KiCad project as the canonical CAD artifact,
-   - a complete fabrication pack (Gerbers + drill),
-   - a machine-readable manifest that binds geometry -> artifacts -> constraints -> toolchain versioning,
-   - and a strict pass/fail validation (DRC + our own constraint proof objects).
+M4 provides the canonical intermediate representation that makes the “formula foundry” possible:
 
-If M1 is implemented incorrectly, you will generate noisy datasets where changes in S-parameters are caused by CAD/DRC/plotting nondeterminism or manufacturability violations, destroying the odds of discovering a real formula.
+Raw network 
+𝑆
+(
+𝑓
+)
+S(f) → (causality screening/correction) → Vector Fitted Rational Macromodel → (passivity enforcement) → Guaranteed-stable & passive model → SPICE export + feature extraction for equation discovery
 
----
+Vector fitting is a standard rational approximation approach used to convert sampled frequency responses (S/Y/Z matrices) into rational models suitable for circuit simulation.
 
-## 1. Non-negotiable principles (engineering doctrine)
+### 1.2 Why “oracle-grade” rigor matters for formula discovery
 
-### P1. Determinism is a first-class requirement
+Symbolic regression is adversarial in practice: it will exploit any inconsistency, non-causality, or numerical artifact. If macromodels are not strictly passive/causal/stable, you get:
 
-- Same CouponSpec + same toolchain version => same resolved geometry and same canonical hashes for artifacts.
-- We do not require literal byte-identical `.kicad_pcb` unless feasible, because KiCad embeds UUIDs (`tstamp`) in many objects; but we do require canonical, stable hashes computed from normalized content (see Section 9).
+False “laws” that encode solver/measurement artifacts
 
-KiCad board files use S-expression and include per-item timestamp/UUID fields such as `(tstamp UUID)` for tracks/vias (see KiCad Developer Documentation).
+Instability when embedding candidate models into larger circuits
 
-### P2. Strict constraints: designs must be valid by construction
+Pole/residue discontinuities that destroy learnability
 
-- The generator must never hope KiCad fixes it.
-- Inputs that violate hard constraints must either:
-  - REJECT (strict mode), or
-  - REPAIR by projecting onto feasible space with a fully audited repair map (research mode).
-- Final authority: KiCad DRC must pass in CI using the CLI DRC command and exit-code gate. The CLI supports producing a DRC report and returning a non-zero exit code when violations exist.
+M4 therefore must be designed as a gatekeeper:
+
+Accept only models meeting strict guarantees
+
+Reject or repair anything questionable, with traceable diagnostics
+
+## 2. Definitions and “physics legality” requirements
+### 2.1 Rational macromodel form
+
+We represent an 
+𝑁
+N-port response as a rational model (common-pole multiport form):
+
+𝐻
+(
+𝑠
+)
+=
+𝐷
++
+𝑠
+𝐸
++
+∑
+𝑘
+=
+1
+𝐾
+𝑅
+𝑘
+𝑠
+−
+𝑝
+𝑘
+H(s)=D+sE+
+k=1
+∑
+K
+	​
 
-### P3. Toolchain stability: pin KiCad version + containerize
+s−p
+k
+	​
 
-- KiCad provides a CLI (`kicad-cli`) for automated actions such as plotting Gerbers and running DRC.
-- Pin to a known KiCad 9 stable patch release (target: 9.0.7).
-- Use the official KiCad Docker images intended for CLI usage in CI (GUI in Docker is explicitly not supported).
+R
+k
+	​
 
-### P4. Future-proofing: SWIG pcbnew bindings are deprecated
+	​
 
-KiCad's SWIG-based Python bindings are deprecated as of KiCad 9.0 and planned for removal in KiCad 10.0 (planned Feb 2026 per dev docs). They will be replaced by the IPC API.
 
-The newer IPC API is designed to be stable, but:
-- it currently requires a running KiCad GUI instance (no headless mode),
-- and it does not provide plotting/export (CLI is recommended for plotting).
+For S-parameters we generally enforce 
+𝐸
+=
+0
+E=0 (see passivity tooling constraints). The scikit-rf vector fitting tutorial and API describe constant/proportional terms and pole-residue structure.
 
-So M1 must be designed with a backend abstraction that works headlessly today and is not trapped by SWIG removal.
+### 2.2 Stability (causality prerequisite)
 
-### P5. Hardware utilization: GPU-first where it actually matters
+Causal LTI systems require stable dynamics in the macromodel:
 
-M1's heavy lifting is CAD + geometry + constraints (mostly CPU). The GPU still matters in one place: batch feasibility filtering for large candidate sets (active learning / adversarial design search). M1 therefore includes a GPU-vectorized constraint prefilter that can reject/repair millions of candidates cheaply before invoking KiCad or any expensive geometry operations.
+All poles must satisfy 
+ℜ
+(
+𝑝
+𝑘
+)
+<
+0
+ℜ(p
+k
+	​
 
----
+)<0
 
-## 2. Scope boundaries
+Complex poles occur in conjugate pairs
 
-### In scope
+Vector fitting frameworks assume/produce conjugate pairing.
 
-- A domain-specific Geometry DSL for the Phase-1 coupon family:
-  - end-launch connector <-> CPWG/microstrip launch <-> via transition / discontinuity region <-> return vias / fencing <-> plane cutouts/antipads,
-  - single-ended and (optionally) differential variants.
-- Deterministic compilation:
-  - DSL -> resolved parameter set -> KiCad project (board-centric) -> Gerbers/drill.
-- Constraint system:
-  - manufacturability + symmetry + spacing + keepouts + stackup constraints.
-- Verification:
-  - programmatic constraint proof + KiCad DRC/export sanity gates in CI.
-- Artifact manifest:
-  - strong linkage between geometry, constraints, tool versions, and outputs.
+### 2.3 Passivity requirement for scattering models
 
-### Out of scope (explicitly deferred)
+For scattering 
+𝑆
+(
+𝑗
+𝜔
+)
+S(jω), passivity is equivalent to all singular values ≤ 1 for all frequencies:
 
-- Full EM simulation (M2).
-- Vector fitting/macromodel building (M4).
-- Active learning orchestration and SR loop (M6-M8).
-- Measurement ingestion (M9).
+𝜎
+𝑖
+(
+𝑆
+(
+𝑗
+𝜔
+)
+)
+≤
+1
+∀
+𝜔
+,
+ 
+∀
+𝑖
+σ
+i
+	​
 
-M1 must prepare for those milestones by providing deterministic artifacts and metadata contracts.
+(S(jω))≤1∀ω,∀i
 
----
+This criterion is stated in the passivity enforcement literature and used by scikit-rf’s passivity test/enforcement machinery.
 
-## 3. Tooling decisions (deep research synthesis)
+### 2.4 Causality requirement for tabulated data
 
-### 3.1 KiCad CLI (mandatory)
+Measured/simulated bandlimited S-parameters can be non-causal due to calibration, de-embedding, noise, and other effects. A robust causality check must account for finite bandwidth and out-of-band uncertainty. Triverio proposes a filtered Fourier transform method with a rigorous truncation error bound.
 
-We will use `kicad-cli` for:
+## 3. Scope, non-scope, and milestone contract
+### 3.1 In scope (M4 must deliver)
 
-- DRC: `kicad-cli pcb drc ...` can generate reports (including JSON) and can return an exit code based on violations.
-- Fabrication outputs:
-  - `kicad-cli pcb export gerbers ...` exports Gerber files.
-  - `kicad-cli pcb export drill ...` exports drill files.
+Network ingestion
 
-### 3.2 KiCad Python API backends (strategy, not dogma)
+Touchstone (.sNp), plus internal numpy/cupy arrays from openEMS postprocessing
 
-We implement a backend interface `IKiCadBackend` with two implementations:
+Metadata: port reference impedances 
+𝑧
+0
+z
+0
+	​
 
-1. Backend A (Primary, headless, stable): S-expression board writer + footprint library vendor
-   - Generate `.kicad_pcb` deterministically using the published file format structure.
-   - Pros: headless, deterministic, not reliant on deprecated SWIG.
-   - Cons: more engineering; must generate valid boards and stable DRC behavior.
+, S-definition if applicable
 
-2. Backend B (Transitional convenience): SWIG `pcbnew`
-   - Optional: only while pinned to KiCad 9.x if it materially reduces engineering time (e.g., zone filling).
-   - Treated as compatibility layer due to deprecation.
+Preprocessing
 
-We do not plan to base M1 on the IPC API today because it requires running GUI instances and plotting/export is the CLI's job.
+Frequency grid validation + optional resampling/decimation
 
-### 3.3 Internal coordinate representation: integer nanometers
+Optional DC extrapolation / low-frequency conditioning (controlled, logged)
 
-KiCad stores measurements at 1 nanometer internal resolution as 32-bit integers. Therefore all geometry math in M1 uses integer nanometers, never floats, to:
+Reciprocity/symmetry checks (report-only in M4; enforcement optional)
 
-- avoid cross-platform rounding drift,
-- make canonical hashing meaningful,
-- and support exact clearance proofs.
+Causality screening
 
----
+Robust causality check with finite-bandwidth error bounds
 
-## 4. Canonical artifacts and contracts
+Optional repair operations (configurable): delay alignment, time-gating, band extension heuristics (see §7)
 
-M1 produces four classes of artifacts, each with a strict contract:
+Vector fitting
 
-### A) CouponSpec (input)
+Multiport common-pole rational fitting
 
-- Human-readable DSL (YAML/JSON) describing:
-  - coupon family type,
-  - design vector values (or normalized vector + mapping),
-  - stackup,
-  - fab capability profile,
-  - constraints profile,
-  - rendering/export settings.
+Deterministic initial poles policy + convergence controls
 
-### B) ResolvedDesign (intermediate)
+Automatic model order option (“adding & skimming”)
 
-- Fully concrete, unit-resolved, integer-nm geometry parameters
-- Derived features + dimensionless groups computed
-- Constraint proof object
+Passivity evaluation
 
-### C) KiCad source (CAD truth)
+Exact band detection for passivity violations using the half-size test matrix (reciprocal models)
 
-- `coupon.kicad_pcb` (required)
-- `coupon.kicad_pro` (recommended)
-- local footprint library vendored in repo
-- optional jobset file `coupon.kicad_jobset` (see Section 8)
+Secondary dense frequency sampling check (belt-and-suspenders)
 
-### D) Fabrication & simulation exports
+Passivity enforcement
 
-- Gerbers and drill files generated by `kicad-cli pcb export gerbers` and `kicad-cli pcb export drill`.
-- A packaged "fab zip" (optional; M1 may create a directory tree)
+Singular-value perturbation approach (with optional DC preservation)
 
----
+Exports
 
-## 5. Geometry DSL specification
+macromodel.json (canonical pole-residue form + metadata)
 
-### 5.1 Why a DSL (not just JSON params)
+macromodel.npz (fast binary form)
 
-Because we need:
-- strict schema validation,
-- composable substructures (connector + launch + line + discontinuity),
-- derived parameters + dimensionless groups,
-- safe constraints + repair policies,
-- and a stable evolution story (versioning).
+macromodel.sp (SPICE subcircuit, simulator-compatible)
 
-### 5.2 DSL versions and stability
+quality_report.json (all metrics + pass/fail gates)
 
-- `schema_version` integer, semver-like policy:
-  - Minor additive changes allowed within same major.
-  - Major increments when semantics change.
-- Every artifact includes `schema_version` and `generator_version`.
+Auditable “oracle decision”
 
-### 5.3 Core type system
+Every run ends in: ACCEPTED, REPAIRED_AND_ACCEPTED, or REJECTED
 
-All lengths are represented as:
+With explicit reasons and reproducing artifacts
 
-- `LengthNM`: signed 64-bit integer nanometers (clamped to 32-bit KiCad bounds at export time; see Section 6.4).
+### 3.2 Non-scope (explicitly deferred)
 
-Provide parsing helpers:
-- "0.25mm", "10mil", "250um" -> integer nm.
+Full “parametric vector fitting” across geometry space (that is M6/M7-level)
 
-Angles: degrees or millidegrees integer.
-Frequencies: Hz integer.
+Advanced Y/Z passivity enforcement tooling beyond scattering passivity (M4 supports conversion/reporting, but enforcement is S-only by default)
 
-### 5.4 High-level coupon families (Phase 1)
+Measurement de-embedding standards implementation (M9)
 
-Minimum supported families for M1 completeness:
-
-#### Family F0 — Calibration Thru Line
-
-- end-launch connector -> CPWG straight line -> end-launch connector
-- no via discontinuity
-- purpose: validate launch geometry + baseline insertion loss
-
-#### Family F1 — Single-ended via transition coupon
-
-- end-launch -> CPWG -> via transition (top to inner or top to bottom) -> CPWG -> end-launch
-- includes antipads/cutouts, return vias
-
-#### Family F2 — Differential via transition coupon (optional for M1)
-
-- two signal vias, symmetric return vias, mode conversion controls
-
-M1 is complete if F0 + F1 are implemented with full constraints and deterministic output. F2 is optional.
-
-### 5.5 CouponSpec schema (normative)
-
-```yaml
-schema_version: 1
-coupon_family: F1_SINGLE_ENDED_VIA
-units: nm  # always normalized to nm internally; YAML may use mm/mil for convenience
-
-toolchain:
-  kicad:
-    version: "9.0.7"      # pinned tool version
-    # For strict reproducibility in CI, prefer digest-pinned images.
-    docker_image: "kicad/kicad:9.0.7@sha256:<digest>"
-
-fab_profile:
-  id: "oshpark_4layer"   # or pcbway/jlcpcb/... (see Section 7)
-  overrides: {}          # optional
-
-stackup:
-  copper_layers: 4
-  thicknesses_nm:
-    L1_to_L2: 180000
-    L2_to_L3: 800000
-    L3_to_L4: 180000
-  materials:
-    er: 4.1
-    loss_tangent: 0.02
-
-board:
-  outline:
-    width_nm: 20000000
-    length_nm: 80000000
-    corner_radius_nm: 2000000
-  origin:
-    mode: "EDGE_L_CENTER"   # canonical origin for all coupons
-  text:
-    coupon_id: "${COUPON_ID}"  # may use KiCad variables (see Section 8.3)
-    include_manifest_hash: true
-
-connectors:
-  left:
-    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
-    position_nm: [5000000, 0]
-    rotation_deg: 180
-  right:
-    footprint: "Coupongen_Connectors:SMA_EndLaunch_Generic"
-    position_nm: [75000000, 0]
-    rotation_deg: 0
-
-transmission_line:
-  type: "CPWG"
-  layer: "F.Cu"
-  w_nm: 300000
-  gap_nm: 180000
-  length_left_nm: 25000000
-  length_right_nm: 25000000
-  ground_via_fence:
-    enabled: true
-    pitch_nm: 1500000
-    offset_from_gap_nm: 800000
-    via:
-      drill_nm: 300000
-      diameter_nm: 600000
-
-discontinuity:
-  type: "VIA_TRANSITION"
-  signal_via:
-    drill_nm: 300000
-    diameter_nm: 650000
-    pad_diameter_nm: 900000
-  antipads:
-    L2:
-      shape: "ROUNDRECT"
-      rx_nm: 1200000
-      ry_nm: 900000
-      corner_nm: 250000
-    L3:
-      shape: "CIRCLE"
-      r_nm: 1100000
-  return_vias:
-    pattern: "RING"
-    count: 4
-    radius_nm: 1700000
-    via:
-      drill_nm: 300000
-      diameter_nm: 650000
-  plane_cutouts:
-    L2:
-      shape: "SLOT"
-      length_nm: 3000000
-      width_nm: 1500000
-      rotation_deg: 0
+## 4. External dependencies and baseline references
+### 4.1 Baseline library: scikit-rf VectorFitting
 
-constraints:
-  mode: "REJECT"   # REJECT | REPAIR
-  drc:
-    must_pass: true
-    severity: "all"
-  symmetry:
-    enforce: true
-  allow_unconnected_copper: false
+We will treat scikit-rf as the baseline implementation for:
 
-export:
-  gerbers:
-    enabled: true
-    format: "gerbers"
-  drill:
-    enabled: true
-    format: "excellon"
-  outputs_dir: "artifacts/"
-```
+Vector fitting routine
 
-### 5.6 Design vector normalization and mapping
+Automatic order selection (auto_fit)
 
-For AI/search, we define two representations:
+Passivity test (passivity_test) based on half-size test matrix
 
-- Normalized vector u in [0,1]^d (GPU-friendly).
-- Physical vector x (nm/int) produced by mapping:
-  - linear scaling, log scaling, or discrete choice mapping.
+Passivity enforcement (passivity_enforce) via singular value perturbation
 
-Mapping is part of the spec as a `parameterization` block (optional), or baked per family as default.
+SPICE export (write_spice_subcircuit_s) via state-space circuit synthesis
 
-The generator must emit both:
-- `design_vector_physical` (resolved integer nm)
-- `design_vector_normalized` (if provided)
+scikit-rf VectorFitting provides vector fitting + passivity evaluation/enforcement + SPICE circuit export.
 
----
+Important limitation to codify: scikit-rf passivity evaluation/enforcement is currently scattering-only, and raises errors for nonzero proportional terms in the model.
 
-## 6. Geometry kernel and compilation
+### 4.2 Key algorithms we rely on
 
-### 6.1 Canonical coordinate frame
+Vector fitting (broadly documented in Triverio’s tutorial paper)
 
-We adopt one canonical frame across all coupons:
+Half-size passivity assessment for S-parameter rational models (efficient eigenvalue-based identification of violating bands). scikit-rf explicitly uses it for reciprocal models.
 
-- Origin at left board edge center (`EDGE_L_CENTER`).
-- +x direction to the right along coupon length.
-- +y upward (right-handed 2D).
+Passivity enforcement via singular value perturbation (Deschrijver/Dhaene; DC-preserving variant) as implemented by scikit-rf.
 
-### 6.2 Primitive set (internal IR)
+Robust causality check via filtered inverse Fourier transform with truncation error bounds.
 
-Compile DSL -> IR consisting only of:
-- FootprintInstance
-- Pad
-- TrackSegment (straight)
-- ArcTrack (optional)
-- Via
-- Polygon (for keepouts and copper cutouts)
-- BoardOutline polygon
-- Text
-- RuleArea/Keepout (optional)
-- Net and NetClass declarations
+## 5. System architecture
+### 5.1 Module layout (repo proposal)
+m4/
+  __init__.py
+  types.py                 # pydantic/dataclasses schemas (NetworkData, RationalModel, Reports)
+  io/
+    touchstone.py          # parsing + metadata normalization
+    network_adapter.py     # conversion between internal arrays and skrf.Network
+  preprocess/
+    freq_grid.py           # grid validation/resampling/decimation
+    renormalize.py         # z0 handling, s_def policy
+    smoothing.py           # optional noise smoothing (careful, logged)
+  causality/
+    triverio_fft.py        # filtered-FFT check + error bounds
+    repairs.py             # optional repairs: delay, time-gating, etc.
+  vf/
+    fit.py                 # deterministic pole init + vf runner
+    order_select.py        # auto_fit wrapper + manual order selection
+    spurious.py            # spurious pole detection wrapper
+  passivity/
+    assess.py              # half-size test matrix assessment interface
+    enforce.py             # enforcement loop wrapper + convergence policy
+  export/
+    macromodel_json.py     # canonical model serializer
+    spice.py               # SPICE export + dialect tests
+    plots.py               # diagnostic plots saved as artifacts
+  oracle.py                # orchestrates end-to-end run; returns ACCEPT/REJECT + artifacts
+  cli.py                   # `m4-fit`, `m4-check`, `m4-export`
+tests/
+  test_m4_*.py
 
-All coordinates in integer nm.
+### 5.2 Dataflow (single model run)
 
-### 6.3 Composition graph
+Load network data
 
-Coupon is compiled as a feature graph:
+Validate frequency grid + metadata
 
-1. Board outline feature
-2. Port features (left/right connectors)
-3. Launch region feature (taper + pad transitions)
-4. Transmission line feature (CPWG segment + optional fence)
-5. Discontinuity feature (via + antipads + return pattern)
-6. Annotation feature (silk label, hash QR/ID)
+Causality check (and optional repair)
 
-Each feature returns:
-- a set of IR objects
-- a set of constraints it requires (pre/post conditions)
-- a set of derived metrics
+Vector fit (auto or fixed order)
 
-### 6.4 Integer safety and KiCad limits
+Spurious pole detection & pruning (optional)
 
-KiCad stores object positions in 32-bit integers at 1 nm resolution, enabling boards up to ~4m x 4m. We enforce:
-- All coordinates fit in 32-bit signed range
-- All polygon vertices integer nm
-- All widths/drills positive and within fab profile bounds
+Passivity assessment (exact bands)
 
-Any overflow triggers a hard error.
+Passivity enforcement (if needed)
 
----
+Re-assess passivity; final dense check
 
-## 7. Strict constraint system
+Export JSON/NPZ/SPICE
 
-### 7.1 Constraint categories
+Emit quality_report.json + verdict
 
-We define constraints in five tiers (increasing cost):
+## 6. Canonical interfaces and data contracts
+### 6.1 Python API (must exist)
+from m4.oracle import process_network
 
-Tier 0 — Parameter bounds (GPU vectorizable)
-- Example: w_nm >= min_trace_width_nm
+result = process_network(
+    network_path="artifacts/raw/design_001.s4p",
+    config=M4Config(...),
+)
 
-Tier 1 — Derived scalar constraints (GPU vectorizable)
-- Example: annular ring, via fence pitch constraints
+assert result.verdict in {"ACCEPTED","REPAIRED_AND_ACCEPTED","REJECTED"}
+print(result.artifacts.macromodel_json_path)
 
-Tier 2 — Analytic spatial constraints (GPU vectorizable)
-- Example: return vias must not collide with signal via pad
+### 6.2 CLI (must exist)
 
-Tier 3 — Exact geometry collision checks (CPU)
-- integer polygon clipping / Minkowski sum for clearance
+m4-fit <input.sNp> --config config.yaml --out run_dir/
 
-Tier 4 — KiCad DRC gate (authoritative)
-- run `kicad-cli pcb drc --severity-all --exit-code-violations ...`
+m4-check run_dir/macromodel.json (re-run passivity/causality checks)
 
-### 7.2 Fab capability profiles (DFM)
+m4-export run_dir/macromodel.json --spice --touchstone
 
-A `fab_profile` is a versioned JSON document containing:
-- min trace width / spacing
-- min drill
-- min annular ring
-- soldermask expansion limits
-- silkscreen min width and clearance
-- edge clearance rules
+### 6.3 Canonical file outputs
 
-We do not hardcode vendor numbers; we ship conservative defaults and allow override.
+Required outputs (minimum):
 
-### 7.3 Symmetry and topology constraints
+macromodel.json
 
-For diff pair designs (F2), enforce:
-- mirror symmetry about axis,
-- matched lengths (within tolerance),
-- mirrored return via pattern.
+macromodel.npz
 
-For single-ended (F1), enforce:
-- connector placement symmetry (left/right)
-- net class assignments consistent
+quality_report.json
 
-### 7.4 Constraint modes: REJECT vs REPAIR
+macromodel.sp (if accepted)
 
-- REJECT: fail fast, deterministic error, no side effects.
-- REPAIR: project into feasible region, returning:
-  - repaired ResolvedDesign
-  - repair_map
-  - repair_reason list
-  - repair_distance in normalized space
+Optional debug outputs (when verbose):
 
-### 7.5 Constraint proofs (auditable)
+causality_impulse.png
 
-Every generated design emits `constraint_proof.json` containing:
-- constraint id
-- description
-- symbolic form (string)
-- evaluated values
-- pass boolean
-- signed margin
+passivity_bands.json
 
----
+vf_convergence.png
 
-## 8. KiCad project generation and export strategy
+s_singular_values.png
 
-### 8.1 The reality of KiCad APIs
+model_vs_data_s_db.png
 
-- SWIG pcbnew bindings allow scripting but are deprecated and unstable across major versions.
-- IPC API is stable but currently requires GUI and does not cover plotting; CLI is recommended for exporting.
-- CLI is stable for DRC/export and designed for automation.
+### 6.4 macromodel.json schema (strict)
 
-Therefore M1 is built around deterministic board generation (preferably without SWIG) and CLI for DRC/export.
+At minimum:
 
-### 8.2 Backend A: deterministic `.kicad_pcb` generation (recommended foundation)
+{
+  "schema_version": "1.0",
+  "parameter_type": "S",
+  "s_def": "power",
+  "z0_ohms": [50.0, 50.0, ...],
+  "freq_band_hz": {"f_min": 1e6, "f_max": 6e9},
+  "model": {
+    "poles": [{"re": -1.2e9, "im": 3.1e10}, ...],
+    "residues": [
+      {"k":0, "matrix_re": [[...]], "matrix_im": [[...]]},
+      ...
+    ],
+    "D": {"re": [[...]], "im": [[...]]},
+    "E": {"re": [[0...]], "im": [[0...]]}
+  },
+  "canonicalization": {
+    "pole_sort": "increasing_imag_then_real",
+    "conjugate_pairing": true,
+    "numerical_dtype": "float64"
+  },
+  "provenance": {
+    "code_commit": "...",
+    "tool_versions": {"scikit-rf":"1.8.0", "...":"..."},
+    "input_hash": "...",
+    "config_hash": "..."
+  }
+}
 
-#### 8.2.1 Approach
+## 7. Causality screening and enforcement
+### 7.1 Why we need this
 
-- Maintain a minimal board template.
-- Programmatically inject geometry objects.
+Triverio documents that non-causal sampled S-parameters (from calibration, de-embedding, noise, non-causal material models, etc.) can severely degrade macromodeling, even with vector fitting, and can destabilize transient simulation.
 
-#### 8.2.2 Deterministic UUID/tstamp strategy
+### 7.2 Primary causality check (must implement): Triverio filtered-FFT method
 
-Generate per-object UUIDs deterministically using UUIDv5:
-- namespace: UUIDv5("coupongen:<schema_version>")
-- name: canonical object path string
+We implement the robust causality check described by Triverio:
 
-This gives stable UUIDs without global state.
+Uses a filtered inverse Fourier transform
 
-#### 8.2.3 Ensuring DRC sees correct nets
+Includes a rigorous estimate of truncation error due to missing out-of-band data
 
-Assign conductive objects to nets:
-- signal tracks/vias: net SIG
-- grounds: net GND
+Key design requirements:
 
-If representing planes as zones, either:
-- fill via SWIG backend, or
-- represent copper planes as explicit polygons and enforce clearances via our own collision engine + DRC rule areas.
+Works on finite bandwidth samples
 
-### 8.3 Deterministic variable injection
+Produces:
 
-KiCad CLI supports `--define-var KEY=VALUE`. Use it to inject deterministic variables like:
-- COUPON_ID
-- GIT_SHA
-- STACKUP_ID
+causality_violation_metric (scalar)
 
-### 8.4 Backend B: SWIG pcbnew (optional transitional layer)
+violation_time_support_ps (earliest negative time where violation exceeds bound)
 
-Only if needed for zone refill/fill or other hard-to-reimplement features. Treat as temporary.
+optional per-element results
 
-### 8.5 Export via KiCad CLI (mandatory)
+Configuration knobs:
 
-#### 8.5.1 DRC
+Filter type: Chebyshev low-pass (default), order, cutoff, ripple
 
-Run:
-- `kicad-cli pcb drc --severity-all --exit-code-violations --format json --output drc.json coupon.kicad_pcb`
+IFFT windowing policy
 
-Exit code is 0 if no violations, 5 if violations exist.
+Threshold policy: strict vs permissive
 
-#### 8.5.2 Gerbers
+Report both raw and filtered impulse response
 
-Use:
-- `kicad-cli pcb export gerbers ... coupon.kicad_pcb`
+Acceptance gate (default strict):
 
-#### 8.5.3 Drill files
+For each 
+𝑆
+𝑖
+𝑗
+S
+ij
+	​
 
-Use:
-- `kicad-cli pcb export drill ... coupon.kicad_pcb`
+, negative-time impulse response must lie within the truncation error bound, with a configurable margin.
 
-### 8.6 Optional jobsets (nice-to-have)
+### 7.3 Causality repair modes (optional but strongly recommended)
 
-KiCad supports jobsets to define a reusable set of outputs/actions.
+Causality “enforcement” in M4 is not magic; it is controlled repair with audit trails. The system supports:
 
----
+(A) Delay alignment repair
 
-## 9. Deterministic hashing and provenance
+Estimate a small additional delay 
+Δ
+𝜏
+Δτ (e.g., from detected violation time extent)
 
-### 9.1 Identifiers
+Apply phase shift 
+𝑆
+𝑖
+𝑗
+(
+𝑓
+)
+←
+𝑆
+𝑖
+𝑗
+(
+𝑓
+)
+ 
+𝑒
+−
+𝑗
+2
+𝜋
+𝑓
+Δ
+𝜏
+S
+ij
+	​
 
-Define:
-- design_hash = SHA256(canonical_resolved_design_json_bytes)
-- coupon_id = base32(design_hash)[0:12]
+(f)←S
+ij
+	​
 
-### 9.2 Canonicalization
+(f)e
+−j2πfΔτ
 
-Compute stable hashes for artifacts:
+Re-run causality check; accept only if improvement is monotone and within bounds
 
-- KiCad board hash:
-  - preferred: hash ResolvedDesign only
-  - optional: hash `.kicad_pcb` after normalization
+This is consistent with Triverio’s example where adding a small delay removed causality violation that was breaking vector fitting quality.
 
-- Gerber/drill hashes:
-  - canonicalize by removing nondeterministic comment lines and normalizing line endings
+(B) Time-gating repair
 
-### 9.3 Provenance manifest (`manifest.json`)
+Compute filtered impulse response
 
-Every design output directory includes `manifest.json` with required fields:
-- schema_version, coupon_family
-- design_hash, coupon_id
-- resolved_design
-- derived_features + dimensionless_groups
-- fab_profile_id + resolved limits
-- stackup
-- toolchain (KiCad version, docker image tag/digest, kicad-cli --version output)
-- exports list with canonical hashes
-- verification (DRC summary + constraint_proof summary)
-- lineage (git commit hash, UTC timestamp; timestamp is allowed to vary and is not part of design_hash)
+Zero negative-time region (or apply smooth taper)
 
----
+FFT back to frequency domain
 
-## 10. CLI interface (repo API surface)
+Record gating window in metadata
 
-### 10.1 Commands (M1 must implement)
+Hard rule: repairs must never be silent. Every repair is an explicit artifact and provenance entry.
 
-1. `coupongen validate <spec.yaml>`
-   - load schema
-   - resolve parameters
-   - run Tier 0-3 constraints
-   - emit ResolvedDesign + constraint_proof.json
-   - no KiCad required
+### 7.4 Fail policy
 
-2. `coupongen generate <spec.yaml> --out <dir>`
-   - runs validate
-   - generates KiCad project files
+If causality still fails after allowed repair attempts:
 
-3. `coupongen drc <dir>/coupon.kicad_pcb`
-   - invokes `kicad-cli pcb drc` with required flags
-   - writes JSON report
-   - fails non-zero on violations
+Verdict = REJECTED_CAUSALITY
 
-4. `coupongen export <dir>/coupon.kicad_pcb --out <dir>/fab`
-   - invokes gerber + drill export
-   - canonicalizes and hashes outputs
+Store full diagnostic bundle for downstream investigation
 
-5. `coupongen build <spec.yaml>`
-   - generate + drc + export in one command
-   - returns path to artifact dir keyed by design_hash
+## 8. Vector fitting subsystem
+### 8.1 Core fitting options
 
-### 10.2 Machine interface (Python API)
+We support two fit modes:
 
-Provide `coupongen` as an importable library:
-- load_spec(path) -> CouponSpec
-- resolve(spec) -> ResolvedDesign
-- generate_kicad(resolved, outdir) -> KiCadProjectPaths
-- run_drc(board_path) -> DrcReport
-- export_fab(board_path, outdir) -> FabArtifacts
+Mode 1: Fixed-order vector fit
 
----
+User specifies n_poles_real, n_poles_cmplx, spacing policy (lin/log/custom), constant term, proportional term.
 
-## 11. Computational efficiency plan (making the most of hardware)
+scikit-rf exposes these controls, including initial pole spacing and recommendation to fit on original S-parameters.
 
-### 11.1 Real performance bottleneck
+Mode 2: Automatic order selection (auto_fit)
 
-Not geometry math; it is:
-- invoking KiCad CLI repeatedly,
-- filesystem IO for Gerbers,
-- DRC runs.
+Implements “vector fitting with adding and skimming”
 
-Optimize via:
-- GPU constraint filtering before generating boards,
-- caching,
-- minimizing CLI invocations.
+Provides automatic model order optimization and improved convergence/noise robustness
 
-### 11.2 GPU vectorized feasibility filter
+This must be our default for large automated campaigns because we will encounter noisy or awkward responses.
 
-Implement:
+### 8.2 Deterministic initial poles policy
 
-`batch_filter(u_batch: cupy.ndarray [N,d]) -> mask_feasible, u_repaired, repair_metadata`
+To make results reproducible and improve mode tracking later, we enforce a deterministic initial pole policy:
 
-- uses CuPy arrays for Tier 0-2 constraints
-- outputs feasible mask + repaired candidates
+Given 
+𝑓
+min
+⁡
+,
+𝑓
+max
+⁡
+f
+min
+	​
 
-### 11.3 Structural caching
+,f
+max
+	​
 
-Cache levels:
-- ResolvedDesign cache: design_hash -> resolved_design.json
-- KiCad cache: design_hash -> coupon.kicad_pcb
-- Fab cache: design_hash -> fab/ outputs
+, define initial imaginary parts on lin/log grid
 
-Cache key includes toolchain_hash so upgrades trigger rebuild.
+Real parts set to a negative damping proportional to spacing
 
-### 11.4 Parallelism strategy (single laptop)
+Always include conjugate pairs
 
-- Use multi-process pool for external KiCad invocations.
-- Throttle with semaphores (from M0 runner):
-  - max concurrent KiCad CLI jobs: 1-2
-  - max concurrent pure-python resolves: CPU count
+Optional real poles near DC for low-pass-like behavior
 
----
+We must be careful not to over-order models, both for compute cost and for spurious resonances outside the fit band; scikit-rf warns about excessive poles introducing unwanted resonances outside the fit interval.
 
-## 12. Verification and acceptance gates (how we know we've met the bar)
+### 8.3 Fit weighting policy (required)
 
-### 12.1 Acceptance gates (must pass in CI)
+We implement frequency-dependent weighting because SI/PI work is rarely uniform:
 
-Gate G1 — Schema + resolver determinism
-- fixed set of canonical CouponSpec files
-- resolve produces byte-identical resolved_design.json
-- design_hash matches golden values
+Default: emphasize band of interest 
+[
+𝑓
+𝑎
+,
+𝑓
+𝑏
+]
+[f
+a
+	​
 
-Gate G2 — Constraint proof completeness
-- every constraint has id/description/evaluation/margin
-- proof file passes schema
-- REJECT/REPAIR behaviors are deterministic and auditable
+,f
+b
+	​
 
-Gate G3 — KiCad DRC clean
-- generate board
-- run `kicad-cli pcb drc --severity-all --exit-code-violations --format json ...`
-- must exit 0
+] (e.g., 0.1–6 GHz in tabletop VNA context)
 
-Gate G4 — Export completeness
-- Gerbers + drill exist
-- expected layer set exists
-- exports have canonical hashes
+Optional: emphasize return-loss band edges, resonance regions, or group-delay flatness
 
-Gate G5 — Output hash stability across runs
-- build same spec 3x in fresh dirs
-- design_hash identical
-- export hashes identical
-- drc report hash identical (or canonicalized to ignore timestamps)
+Weighting must be part of the recorded config hash.
 
-### 12.2 Performance gates (must pass locally; optional CI)
+### 8.4 Convergence and failure handling
 
-On target laptop:
-- GPU filter throughput vs CPU baseline
-- build throughput budgets
+We define convergence using:
 
-### 12.3 Manual quality gates (one-time sign-off)
+RMS error reduction (per scikit-rf’s get_rms_error)
 
-- Open generated boards in KiCad GUI
-- Inspect connector placement, antipads/cutouts, silkscreen ID
-- Load Gerbers into viewer
+Pole movement norms
 
----
+Maximum iteration limit and tolerance
 
-## 13. Repository structure (recommended)
+If convergence fails:
 
-Note: This repo is already a src-layout Python package rooted at `src/formula_foundry/` (M0). For M1, keep the coupongen code under the same top-level package to avoid import/packaging drift.
+Retry with:
 
-Recommended structure:
+modified pole spacing, then
 
-```
-/coupongen/
-  /schemas/
-  /fab_profiles/
-  /stackups/
-  /kicad_templates/
-  /libs/
-    /footprints/
-      Coupongen_Connectors.pretty/
-      Coupongen_Test.pretty/
-/src/formula_foundry/
-  /coupongen/
-    __init__.py
-    spec.py
-    units.py
-    resolve.py
-    constraints/
-      tiers.py
-      gpu_filter.py
-      repair.py
-    geom/
-      primitives.py
-      cpwg.py
-      via_patterns.py
-      cutouts.py
-    kicad/
-      sexpr.py
-      board_writer.py
-      pcbnew_backend.py
-      cli.py
-      canonicalize.py
-    export.py
-    manifest.py
-    cli_main.py
-/tests/
-  /golden_specs/
-  /golden_hashes/
-  test_schema.py
-  test_resolve_determinism.py
-  test_constraints.py
-  test_kicad_drc.py
-  test_export_hashes.py
-```
+increased order, then
 
----
+auto_fit
 
-## 14. How M1 directly increases odds of discovering the novel equation
+If still fails: REJECTED_FIT_DID_NOT_CONVERGE
 
-1. Equation discovery is only as real as your oracle labels. M1 removes geometry noise by enforcing deterministic CAD and DRC-clean manufacturable designs.
-2. Symbolic discovery needs stable, meaningful variables. M1 defines the parameterization and emits dimensionless groups into the manifest.
-3. Active learning needs fast feasibility filtering. The GPU constraint prefilter prevents wasted EM solves.
-4. Corporate-grade trust requires auditable artifacts. The manifest + hashing + DRC reports are the evidence chain.
+### 8.5 Spurious pole detection (recommended)
 
----
+We support pole-residue pair classification as “spurious” based on band-limited energy norms of resonance curves; scikit-rf provides a method based on published work and includes a tunable sensitivity threshold gamma.
 
-## 15. Risk register and mitigation
+Policy:
 
-R1: SWIG deprecation/removal breaks scripts
-- Mitigation: Backend A is primary; SWIG backend is optional.
+In auto mode, “skim” spurious poles when safe
 
-R2: IPC API is not headless and lacks plotting
-- Mitigation: do not depend on IPC API for M1 generation/export; use CLI.
+Always log what was removed and its impact on fit error/passivity
 
-R3: Gerber nondeterminism (timestamps/comments)
-- Mitigation: canonicalization + canonical hashes.
+## 9. Passivity assessment and enforcement
+### 9.1 Passivity assessment must be “guarantee-grade”
 
-R4: Constraint mismatch between our solver and KiCad DRC
-- Mitigation: treat KiCad DRC as authoritative gate.
+Sampling singular values at a finite grid is not enough. We require a method that identifies violation bands reliably for rational models.
 
-R5: Polygon/zone complexity causes DRC/export differences
-- Mitigation: keep feature set minimal in M1.
+scikit-rf’s passivity_test evaluates passivity for reciprocal fitted models using a half-size test matrix and returns frequency bands of violation.
 
----
+The half-size test matrix approach reduces eigenvalue computation time significantly (the literature notes about an eightfold reduction due to cubic eigenvalue complexity).
 
-## 16. Concrete "M1 is DONE when..." checklist (repo-level)
+We require:
 
-M1 is complete only when all below are true:
+Primary assessment: half-size test matrix bands (when reciprocity assumptions hold)
 
-1. `coupongen build` exists and works on a fresh machine inside the pinned KiCad docker image.
-2. At least two coupon families (F0 and F1) are supported end-to-end.
-3. For each family, there are >= 10 golden specs committed, and CI proves:
-   - deterministic resolved_design hashing,
-   - deterministic export hashing,
-   - `kicad-cli pcb drc --exit-code-violations` returns success.
-4. A batch GPU feasibility filter exists and is used by the generator pipeline (even if optional), with unit tests.
-5. The manifest schema is stable, versioned, and includes toolchain versions, stackup, fab profile, and artifact hashes.
-6. The generator emits DRC-clean boards with required manufacturing outputs (Gerbers + drills).
-7. All outputs are addressable by design_hash and no orphan artifacts exist.
+Secondary confirmation: dense sampling of singular values on a high-resolution grid
 
----
+### 9.2 Reciprocity handling (important!)
 
-## Normative Requirements (must)
+Half-size assessment relies on symmetry/reciprocity assumptions (as stated by scikit-rf: “reciprocal vector fitted models”).
 
-### A) CouponSpec schema + units
-- [REQ-M1-001] The repo must define a strict JSON Schema for CouponSpec and validate all inputs before resolve/generate.
-- [REQ-M1-002] The repo must represent all geometry internally as integer nanometers and provide deterministic parsing for mm/mil/um inputs.
+Therefore M4 must:
 
-### B) Deterministic resolve + design hashing
-- [REQ-M1-003] `resolve(spec)` must emit a ResolvedDesign with only integer-nm parameters, derived features, and dimensionless groups.
-- [REQ-M1-004] `design_hash` must be computed as SHA256 over canonical ResolvedDesign JSON bytes and must be stable across runs.
-- [REQ-M1-005] The repo must provide canonical hash functions for board and export artifacts that remove nondeterministic noise (timestamps/comments).
+Detect reciprocity deviation in input data:
 
-### C) Coupon families
-- [REQ-M1-006] M1 must implement Family F0 (calibration thru) end-to-end.
-- [REQ-M1-007] M1 must implement Family F1 (single-ended via transition) end-to-end.
+∥
+𝑆
+𝑖
+𝑗
+−
+𝑆
+𝑗
+𝑖
+∥
+∥S
+ij
+	​
 
-### D) Constraint system
-- [REQ-M1-008] The repo must implement a tiered constraint system (Tiers 0-4) and expose tiered evaluation results.
-- [REQ-M1-009] In REJECT mode, infeasible specs must fail deterministically with constraint IDs and human-readable reasons.
-- [REQ-M1-010] In REPAIR mode, infeasible specs must be projected into feasible space with an auditable repair_map, repair_reason list, and repair_distance.
-- [REQ-M1-011] Every generated design must emit a constraint_proof.json with per-constraint evaluations and signed margins.
+−S
+ji
+	​
 
-### E) KiCad board generation backends
-- [REQ-M1-012] The repo must define `IKiCadBackend` and implement Backend A (headless S-expression board writer) as the primary path.
-- [REQ-M1-013] Backend A must generate deterministic per-object UUID/tstamp values (UUIDv5 or equivalent) from canonical object paths.
-- [REQ-M1-014] Footprints used by coupongen must be vendored in-repo (no external library dependency at build time).
+∥ vs threshold
 
-### F) KiCad CLI integration (DRC + exports)
-- [REQ-M1-015] The repo must provide a `kicad-cli` runner that can execute via local binary or via the pinned KiCad Docker image.
-- [REQ-M1-016] `coupongen drc` must run KiCad DRC with severity-all, JSON report output, and exit-code gating.
-- [REQ-M1-017] `coupongen export` must generate Gerbers and drill files via KiCad CLI and compute canonical hashes for all outputs.
+Either:
 
-### G) Manifest + artifact addressing
-- [REQ-M1-018] The repo must emit a manifest.json for every build containing required provenance fields and export hashes.
-- [REQ-M1-019] All output directories must be keyed by design_hash and coupon_id; re-running build must not create divergent outputs.
-- [REQ-M1-020] The build pipeline must implement caching keyed by design_hash + toolchain_hash and must be deterministic when cache hits occur.
+enforce reciprocity by symmetrization before fitting (optional), or
 
-### H) CLI + Python API
-- [REQ-M1-021] The repo must provide a `coupongen` CLI with validate/generate/drc/export/build commands and correct exit codes.
-- [REQ-M1-022] The repo must provide a typed Python API equivalent for orchestration (M6-M8 tool calls).
+run a fallback passivity assessment path (grid sampling) if reciprocity too weak
 
-### I) Golden specs + CI gates
-- [REQ-M1-023] The repo must include >= 10 golden specs for F0 and >= 10 golden specs for F1, committed under tests/golden_specs.
-- [REQ-M1-024] CI must prove deterministic resolve hashing against committed golden hashes.
-- [REQ-M1-025] CI must prove DRC-clean boards and export completeness for all golden specs using the pinned KiCad toolchain.
+### 9.3 Passivity enforcement algorithm (must implement)
 
-### J) M0 regression prevention (mandatory for M1 completion)
-- [REQ-M1-026] M1 completion must run `python -m tools.verify --include-m0 --strict-git` to ensure M0 substrate gates remain green.
-- [REQ-M1-027] The orchestrator completion gate must enforce REQ-M1-026 when the active milestone is M1 or higher.
+We enforce passivity using singular value perturbation methods, as in scikit-rf’s passivity_enforce:
 
----
+Passivity enforcement based on methods from the referenced literature
 
-## Definition of Done
+Can preserve DC by perturbing residues only (not constant term)
 
-- All requirements REQ-M1-001..REQ-M1-027 are implemented.
-- Every requirement is mapped to at least one pytest node id in the Test Matrix.
-- `python -m tools.verify --strict-git` exits 0.
-- `python -m tools.verify --include-m0 --strict-git` exits 0.
-- The full Section 16 checklist can be executed successfully on the target laptop.
-- The repo has no uncommitted changes (`git status --porcelain` empty).
-
----
-
-## Test Matrix
-
-| Requirement | Pytest(s) |
-|---|---|
-| REQ-M1-001 | tests/test_m1_schema.py::test_couponspec_schema_validation |
-| REQ-M1-002 | tests/test_m1_units.py::test_lengthnm_parsing_integer_nm |
-| REQ-M1-003 | tests/test_m1_resolve_determinism.py::test_resolve_emits_integer_nm_and_groups |
-| REQ-M1-004 | tests/test_m1_resolve_determinism.py::test_design_hash_is_stable |
-| REQ-M1-005 | tests/test_m1_hashing.py::test_canonical_hashing_removes_nondeterminism |
-| REQ-M1-006 | tests/test_m1_families.py::test_family_f0_builds |
-| REQ-M1-007 | tests/test_m1_families.py::test_family_f1_builds |
-| REQ-M1-008 | tests/test_m1_constraints.py::test_constraint_tiers_exist |
-| REQ-M1-009 | tests/test_m1_constraints.py::test_reject_mode_reports_constraint_ids |
-| REQ-M1-010 | tests/test_m1_constraints.py::test_repair_mode_emits_repair_map_and_distance |
-| REQ-M1-011 | tests/test_m1_constraints.py::test_constraint_proof_schema |
-| REQ-M1-012 | tests/test_m1_backend_contract.py::test_backend_a_exists_and_writes_board |
-| REQ-M1-013 | tests/test_m1_backend_contract.py::test_deterministic_uuid_generation |
-| REQ-M1-014 | tests/test_m1_backend_contract.py::test_footprints_are_vendored |
-| REQ-M1-015 | tests/test_m1_kicad_cli.py::test_kicad_cli_runner_modes |
-| REQ-M1-016 | tests/test_m1_kicad_cli.py::test_drc_invocation_flags |
-| REQ-M1-017 | tests/test_m1_export.py::test_export_outputs_and_hashes |
-| REQ-M1-018 | tests/test_m1_manifest.py::test_manifest_required_fields |
-| REQ-M1-019 | tests/test_m1_manifest.py::test_outputs_keyed_by_design_hash |
-| REQ-M1-020 | tests/test_m1_cache.py::test_cache_toolchain_hash_behavior |
-| REQ-M1-021 | tests/test_m1_cli.py::test_cli_commands_exist |
-| REQ-M1-022 | tests/test_m1_api.py::test_python_api_contract |
-| REQ-M1-023 | tests/test_m1_golden_specs.py::test_golden_specs_present |
-| REQ-M1-024 | tests/test_m1_golden_specs.py::test_golden_hashes_match |
-| REQ-M1-025 | tests/test_m1_kicad_integration.py::test_drc_clean_and_exports_in_pinned_toolchain |
-| REQ-M1-026 | tests/test_m1_m0_regression.py::test_verify_include_m0_required_for_completion |
-| REQ-M1-027 | tests/test_m1_m0_regression.py::test_orchestrator_completion_gate_includes_m0 |
-
----
-
-## References (implementation guidance)
-
-[1]: https://dev-docs.kicad.org/en/file-formats/sexpr-pcb/index.html
-[2]: https://docs.kicad.org/master/en/cli/cli.pdf
-[3]: https://docs.kicad.org/9.0/en/cli/cli.html
-[4]: https://www.kicad.org/blog/2026/01/KiCad-9.0.7-Release/
-[5]: https://www.kicad.org/download/docker/
-[6]: https://dev-docs.kicad.org/en/apis-and-binding/pcbnew/index.html
-[7]: https://dev-docs.kicad.org/en/apis-and-binding/ipc-api/for-addon-developers/
-[8]: https://docs.kicad.org/8.0/en/cli/cli.html
-[9]: https://docs.kicad.org/8.0/en/pcbnew/pcbnew.html
-[10]: https://docs.kicad.org/8.0/en/pcbnew/pcbnew.html
-[11]: https://jlcpcb.com/blog/pcb-design-rules-best-practices
-[12]: https://docs.kicad.org/9.0/en/kicad/kicad.html
-
-# M2 Design Document — Golden EM Oracle
-
-**openEMS + gerber2ems pipeline with verified ports and calibration structures**
-
-## 0. Mission alignment and why M2 must be “over‑engineered”
-
-Your project’s core success condition is: **equation discovery on EM behavior must not be poisoned by oracle noise** (inconsistent ports, unstable meshing, non-reproducible solver setups, or hidden de-embedding mistakes). M2 is therefore not “just run a solver.” It is a **metrology-grade data-generation system** that produces **auditable, reproducible, physically consistent** multiport S-parameters for your parametric PCB discontinuity families.
-
-**Golden Oracle (Phase 1)** = openEMS full-wave FDTD (EC-FDTD) simulations driven from manufacturable Gerbers via gerber2ems. openEMS is an FDTD full-wave solver (EC-FDTD variant) with graded meshes and absorbing boundaries (PML/MUR), configured via Python/Matlab/Octave. ([openEMS Documentation][1])
-gerber2ems is a Python workflow that consumes PCB fabrication artifacts (Gerber/drill/stackup) and drives openEMS with automatic grid generation and postprocessing, including port voltage/current and S-parameter extraction. ([GitHub][2])
-
-**Critical point:** M2 must be trustworthy enough that later milestones (vector fitting + symbolic regression + falsification) can treat its output as “physics truth,” within quantified uncertainty.
-
----
-
-## 1. Scope, non-goals, and deliverable contract
-
-### 1.1 In scope
-
-M2 delivers a repository capability:
-
-> **Given a “simulation case” (Gerbers + stackup + drill + port markers + simulation config), produce validated, reproducible Touchstone S-parameters** (2-port and 4-port), along with a complete audit bundle (geometry XML, mesh summary, solver logs, derived metrics, and verification artifacts).
-
-Key features:
-
-* **Gerber-driven EM simulation** pipeline (ROI/slice-based).
-* **Port definition standard** and verification (orientation, reference plane, impedance, numbering, polarity).
-* **Calibration structures** in-repo for regression + sanity checks (Thru/Line/Reflect, matched lines, known-delay lines, via-less baselines).
-* **Deterministic meshing + simulation policies** (as deterministic as FDTD allows).
-* **Quality gates**: fails fast on suspect setups.
-* **Caching** keyed by content-addressed fingerprints.
-* **Performance policy**: ROI bounding, adaptive grids, bounded memory.
-
-### 1.2 Explicit non-goals (M2 does not do these)
-
-* **Measurement ingestion** (VNA), de-embedding from physical fixtures (that’s M9).
-* Full-board simulations without slicing/ROI (too expensive on laptop).
-* Full EM co-simulation with active devices or nonlinear components.
-* “Perfect correlation to measurement.” M2’s job is a consistent simulation oracle; M9 later reconciles sim↔measurement.
-
-### 1.3 Hard deliverable contract
-
-M2 must provide:
-
-* A **Python API** (library) and **CLI** (tool) that can:
-
-  1. validate inputs
-  2. generate geometry and mesh
-  3. run openEMS
-  4. postprocess to S-parameters
-  5. run verification/calibration checks
-  6. emit an artifact bundle
-
-* Output formats:
-
-  * Touchstone `.s2p` and `.s4p` (complex S, frequency axis).
-  * Companion `.json` metadata (units, port maps, solver versions, mesh stats).
-  * Optional: CSV exports (gerber2ems already produces CSV outputs) ([GitHub][2])
-
----
-
-## 2. Technical background constraints (what we must respect)
-
-### 2.1 Solver characteristics: openEMS
-
-openEMS is a 3D full-wave EC-FDTD solver with graded meshes and absorbing boundary options (MUR, PML). ([openEMS Documentation][1])
-Relevant API controls in Python include:
-
-* `SetBoundaryCond` (PEC/PMC/MUR/PML),
-* `SetGaussExcite(f0, fc)`,
-* `SetEndCriteria(val)`,
-* `SetNumberOfTimeSteps`,
-* time-step method/factor for stability,
-* and a thread-count parameter (`numThreads`) for CPU parallelism. ([openEMS Documentation][3])
-
-### 2.2 Pipeline characteristics: gerber2ems
-
-gerber2ems expects:
-
-* **Gerbers per copper layer** named to match stackup layer names,
-* **stackup.json** including thickness, epsilon, loss tangent,
-* a **PTH drill file**,
-* a **position file** describing ports (“SP1…”) and port rotations,
-* and a **simulation.json** containing frequency band, grid settings, port definitions, etc. ([GitHub][2])
-
-It also emphasizes:
-
-* simulating a whole PCB is too expensive; **slice/ROI** extraction is essential. ([GitHub][2])
-* ports are defined with width/length/impedance and layer/plane mapping; port length should be at least **8× mesh cell size** (per README). ([GitHub][2])
-* it recommends verifying that timesteps are sufficient; it reports excitation length and suggests at least **~3× excitation length** as max steps. ([GitHub][2])
-* exporting fields can create **hundreds of GB** of data (must be controlled). ([GitHub][2])
-
-Antmicro has recently improved the flow with:
-
-* **adaptive grid generation** (denser near geometry, sparser elsewhere),
-* use of the **1/3 meshing rule**,
-* **differential pair simulation**,
-  and validation by comparing simulation and VNA measurement trends. ([Antmicro][4])
-
----
-
-## 3. M2 architecture
-
-### 3.1 High-level component diagram
-
-**M2 consists of 7 subsystems:**
-
-1. **Case Spec & Fingerprinting**
-
-* Normalize inputs (case manifest).
-* Compute content hash.
-
-2. **Input Validator**
-
-* Validate file structure, units, naming, stackup consistency, port definition completeness.
-
-3. **Geometry Builder (Gerber → CSXCAD)**
-
-* Drive gerber2ems geometry generation into `geometry.xml` (+ intermediate raster/triangulation artifacts if needed).
-
-4. **Grid/Mesh Planner**
-
-* Either rely on gerber2ems adaptive grid or enforce a deterministic post-processing mesh policy.
-* Emit mesh stats & determinism hash.
-
-5. **Solver Runner (openEMS)**
-
-* Run openEMS once per excited port (multiport assembly).
-* Enforce resource and convergence policy.
-
-6. **Postprocessor**
-
-* Convert time-domain port data → frequency domain → S-parameters.
-* Export Touchstone, apply renormalization and mixed-mode conversions as needed.
-
-7. **Verification & Calibration Suite**
-
-* Run port-verification checks, physicality checks, and calibration-structure regression tests.
-* Gate acceptance.
-
-### 3.2 Data flow
-
-**Input**
-`case_dir/`
-
-* `fab/` (Gerbers, drill, stackup.json, pos.csv)
-* `simulation.json` (or `oracle_case.json` which compiles down to simulation.json)
-* optional: `netinfo.json` / ROI spec from slicing
-
-**Intermediate**
-
-* `ems/geometry/geometry.xml`
-* `ems/simulation/*` (openEMS raw results)
-* logs, mesh summary, port debug plots
-
-**Output**
-`artifacts/<case_hash>/`
-
-* `sparams.s2p` or `sparams.s4p`
-* `meta.json`
-* `verification_report.json` + `verification_plots/`
-* `solver_log.txt`
-* `geometry.xml`
-* `mesh_summary.json`
-
----
-
-## 4. Input specification (authoritative contracts)
-
-### 4.1 Required files and conventions (canonical)
-
-Adopt gerber2ems conventions as the “lowest-friction baseline” and wrap them with stricter validation:
-
-**Required (minimum)**:
-
-* `fab/stackup.json` with layer list, including dielectric `epsilon` and `lossTangent` fields. ([GitHub][2])
-* Gerber files for each simulated copper layer named `*-<name-from-stackup>.gbr`. ([GitHub][2])
-* Drill file `*-PTH.drl` (Excellon). ([GitHub][2])
-* Position file `*-pos.csv` containing “SP#” markers (ports) with X/Y/Rot/Side. ([GitHub][2])
-* `simulation.json` (or our higher-level case file compiled into it). ([GitHub][2])
-
-**Port marker rule** (must be enforced):
-
-* Each simulation port marker designator starts with `"SP"` followed by the port number. ([GitHub][2])
-
-**Coordinate reference rule**:
-
-* Drill origin bottom-left, pos.csv coordinates referenced from bottom-left corner (per gerber2ems doc). ([GitHub][2])
-
-### 4.2 Simulation config schema: baseline + our extensions
-
-gerber2ems `simulation.json` includes:
-
-* frequency `start/stop`,
-* max timesteps,
-* grid parameters (`optimal`, `diagonal`, `perpendicular`, `max`, margins, cell ratio),
-* ports list with `width`, `length`, `impedance`, `layer`, `plane`, `excite`,
-* and traces/differential pair definitions referencing port numbers. ([GitHub][2])
-
-**We will keep compatibility** but define **M2 canonical case schema**: `oracle_case.json` that compiles to `simulation.json`.
-
-#### 4.2.1 `oracle_case.json` fields (canonical)
-
-* `format_version`: semantic version for our schema.
-* `case_id`: human name, plus deterministic `case_hash`.
-* `frequency`: `{ start_hz, stop_hz, npoints, grid: "lin"|"log" }`
-* `solver_policy`:
-
-  * `boundary`: `"PML_8"` default, with explicit thickness and margins
-  * `end_criteria`: e.g. `1e-5` (≈ -50 dB) as a baseline, adjustable
-  * `max_steps`: required
-  * `threads`: explicit int (maps to openEMS `numThreads`) ([openEMS Documentation][3])
-  * `time_step_factor`: optional stability knob (openEMS supports) ([openEMS Documentation][3])
-* `grid_policy`:
-
-  * `lambda_divisor_max_cell`: default 15 (openEMS rule-of-thumb) ([OpenEMS Wiki][5])
-  * `metal_res_lambda_divisor`: default 20 (openEMS mesh example guidance) ([OpenEMS Wiki][5])
-  * `thirds_rule`: true (enforce 1/3 rule on metal edges) ([OpenEMS Wiki][5])
-  * `cell_ratio_xy_max`: default 2.0 (strict), or 1.2 if following gerber2ems default style ([OpenEMS Wiki][5])
-  * `roi_margin_xy_um`, `roi_margin_z_um`
-* `ports`:
-
-  * `port_definitions`: array of logical port specs (see §5), each references an SP marker
-  * `reference_impedance_ohm`: default 50
-* `structures`:
-
-  * `type`: `"cal_thru"|"cal_line"|"cal_reflect"|"coupon"|"via_transition"|"launch" …`
-  * `port_map`: map from logical ports to physical SP markers
-* `postprocess`:
-
-  * `export_touchstone`: true
-  * `mixed_mode`: options for diff pairs (true/false)
-  * `renormalize_to_ohms`: 50 (optional)
-* `verification`:
-
-  * enabled checks + thresholds
-* `provenance`:
-
-  * git commit hash, openEMS commit hash, gerber2ems version, container image digest
-
----
-
-## 5. Port standards and verification (the heart of M2)
-
-Ports are the most common way EM datasets become unusable (wrong reference planes, swapped orientations, inconsistent impedance definitions).
-
-### 5.1 Port definition strategy
-
-We standardize **two layers of port definition**:
-
-1. **Physical port marker** in PCB space (SP footprints or pos.csv entries).
-2. **Logical port spec** in case config, including reference plane, expected direction, impedance, and validity checks.
-
-#### 5.1.1 Physical port placement & orientation
-
-gerber2ems computes port area from pos.csv coordinates + rotation:
-
-* Rotation maps to X/Y span and **wave travel direction** (0/90/180/270 degrees). ([GitHub][2])
-  Antmicro’s slicing tool places ports at trace endpoints and limits orientation to the four cardinal directions. ([Antmicro][6])
-
-**M2 rule:** port rotation must be in {0, 90, 180, 270}. If not, fail validation unless `allow_non_cardinal_ports=true` and you provide a custom mapping (advanced mode).
-
-#### 5.1.2 Transmission-line ports vs lumped ports
-
-openEMS supports multiple port types:
-
-* **LumpedPort** (compact port with feed resistance) and
-* **MSLPort** (microstrip transmission line port requiring mesh definition, with start/stop ordering defining propagation direction and options like `Feed_R`, `MeasPlaneShift`). ([OpenEMS Wiki][7])
-
-gerber2ems notes ports are “currently composed of microstripline fragments” and have minimum length constraints. ([GitHub][2])
-
-**M2 policy**:
-
-* Default to the gerber2ems port model for compatibility.
-* Provide an **experimental alternate port backend**:
-
-  * For grounded CPW launches and via transitions, a lumped-port feeding strategy can be more robust (especially when CPW grounds complicate quasi-TEM assumptions).
-  * This backend is optional but recommended for later high-rigor validations (and for debugging port issues).
-
-**Port backend selection** is recorded in metadata and becomes part of the run fingerprint.
-
-### 5.2 Reference plane standard
-
-For any port `i`, define:
-
-* **Port reference plane** = plane where S-parameters are referenced.
-* For MSL-like ports, openEMS/ports treat the start/stop box order as propagation direction; the reference plane can be shifted (e.g., `MeasPlaneShift`) and excitation plane is at start. ([OpenEMS Wiki][7])
-
-**M2 rule:**
-
-* The reference plane must be explicit and reproducible:
-
-  * either by a fixed measurement plane shift (in drawing units),
-  * or by a geometric anchor (e.g., “at inner edge of launch pad”) converted deterministically to a coordinate shift.
-
-### 5.3 Port numbering and polarity standard (2-port + 4-port)
-
-#### 5.3.1 Single-ended 2-port
-
-* Port 1 = “source side”, Port 2 = “sink side”
-* Convention: forward direction is 1→2
-
-#### 5.3.2 Differential 4-port
-
-Antmicro describes differential nets requiring 4 simulation ports. ([Antmicro][6])
-
-**M2 strict port ordering (default):**
-
-* (1,2) = near-end pair: P and N
-* (3,4) = far-end pair: P and N
-
-This ordering is chosen specifically to make mixed-mode conversion consistent and unambiguous.
-
-We also store a `diff_pair_map`:
-
-* `near_end: {p:1, n:2}`, `far_end: {p:3, n:4}`
-
-### 5.4 Port verification pipeline (multi-layer defense)
-
-We do not rely on “it ran.” We prove ports are correct using four verification layers:
-
-#### 5.4.1 Geometry-level verification (pre-sim)
-
-Checks:
-
-1. **Port intersects signal metal**: The port box must overlap a signal copper region on the specified `layer`.
-2. **Reference plane exists**: The specified `plane` copper layer exists and has local ground continuity near port.
-3. **Port length constraint**: `length >= 8 * local_mesh_dx` (using intended mesh), aligned with gerber2ems guidance that ports should be long relative to mesh. ([GitHub][2])
-4. **Orientation correctness**: port direction must point into the network, not outward.
-5. **No accidental short**: port box must not intersect ground copper in ways that collapse the port.
-
-Outputs:
-
-* `port_debug.png` overlays: port boxes on copper layers.
-* `port_validation.json` with pass/fail and measured overlaps.
-
-#### 5.4.2 Wave-level verification (post-sim time domain)
-
-After openEMS runs:
-
-* Ensure `port[i].uf.inc` is non-zero over band (no dead excitation).
-* Ensure the excited port shows expected initial reflection behavior:
-
-  * For matched calibration lines, early-time reflection should be low.
-  * For reflect standards, early reflection magnitude should be high.
-
-(We compute these from saved port V/I time traces and FFT.)
-
-#### 5.4.3 S-parameter physicality checks (post-sim frequency domain)
-
-Using the computed S-matrix:
-
-* **Reciprocity check**: for passive reciprocal structures, `|S21 - S12|` small across band (within tolerance).
-* **Energy conservation check**: for passive structures, ensure `|S11|^2 + |S21|^2 ≤ 1 + ε` (2-port), extend to N-port with total outgoing power bounds.
-* **Causality sanity**: group delay should not be wildly negative beyond tolerance (numerical noise allowed near deep nulls).
-
-These checks don’t “prove” EM is correct, but they catch many port/sign mistakes.
-
-#### 5.4.4 Calibration-structure regression (gold standard)
-
-Run the calibration suite (§8) regularly; if any calibration fails, **block merges**.
-
----
-
-## 6. Meshing and grid policy (determinism + efficiency)
-
-### 6.1 What we must optimize for
-
-* openEMS runtime scales brutally with mesh density; antmicro notes that making the grid twice as dense can increase time by **more than 8×**, and smaller cells also reduce timestep size, requiring more steps. ([Antmicro][4])
-* We must therefore:
-
-  * keep cells coarse where possible,
-  * refine only near geometry/ports/discontinuities,
-  * keep the mesh smooth (no huge jumps).
-
-### 6.2 Foundational rules (enforced)
-
-From openEMS mesh guidance:
-
-* **Max cell size** should be about a tenth of the smallest wavelength; better `max(Δx,Δy,Δz) < λ_min / 15`. ([OpenEMS Wiki][5])
-* **Smooth mesh**: neighboring cell sizes should not differ by more than ~2×. ([OpenEMS Wiki][5])
-* **Thirds rule**: for metal edges, place a mesh line 1/3 inside and 2/3 outside to reduce FDTD edge error; recommended for precision microstrip results. ([OpenEMS Wiki][5])
-  Antmicro’s improved flow explicitly uses the 1/3 meshing rule for adaptive grids. ([Antmicro][4])
-
-### 6.3 Adaptive mesh generation (preferred)
-
-We adopt antmicro’s philosophy:
-
-* Analyze Gerber copper contours.
-* Place dense grid lines around “interesting metal patterns” and ports.
-* Use sparser grid lines in uniform regions. ([Antmicro][4])
+Parameter n_samples controls enforcement resolution; narrow violation bands require more samples
 
 Implementation requirements:
 
-* Deterministic contour extraction and grid placement:
+Must support:
 
-  * fixed pixel size and deterministic rasterization settings (gerber2ems has `pixel_size` in config). ([GitHub][2])
-* Mesh lines:
+f_max override
 
-  * always include all copper edges and port box boundaries,
-  * apply thirds rule on edges,
-  * apply smoothing to enforce ratio limits.
+preserve_dc logic:
 
-### 6.4 ROI and boundary placement
+only enabled if DC is already passive; otherwise disable and enforce DC too
 
-openEMS PML guidance:
+Must track:
 
-* PML is absorbing but has warnings: the last `x` lines are PML material; structures must be far enough away; PML thickness often 6–20 cells and PML_8 is a reasonable default. ([OpenEMS Wiki][8])
-  openEMS mesh rules also emphasize keeping structure away from absorbing boundaries (e.g., ~λ/4) for accuracy. ([OpenEMS Wiki][5])
+history_max_sigma per iteration
 
-**M2 default boundary policy**:
+history_violation_bands per iteration
 
-* Use `PML_8` on all 6 boundaries unless explicitly using symmetry planes.
-* Enforce a minimum clearance from geometry bounding box to PML region, expressed in:
+Must stop only when:
 
-  * cells and
-  * physical distance.
+max singular value ≤ 1 + ε for all violating bands (ε default 1e-6–1e-4, configurable)
 
-**Performance mode**:
+AND dense sampling check passes
 
-* For some closed-ish structures, MUR can be faster; openEMS notes PML isn’t optimal for speed and suggests MUR for faster sims (with limitations). ([OpenEMS Wiki][8])
-  M2 may allow MUR in “fast debug mode,” but the golden oracle mode defaults to PML.
+### 9.4 Enforcement fail policy
 
----
+If enforcement does not converge:
 
-## 7. Simulation run policy (openEMS settings that must be standardized)
+Attempt 1: increase n_samples
 
-### 7.1 Frequency plan
+Attempt 2: increase model order (sometimes passivity requires more degrees)
 
-Input is a frequency band `[f_start, f_stop]` and a requested sampling grid.
+Attempt 3: refit with different pole initialization
 
-**M2 standard**:
+Else: REJECTED_PASSIVITY_ENFORCEMENT_FAILED
 
-* Use a broadband Gaussian excitation (openEMS supports `SetGaussExcite(f0, fc)`). ([openEMS Documentation][3])
-* Choose:
+## 10. SPICE export subsystem
+### 10.1 What we export and why
 
-  * `f0 = 0.5*(f_start + f_stop)`
-  * `fc = 0.5*(f_stop - f_start)` (or tuned so -20 dB bandwidth fully covers band)
+We must export a circuit model that:
 
-### 7.2 Time stepping and termination criteria
+Is stable and passive in time-domain simulation
 
-We support two termination models:
+Is compatible with mainstream simulators used in practice
 
-1. **Energy-based termination**: openEMS supports `EndCriteria` (e.g., 1e-5 ≈ -50 dB). ([openEMS Documentation][3])
-2. **Hard cap**: `max_steps`
+Can be used in customer demos and later revenue workflows
 
-gerber2ems shows an operational guideline: ensure max timesteps are at least ~3× excitation signal length. ([GitHub][2])
+scikit-rf provides write_spice_subcircuit_s, which generates an equivalent N-port subcircuit in SPICE netlist syntax compatible with LTspice, ngspice, Xyce (and others), based on a direct state-space implementation of the fitted model.
 
-**M2 standard**:
+### 10.2 State-space realization approach
 
-* Require both:
+We standardize on state-space synthesis for the SPICE export, because:
 
-  * `max_steps`
-  * `end_criteria`
-* Enforce:
+It can represent general rational multiport behavior compactly
 
-  * `max_steps / excitation_length >= 3.0` as a warning threshold; `<2.0` is hard-fail (unless `allow_short_runs=true`).
-* Record termination cause:
+It is the approach explicitly described in scikit-rf’s vector fitting tutorial and implementation notes
 
-  * ended by end criteria vs by step cap.
+scikit-rf notes that its implementation has evolved among equivalent admittances/impedances/state-space, and currently uses a direct state-space realization; it also notes simulator runtime differences depending on controlled source topology.
 
-### 7.3 Multiport assembly
+### 10.3 Export options and required variants
 
-To get a complete N-port S-matrix:
+We export two variants:
 
-* Run one simulation per excited port, with other ports terminated.
-  This matches openEMS multi-port guidance: typically only one port is active at a time to compute reflection/transmission (multiport port array, one active). ([OpenEMS Wiki][7])
+Variant A: N pins, internal ground refs
 
-**M2 requirement**:
+Pins: p1 p2 ... pN
 
-* For N logical ports:
+Reference nodes tied internally to node 0
 
-  * perform N runs (unless using superposition features explicitly validated).
-* Store all raw port waveforms so S can be recomputed offline.
+This matches common SPICE usage
 
-### 7.4 Threading and CPU resource governance
+Variant B: N pin-pairs (explicit reference pins)
 
-openEMS python interface supports a `numThreads` parameter. ([openEMS Documentation][3])
+Pins: p1 p1_ref p2 p2_ref ... pN pN_ref
 
-**M2 default**:
+Enabled by create_reference_pins=True in scikit-rf
 
-* `numThreads = min(physical_cores, user_limit)`
-* Never oversubscribe beyond thermal constraints.
-* Integrate with M0 scheduler (GPU and CPU semaphores), but M2 must be able to run standalone.
+Required for advanced embedding and avoiding implicit ground assumptions
 
----
+### 10.4 SPICE dialect compliance testing (mandatory)
 
-## 8. Postprocessing pipeline (turn raw data into “learnable truth”)
+M4 must include an automated validation step:
 
-### 8.1 Port postprocessing: incident/reflected waves → S
+Export macromodel.sp
 
-openEMS port postprocessing exposes incident/reflected voltage and current in frequency domain, and S-parameters can be computed as ratios (e.g., `s11 = u_ref/u_inc`, `s21 = u_ref(out)/u_inc(in)`). ([OpenEMS Wiki][7])
+Run ngspice (or Xyce) in batch mode on a tiny test harness
 
-**M2 requirement**:
+Compute small-signal AC response (or equivalent extracted S via test fixture)
 
-* The pipeline must produce:
+Compare to rational model evaluation at the same frequencies
 
-  * raw time-domain traces,
-  * raw frequency-domain waves (inc/ref/tot),
-  * and final S-parameters.
+The ngspice manual is available and up-to-date; we will target basic behavioral/controlled-source features used by scikit-rf exports.
 
-### 8.2 Touchstone export rules
+Acceptance criterion: netlist reproduces fitted S within the same error thresholds as the rational model (within a small additional tolerance due to simulator numerical differences).
 
-Touchstone output must include:
+## 11. Numerical and computational design (hardware-aware)
+### 11.1 Core numerical rules
 
-* frequency in Hz,
-* complex S in RI or MA or DB/angle (choose one standard and stick to it; recommended RI),
-* reference impedance per port.
+All fitting and passivity operations default to float64/complex128 for robustness.
 
-### 8.3 Renormalization
+GPU acceleration is used where it improves throughput without destabilizing numerics (primarily evaluation, SVDs, batch error computation).
 
-We will often want to compare across cases with different port reference impedances. scikit-rf supports renormalizing S-parameters to new port impedances. ([scikit-rf.readthedocs.io][9])
+### 11.2 Frequency unit discipline
 
-**M2 requirement**:
+Internal canonical frequency is Hz (consistent with scikit-rf APIs for passivity enforcement and f_max).
 
-* Provide a `renormalize_to_ohms` option:
+Convert to 
+𝜔
+=
+2
+𝜋
+𝑓
+ω=2πf only inside algorithmic kernels that require rad/s.
 
-  * if set, export both:
+### 11.3 Performance strategy on a single laptop
 
-    * native Zref S,
-    * and renormalized S.
+Vector fitting itself is often not the global bottleneck compared to EM solves—but at scale (thousands of coupons) it becomes material. The performance strategy:
 
-### 8.4 Mixed-mode conversion (differential)
+P0: Parallelize over coupons
 
-For differential structures, we need mixed-mode S (Sdd, Scc, Sdc, Scd). scikit-rf provides mixed-mode conversion utilities (`se2gmm`, mixed-mode basics). ([scikit-rf.readthedocs.io][10])
+Each coupon fit is independent. Use process-level parallelism gated by M0 resource semaphores.
 
-**M2 requirement**:
+P1: Avoid re-fitting
 
-* For 4-port results:
+Cache by input hash + config hash.
 
-  * export `.s4p` (single-ended),
-  * export mixed-mode `.s4p` or `.s2p`-equivalent representations:
+If only passivity enforcement config changes, reuse fit and re-run enforcement only.
 
-    * `Sdd21`, `Sdd11`, etc. (define format in metadata).
-* Strictly enforce diff port pairing to avoid ambiguity.
+P2: GPU-first evaluation
 
-### 8.5 GPU-accelerated postprocessing (important for your mission)
+The repeated inner loops are:
 
-Even if openEMS is CPU-bound, M2 should be **GPU-first where it matters**:
+evaluating 
+𝑆
+(
+𝑗
+𝜔
+)
+S(jω) over frequency grids
 
-* FFTs and array transforms across large batches of cases can be done in CuPy.
-* Mixed-mode conversion, renormalization, resampling, and quality metric computation can be batched on GPU.
+computing singular values (SVD) over many frequencies
 
-**M2 requirement**:
+computing error metrics over many frequencies
 
-* Implement postprocessing kernels with a backend abstraction:
+These are excellent GPU workloads.
+M4 must provide an array-backend abstraction (xp = numpy|cupy) so that M5 can drop in custom CUDA kernels without rewriting M4.
 
-  * `numpy` fallback,
-  * `cupy` default when GPU available,
-  * no silent fallback (must log “CPU fallback reason”).
+### 11.4 Memory bounds
 
-This directly increases dataset throughput for equation discovery.
+We must support up to (typical):
 
----
+Nports: 2–8
 
-## 9. Calibration structures (what we simulate to prove M2 is correct)
+Nfreq: 201–10,001
 
-M2 includes a **calibration library**: parameterized KiCad/Gerber sources + expected behaviors + golden results. These are used for:
+Poles: 10–100 (worst case)
 
-* regression testing,
-* port verification,
-* mesh policy verification,
-* and as reference structures for later measurement de-embedding (M9).
+We design all evaluation routines to be chunked by frequency to avoid VRAM spikes.
 
-### 9.1 Why TRL, and what structures to include
+## 12. Quality metrics and acceptance gates
+### 12.1 Fit accuracy metrics (required)
 
-TRL calibration uses **Thru, Reflect, Line** standards. ([Copper Mountain Technologies][11])
-Even if M2 doesn’t perform measurement calibration, TRL-style structures are excellent because they:
+Compute:
 
-* are easy to fabricate,
-* are transmission-line based (good match to PCB environments),
-* and provide strong sanity checks on phase/delay and port definition.
+RMS error across all S-parameters (scikit-rf provides RMS error calculation; we also compute ours)
 
-### 9.2 Calibration structure set (minimum viable, but rigorous)
+Max magnitude error (dB)
 
-#### CAL-0: Empty “airbox” sanity
+Max phase error (deg)
 
-* No copper, only boundary conditions.
-* Expect near-zero coupling, near-zero reflected power except numerical noise.
-* Purpose: boundary + solver stability baseline.
+Weighted error in band(s) of interest
 
-#### CAL-1: Matched uniform line (2-port)
+Default gates (tunable per campaign):
 
-* Straight microstrip or grounded CPW of known length L.
-* Expected:
+RMS error ≤ 1e-2 (example-level); for strict campaigns ≤ 5e-3
 
-  * |S11| low in band,
-  * |S21| near 0 dB minus dielectric/metal loss,
-  * phase slope corresponds to group delay ≈ L / v_p.
-* Compare to analytic TL model (from impedance/ε_eff estimates) within tolerance.
+Max |ΔS| ≤ 0.02 in-band (example target)
 
-#### CAL-2: “Thru” (TRL T)
+### 12.2 Passivity gates (hard)
 
-* Essentially a very short interconnect between ports.
-* Expected:
+No violation bands returned by passivity assessment
 
-  * S21 ≈ 1∠0 (minus small loss),
-  * S11 small.
+Dense sampling check confirms max singular value ≤ 1 + ε
 
-#### CAL-3: “Line” (TRL L)
+Passivity assessment uses half-size test matrix for reciprocal models and returns explicit violation bands if present.
 
-* Same as Thru but with additional known length ΔL.
-* Expected:
+### 12.3 Causality gates (hard for “oracle accepted”)
 
-  * S21 phase difference vs Thru = β(ω)ΔL.
+Robust filtered-FFT causality check passes within truncation-error bounds
 
-#### CAL-4: “Reflect” (TRL R)
+If repaired, must show:
 
-* Short or open termination (in PCB context, often a short is easier/cleaner).
-* Expected:
+violation metric reduced (monotone improvement)
 
-  * |S11| ≈ 1 in band (away from parasitic resonances),
-  * S21 ≈ 0.
+repair magnitude within allowed limits (e.g., Δτ ≤ 100 ps unless explicitly allowed)
 
-#### CAL-5: Differential pair straight line (4-port)
+### 12.4 SPICE export gates (hard)
 
-* Known-length diff pair in homogeneous environment.
-* Expected:
+Netlist is generated
 
-  * low mode conversion (Sdc, Scd small),
-  * consistent Sdd21 delay,
-  * symmetry/reciprocity sanity.
+Netlist parses and runs in ngspice (and optionally Xyce)
 
-#### CAL-6: Known discontinuity “signature” structures
+AC response matches the rational evaluation within tolerance
 
-These are not to match a simple analytic curve, but to be **stable regression fingerprints**:
+### 12.5 Final verdict logic
 
-* a via-less pad discontinuity,
-* a stub,
-* a simple via transition with a known antipad.
+ACCEPTED: passes all gates without repair
 
-### 9.3 “Golden results” policy for calibration tests
+REPAIRED_AND_ACCEPTED: repairs applied and all gates passed; repairs recorded
 
-For each CAL-* structure:
+REJECTED: any hard gate fails, or repairs exceed allowed limits
 
-* store:
+## 13. How we will know “for certain” the implementation meets engineering rigor
 
-  * the case inputs (Gerbers/stackup/ports config),
-  * and one or more golden outputs:
+This section is the Definition of Done (DoD) for M4. M4 is complete only when all items below are true.
 
-    * `golden.s2p`,
-    * `golden_meta.json` including solver commit and mesh stats.
+### 13.1 Correctness test suite (must pass in CI)
 
-**But**: since solver versions and floating point can shift results slightly, the regression test must be based on **metrics**, not bitwise equality:
+A. Analytic network tests
 
-* max |ΔS| in band,
-* max phase error in band,
-* group delay error,
-* passivity margin slack.
+Generate known passive RLC networks (2-port ladders, coupled LC, etc.)
 
----
+Compute “ground truth” S via analytic formulas
 
-## 10. Verification gates (how we know M2 is *done* and trustworthy)
+Fit model → enforce passivity → export SPICE
 
-This is the section you asked for explicitly: **how we know for certain we’ve reached strict engineering rigor**.
+Verify:
 
-### 10.1 Quality gates must be automated and blocking
+fit error below strict threshold
 
-M2 is “done” only if the repo can run:
+passivity holds
 
-```bash
-m2 validate --all
-```
+SPICE reproduces response
 
-and it passes:
+B. Known dataset regression
 
-* unit tests,
-* integration tests,
-* calibration regression suite,
-* performance sanity suite.
+Use scikit-rf example networks (e.g., ring slot examples) to ensure:
 
-### 10.2 Definition of Done (DoD) — required pass conditions
+fit converges in expected order range
 
-#### A) Deterministic build + pinned dependencies
+passivity enforcement works when violations exist
 
-* openEMS version pinned (or pinned commit) and recorded in output metadata.
+regression thresholds match expected behavior
 
-  * gerber2ems recommends a specific openEMS commit as “latest tested” with gerber2ems. ([GitHub][2])
-* gerber2ems version pinned and recorded.
-* Container or environment hash recorded in `meta.json`.
+(scikit-rf provides vector fitting examples; M4 uses them as reproducible regression fixtures.)
 
-#### B) Input validation correctness
+C. Causality detection tests
 
-The validator must correctly detect and fail:
+Construct a causal dataset, then inject non-causality:
 
-* missing stackup layers referenced by Gerbers,
-* missing drill or pos file,
-* non-cardinal port rotations (unless explicitly allowed),
-* port boxes that do not overlap signal copper,
-* invalid grid settings (e.g., violating `max <= λmin/10` guidance). ([GitHub][2])
+apply a negative delay / phase warp
 
-#### C) Port verification suite passes
+Verify robust causality check flags it (with negative-time violation)
 
-On CAL-1/CAL-2:
+Verify repair mode (delay alignment) can fix within allowed range
 
-* |S11| median in band < threshold (e.g., -15 dB) for matched lines.
-* Group delay positive and within ±X% of expected from line length.
-* S21 magnitude near expected (allow loss).
+The robust check methodology and finite-bandwidth error accounting are described by Triverio.
 
-On CAL-4 reflect:
+D. Passivity stress tests
 
-* |S11| median > threshold (e.g., -1 dB) in band.
-* S21 small.
+Create a fitted model and deliberately perturb residues to create passivity violation
 
-On reciprocity-expected structures:
+Ensure:
 
-* max |S21 - S12| < tolerance.
+passivity assessment returns correct violation bands
 
-#### D) Mesh policy invariance tests
+enforcement converges and eliminates bands
 
-For at least one calibration structure, run **two meshes**:
+E. SPICE simulator round-trip
 
-* baseline mesh,
-* refined mesh (e.g., tighten lambda divisor or local refine near ports),
+Export netlist
 
-and require:
+Simulate in ngspice
 
-* max |ΔS21| < tolerance in band (e.g., 0.2 dB magnitude, 5° phase)
-  This is your strongest evidence that your oracle is not a mesh-artifact generator.
+Compare to rational model evaluation on the same frequency grid
 
-#### E) Solver termination sanity
+Fail CI if mismatch exceeds tolerance
 
-For all calibration sims:
+### 13.2 Determinism and provenance (must be provable)
 
-* simulation must end via end criteria *or* reach max steps with energy decreasing.
-* must not end prematurely with “not enough timesteps” (hard-fail if `max_steps < 2× excitation_len`, warn if <3×). ([GitHub][2])
+Same input + same config + same commit → identical macromodel.json (modulo floating rounding; we define deterministic serialization)
 
-#### F) Artifact completeness and auditability
+All outputs embed:
 
-For every run, M2 must output:
+input hash
 
-* Touchstone,
-* `meta.json`,
-* `mesh_summary.json`,
-* `port_map.json`,
-* solver logs,
-* verification report.
+config hash
 
-No exceptions: without these, data is not “gold.”
+tool versions
 
-#### G) Performance sanity (single laptop)
+commit hash
 
-M2 must include a benchmark target:
+### 13.3 Performance gates (must be measurable)
 
-* CAL-2 Thru simulation must complete within a set envelope on your laptop.
-* If it regresses, CI fails (local CI).
+We define a standard benchmark:
 
-This prevents creeping inefficiency that kills dataset throughput.
+4-port, 1001 frequency points, target ~40 poles via auto_fit
 
----
+Must finish within X seconds on the laptop CPU baseline
 
-## 11. Computational efficiency design (what we implement for throughput)
+Must not regress >Y% across commits (tracked)
 
-### 11.1 Cost model and early rejection
+### 13.4 “Oracle audit bundle” (must exist)
 
-Before running openEMS:
+Every run produces a compact audit bundle:
 
-* estimate number of Yee cells from mesh lines: Nx×Ny×Nz.
-* estimate memory consumption (conservative).
-* if projected memory > user budget (e.g., 24 GB of RAM), **fail early** with a diagnostic:
+Causality report (plots + metrics)
 
-  * “ROI too big”
-  * “grid too fine”
-  * “frequency too high for requested resolution”
+Fit convergence plot + pole distribution
 
-### 11.2 ROI minimization
+Passivity bands pre/post enforcement + max singular values
 
-gerber2ems and Antmicro stress simulating whole boards is too expensive; slices/ROI are key. ([GitHub][2])
+SPICE export + simulator logs (if enabled)
 
-**M2 requirement**:
+Final verdict explanation
 
-* enforce ROI bounding via:
-
-  * `margin/from_trace = true` by default (use nets-of-interest b-box). ([GitHub][2])
-* store ROI bounding box in meta.
-
-### 11.3 Adaptive grids default
-
-Use adaptive grid settings by default (per antmicro improvements). ([Antmicro][4])
-Expose a deterministic configuration for:
-
-* edge resolution vs diagonal resolution vs perpendicular resolution, consistent with gerber2ems config fields. ([GitHub][2])
-
-### 11.4 Parallelism policy
-
-* openEMS run is CPU-heavy; run **one openEMS job at a time** with controlled `numThreads`.
-* Postprocessing (FFT, conversions) can be GPU-parallel across cases.
-
-### 11.5 Storage policy
-
-Because field dumps can be enormous (hundreds of GB), field exports must be:
-
-* disabled by default,
-* gated behind explicit flags,
-* auto-cleaned unless `--keep-field-dumps` is set. ([GitHub][2])
-
----
-
-## 12. API and CLI specification (exact interfaces)
-
-### 12.1 Python API
-
-Module: `m2_em_oracle/`
-
-#### Core classes
-
-* `OracleCase`
-
-  * loads `oracle_case.json`, resolves paths, validates schema.
-* `CaseFingerprint`
-
-  * computes deterministic hash over:
-
-    * all input file bytes (Gerbers, drill, stackup, pos.csv),
-    * normalized config,
-    * openEMS version/commit,
-    * gerber2ems version,
-    * container/env hash.
-* `GeometryBuilder`
-
-  * `build(case) -> GeometryArtifact`
-* `SolverRunner`
-
-  * `run(case, geometry) -> RawSimulationArtifact`
-* `PostProcessor`
-
-  * `compute_sparams(raw, case) -> SParameterArtifact`
-* `Verifier`
-
-  * `verify(case, sparams, raw, geometry) -> VerificationReport`
-* `ArtifactWriter`
-
-  * writes the final bundle.
-
-#### Key function signature
-
-```python
-def run_oracle_case(case_dir: Path, *, force: bool=False) -> Path:
-    """
-    Runs full M2 pipeline and returns artifact directory path.
-    Raises OracleValidationError / OracleRuntimeError on failure.
-    """
-```
-
-### 12.2 CLI
-
-Command group: `oracle`
-
-* `oracle validate <case_dir>`
-
-  * schema + file checks + port/copper overlap checks.
-
-* `oracle build-geometry <case_dir>`
-
-  * produces `geometry.xml` and mesh summary, no sim.
-
-* `oracle simulate <case_dir>`
-
-  * runs openEMS and saves raw waveforms.
-
-* `oracle postprocess <case_dir>`
-
-  * computes Touchstone outputs.
-
-* `oracle verify <case_dir>`
-
-  * runs full verification suite.
-
-* `oracle run <case_dir>`
-
-  * full pipeline with caching.
-
-* `oracle cal run --all`
-
-  * runs all CAL-* structures and produces a dashboard report.
-
----
-
-## 13. Logging, metadata, and reproducibility (audit bundle spec)
-
-Every artifact bundle must contain:
-
-### 13.1 `meta.json` (minimum)
-
-* `case_hash`
-* `timestamp`
-* `git_commit`
-* `openems`: `{ version, commit, build_flags }`
-* `gerber2ems`: `{ version, commit }`
-* `host`: `{ cpu, ram, os }`
-* `solver_policy`: boundary, end criteria, max steps, threads
-* `grid_policy`: all mesh settings + computed λmin
-* `ports`: logical-to-physical mapping, orientations, reference planes
-* `frequency_grid`: exact frequencies used
-* `run_times`: geometry build, sim time per excited port, postprocess time
-
-### 13.2 `mesh_summary.json`
-
-* mesh lines per axis,
-* min/max Δ,
-* cell ratio statistics,
-* total cell count,
-* estimated memory.
-
-### 13.3 `verification_report.json`
-
-* pass/fail for each check,
-* numeric metrics,
-* tolerances used,
-* references to plots.
-
-### 13.4 `solver_log.txt`
-
-* raw openEMS stdout/stderr
-* gerber2ems stdout/stderr
-
----
-
-## 14. Risks and mitigations (known failure modes)
-
-### 14.1 Port misplacement or incorrect direction
+## 14. Critical failure modes and mitigations
+### 14.1 Non-causal raw data → “VF looks bad / unstable”
 
 Mitigation:
 
-* geometry-level overlap checks
-* calibration suite checks (delay sign, reflect behavior)
+Always run causality screen first
 
-### 14.2 Mesh-induced artifacts (staircasing, edge errors)
+Attempt limited repairs; else reject with diagnostics
 
-Mitigation:
-
-* thirds rule + mesh invariance tests ([OpenEMS Wiki][5])
-
-### 14.3 Boundary reflections polluting S-parameters
+### 14.2 Passivity enforcement fails to converge
 
 Mitigation:
 
-* enforce clearance to PML region
-* default PML_8; record clearance metrics ([OpenEMS Wiki][8])
+Increase enforcement sampling density
 
-### 14.4 Inadequate run time (timesteps)
+Increase model order (more degrees of freedom)
+
+Refit with different initial poles
+
+If still fails: reject (do not ship unstable models)
+
+### 14.3 Pole ordering instability (breaks downstream learning)
+
+Mitigation in M4:
+
+Canonical pole sorting and conjugate pairing
+
+Export derived real second-order section parameters (stable ordering)
+
+Provide a “mode signature” per pole pair (e.g., 
+(
+𝜔
+0
+,
+𝛼
+)
+(ω
+0
+	​
+
+,α)) for later matching
+
+### 14.4 SPICE dialect incompatibilities
 
 Mitigation:
 
-* enforce max_steps relative to excitation length guidance ([GitHub][2])
+Target scikit-rf’s tested export path (LTspice/ngspice/Xyce compatible)
 
-### 14.5 Storage blow-up from field dumps
+Maintain simulator-based regression tests
 
-Mitigation:
+Keep two netlist variants (with/without explicit reference pins)
 
-* disable by default; strict gating ([GitHub][2])
+## 15. Milestone completion checklist (single-page)
 
-### 14.6 Licensing constraints
+M4 is complete when:
 
-openEMS is GPLv3 (and CSXCAD LGPLv3) per documentation; gerber2ems is Apache-2.0. ([openEMS Documentation][1])
-Mitigation:
+✅ process_network() produces ACCEPTED/REPAIRED/REJECTED deterministically
 
-* treat openEMS as an external tool dependency, not a linked library inside proprietary components.
-* keep your proprietary “secret formula” tooling separate from GPL obligations if distributing.
+✅ Robust causality check implemented (filtered FFT + truncation bound) and tested
 
----
+✅ Vector fitting supports fixed-order and auto_fit (“adding & skimming”)
 
-## 15. How M2 maximizes probability of discovering a *novel equation*
+✅ Passivity assessment returns violation bands via half-size test matrix
 
-M2 increases discovery odds by ensuring:
+✅ Passivity enforcement converges using singular value perturbation + optional DC preservation
 
-* **low-variance labels**: consistent S-parameters across cases (ports + mesh invariance),
-* **traceable causality**: you can attribute any model failure to geometry, not oracle noise,
-* **high throughput**: adaptive grids + ROI + GPU postprocessing means you can run more cases and support active learning loops,
-* **physics fidelity**: calibration structures anchor the solver to known behaviors (delay, reflection), keeping symbolic regression from learning garbage invariants.
+✅ SPICE export produces a subcircuit compatible with LTspice/ngspice/Xyce and simulator round-trip tests pass
 
----
+✅ All artifacts include provenance hashes and a full audit bundle
 
-## 16. M2 “Absolute Quality Standard” Checklist (print this in the repo)
+✅ CI includes analytic-network tests, causality injection tests, passivity perturbation tests, SPICE round-trip tests
 
-M2 is acceptable only when:
+✅ Performance benchmark exists and is regression-gated
 
-1. ✅ `oracle cal run --all` passes on a clean machine with pinned toolchain.
-2. ✅ Port verification catches intentionally broken port cases (negative tests).
-3. ✅ Mesh refinement invariance holds on at least 2 representative structures.
-4. ✅ Reciprocity/energy checks pass (within stated tolerances) for passive reciprocal structures.
-5. ✅ Full artifact bundles are generated and contain required metadata.
-6. ✅ Re-running the same case yields identical frequency grid + near-identical S within numeric tolerance.
-7. ✅ Performance benchmark does not regress (CAL-2 Thru within envelope).
-8. ✅ Documentation includes:
+✅ Documentation: one tutorial notebook + one CLI guide + one “debugging playbook”
 
-   * port conventions (with diagrams),
-   * calibration structures meaning + expected outcomes,
-   * how to add a new case,
-   * how to interpret verification failures.
+## 16. Strategic note: why this M4 design maximizes odds of discovering a novel equation
 
-If even one of these fails, M2 is not “gold,” and downstream equation discovery is at risk.
+Your “novel equation” is most likely to emerge as a discovered parametric law for the macromodel parameters (poles/residues/sections) as functions of geometry.
 
----
+M4 ensures:
 
-If you want the next step to be even more implementation-ready, I can provide a **repo-ready file tree** for M2 (exact module names, test directories, golden artifact locations) plus a **full set of calibration case manifests** (CAL-0…CAL-6) and the exact numeric tolerances you should start with on a laptop-class run budget.
+the learned targets are physically legal (passive/causal/stable)
 
-[1]: https://docs.openems.de/intro.html "https://docs.openems.de/intro.html"
-[2]: https://github.com/antmicro/gerber2ems "https://github.com/antmicro/gerber2ems"
-[3]: https://docs.openems.de/python/openEMS/openEMS.html "https://docs.openems.de/python/openEMS/openEMS.html"
-[4]: https://antmicro.com/blog/2025/07/recent-improvements-to-antmicros-signal-integrity-simulation-flow/ "https://antmicro.com/blog/2025/07/recent-improvements-to-antmicros-signal-integrity-simulation-flow/"
-[5]: https://wiki.openems.de/index.php/FDTD_Mesh.html "https://wiki.openems.de/index.php/FDTD_Mesh.html"
-[6]: https://antmicro.com/blog/2024/07/automated-pcb-trace-selection-for-si-simulation/ "https://antmicro.com/blog/2024/07/automated-pcb-trace-selection-for-si-simulation/"
-[7]: https://wiki.openems.de/index.php/Ports.html "https://wiki.openems.de/index.php/Ports.html"
-[8]: https://wiki.openems.de/index.php/FDTD_Boundary_Conditions.html "https://wiki.openems.de/index.php/FDTD_Boundary_Conditions.html"
-[9]: https://scikit-rf.readthedocs.io/en/latest/examples/networktheory/Renormalizing%20S-parameters.html "https://scikit-rf.readthedocs.io/en/latest/examples/networktheory/Renormalizing%20S-parameters.html"
-[10]: https://scikit-rf.readthedocs.io/en/latest/examples/mixedmodeanalysis/Mixed%20Mode%20Basics.html "https://scikit-rf.readthedocs.io/en/latest/examples/mixedmodeanalysis/Mixed%20Mode%20Basics.html"
-[11]: https://coppermountaintech.com/wp-content/uploads/2018/05/Design-and-Fabrication-of-a-TRL-Calibration-Kit.pdf "https://coppermountaintech.com/wp-content/uploads/2018/05/Design-and-Fabrication-of-a-TRL-Calibration-Kit.pdf"
+the targets are compressive (low-dimensional, interpretable)
 
+the targets are auditable (no hidden artifacts)
 
-# M3 Design Document — Data and Experiment Backbone
+the targets are deployable (SPICE export is a direct commercialization path)
 
-**Dataset versioning + pipeline DAGs + artifact store** (single‑laptop, GPU‑first, high‑rigor)
+That combination is what turns symbolic regression from “curve fitting” into “engineering discovery”.
 
-This document specifies the *complete* M3 implementation: how the repository will **store, version, index, reproduce, and audit** every dataset, simulation, fit, and discovered formula so we can run thousands of iterations without losing lineage, wasting compute, or accidentally “discovering” an artifact of sloppy data handling.
+# M5 Design Document — GPU Acceleration Layer
 
-M3 is not “just experiment tracking.” It is the **foundational substrate** that makes every later milestone (M4 vector fitting, M6 symbolic regression, M7 falsification, M8 agents, M9 measurement) *scientifically defensible* and *engineering‑grade*.
+Milestone goal: Make the inner loop of discovery (batched macromodel evaluation + constraint checks + objective scoring across large datasets) GPU-dominant, deterministic-enough, and auditable—so that symbolic discovery + adversarial falsification (M6/M7) becomes feasible on a single laptop GPU.
 
----
+This document is written to be “repo-complete”: if you implement exactly what’s specified here, you will know (with high confidence) you have built the correct, performant, and rigorous M5 layer—and you will also know exactly when it is done.
 
-## 0) Mission binding: why M3 exists in this project
+## 0) Mission context and why M5 is existential to the project
 
-We are building a “formula foundry” whose outputs must survive corporate scrutiny:
+Your overall pipeline is:
 
-* A discovered symbolic law must be **traceable** down to:
+M1: generate parametric PCB coupons (geometry DSL → Gerbers/KiCad).
 
-  1. the exact geometry parameters (coupon design vector),
-  2. the exact solver configuration/mesh/ports,
-  3. the exact S‑parameter dataset used,
-  4. the exact rational fit settings and passivity gates,
-  5. the exact SR/search settings, and
-  6. the exact falsification adversaries and failure cases.
+M2: full-wave oracle (openEMS) produces ground-truth frequency responses.
 
-* We must support **rapid iterative loops** (active learning, falsification, tournament selection) without recomputing expensive stages. This is how we stay within a single laptop’s physical constraints.
+M4: vector-fitting + passivity/causality → compact rational macromodels for each design point.
 
-* We must enforce a **“no orphan artifact”** rule: nothing exists unless it is referenced by a dataset snapshot and a run record.
+M6: symbolic regression discovers formulas for macromodel parameters (poles/residues/etc) as functions of geometry.
 
----
+M7: falsification/active learning breaks formulas and forces robustness.
 
-## 1) Constraints and design goals
+The bottleneck in M6/M7 is not “training a model”—it’s scoring: for each candidate formula, you must evaluate predicted macromodel parameters over thousands of designs and hundreds of frequency points, compute objective metrics, and repeatedly do this in tournaments/falsification loops.
 
-### 1.1 Hardware & execution reality
+M5’s job: turn “evaluate candidate → compute metrics → compute constraints” into a GPU pipeline with fused kernels and minimal CPU overhead.
 
-* Single machine.
-* 2.5 TB SSD (fast, finite).
-* 32 GB RAM (moderate).
-* GPU is abundant vs CPU for search loops; EM solver is CPU‑dominant.
-* We need storage policies that keep the SSD from filling and pipelines from degenerating into “rehash everything” operations.
-
-### 1.2 “Strict rigor” goals
-
-* Deterministic and/or *numerically stable* reproducibility.
-* Full provenance & lineage graph: **formula → fitted model → S‑parameters → geometry → commit + environment**.
-* Clear definition of done (DoD) with **automated verification** and **performance budgets**.
-
-### 1.3 Tooling choices (primary)
-
-**DVC** for data versioning + pipeline DAGs + cache/dedup primitives. DVC pipelines are configured in `dvc.yaml` and lock reproducible dependencies/outputs via `dvc.lock`. ([Data Version Control · DVC][1])
-DVC’s cache is **content‑addressable storage** in `.dvc/cache`. ([Data Version Control · DVC][2])
-We will tune link types to maximize efficiency (prefer reflinks). ([Data Version Control · DVC][3])
-We will use `dvc gc` for garbage collection of unused cached data. ([Data Version Control · DVC][4])
-
-**MLflow** for experiment tracking metadata (params/metrics/tags), with a **local SQLite backend store** and a **local filesystem artifact store** (small artifacts only). MLflow supports configuring backend store and artifact store locations. ([MLflow][5])
-
-**A project‑local Artifact Registry (SQLite)** (ours) for ultra‑fast indexing/querying of artifacts, *derived entirely from manifests*, so it can be rebuilt deterministically.
-
-> Why not rely on just one tool?
-> DVC excels at reproducible data/pipeline + dedup cache. MLflow excels at “experiment table” views and metadata. Our registry gives low‑latency queries and integrity checks at scale without forcing DVC to scan the whole tree repeatedly.
-
----
-
-## 2) M3 deliverables
-
-### 2.1 Repository structure (canonical)
-
-```
-repo/
-  dvc.yaml
-  dvc.lock
-  params.yaml
-  .dvc/
-    cache/                 # DVC CAS
-    config                 # DVC settings (cache dir, link type, remotes)
-  mlruns/                  # MLflow default artifact root (small artifacts only)
-  mlruns.db                # MLflow SQLite backend store (or configurable path)
-  data/
-    README.md              # contracts for datasets
-    registry/              # dataset snapshots (DVC-tracked)
-      datasets/
-        <dataset_id>/
-          dataset.json
-          index.parquet
-          splits.json
-          manifest.sha256
-    objects/               # artifact objects (DVC-tracked or DVC outputs)
-      em_sparams/
-      em_logs/
-      vf_models/
-      features/
-      sr_candidates/
-      reports/
-  runs/
-    <run_id>/
-      run.json
-      stdout.log
-      stderr.log
-      env.json
-      pointers.json
-  tools/
-    m3/
-      cli.py
-      schemas/
-      storage.py
-      registry.py
-      verify.py
-      lineage.py
-```
+## 1) Hardware + platform assumptions
+### 1.1 Target device class
 
-**Key point:**
+NVIDIA GeForce RTX 5090 Laptop GPU with 24 GB VRAM (your stated machine; consistent with published RTX 5090 laptop specs in the press).
 
-* `data/registry/**` is the *source of truth for dataset snapshots*.
-* `data/objects/**` is the *artifact object store* (large, DVC‑managed).
-* `runs/**` is lightweight run metadata and pointers; it is Git‑tracked (or small enough to be).
+Compute capability for RTX 5090 = 12.0 (Blackwell consumer).
 
-### 2.2 CLI and API surface (M3 “public interface”)
+### 1.2 Critical compatibility risk (must be engineered around)
 
-#### CLI
+Blackwell consumer (sm_120 / compute capability 12.0) has had real-world “not compatible with current PyTorch install” failures depending on wheel/CUDA build. Treat this as expected unless you pin a known-good stack.
 
-* `m3 init`
-  Initializes:
+M5 requirement: the repo must provide:
 
-  * DVC project structure (if not already) and configures cache/link type.
-  * MLflow tracking URI to local SQLite file.
-  * Creates schema files and verification scaffolding.
+A validated environment lock (container or reproducible env) where:
 
-* `m3 run <pipeline> --params ...`
-  A wrapper that:
+PyTorch GPU works on sm_120, or
 
-  * stamps a `run_id`,
-  * sets deterministic env vars,
-  * runs `dvc repro` (or a specified stage),
-  * logs to MLflow,
-  * writes `runs/<run_id>/run.json`.
+the M5 layer can operate using CuPy RawKernel paths even if PyTorch is temporarily behind for that architecture.
 
-* `m3 dataset create --name <...> --from <...>`
-  Creates a dataset snapshot (content‑addressed `dataset_id`) that references artifacts by ID.
+### 1.3 CUDA graphs are a first-class optimization
 
-* `m3 dataset diff <dataset_a> <dataset_b>`
-  Reports exact added/removed samples + derived artifacts.
+CUDA Graphs reduce CPU overhead by recording GPU work once and replaying it repeatedly (with fixed memory addresses/arguments), and PyTorch supports CUDA graph construction via stream capture.
 
-* `m3 artifact show <artifact_id>`
-  Shows manifest, parents, children, file sizes, hashes.
+M5 must be graph-friendly for repeated objective evaluations at fixed shapes.
 
-* `m3 verify`
-  Runs the full M3 verification suite (integrity + reproducibility gates + performance checks).
+## 2) Scope, goals, and non-goals
+### 2.1 Goals (what M5 must deliver)
 
-* `m3 gc --policy <...>`
-  Applies retention policy and triggers `dvc gc` appropriately. ([Data Version Control · DVC][4])
+M5 provides a GPU-first compute substrate used by M4/M6/M7:
 
-#### Python API
-
-* `ArtifactStore.put(manifest, files...) -> artifact_id`
-* `ArtifactStore.get(artifact_id) -> paths + manifest`
-* `DatasetSnapshot.load(dataset_id) -> table`
-* `LineageGraph.trace(artifact_id | dataset_id | run_id)`
-
----
-
-## 3) Core data model
-
-M3 defines **three fundamental ID types**:
-
-### 3.1 `spec_id` (pre‑execution identity)
-
-A deterministic hash of the *inputs* to a computation, including:
-
-* parent artifact IDs,
-* parameter dict (canonicalized),
-* tool versions (solver/vectorfit/SR),
-* schema version,
-* relevant environment knobs.
-
-**Purpose:** caching / reuse / “should I recompute?”.
-
-### 3.2 `content_hash` (post‑execution integrity)
-
-A deterministic hash of the *produced content bytes*, computed after writing outputs.
-
-**Purpose:** integrity + dedup across specs (if any) + detecting nondeterminism.
-
-### 3.3 `artifact_id` (primary reference)
-
-For M3, **artifact_id = content_hash** (content‑addressed store).
-We retain `spec_id` in the manifest as the intended computation identity.
-
-**Why this matters:**
-If later we rerun the same `spec_id` and produce a different `content_hash`, that is a *hard failure* unless explicitly allowed by a “numeric tolerance” policy (described below).
-
----
-
-## 4) Artifact taxonomy (what we store)
-
-We store artifacts as **immutable** objects, each with:
-
-* `manifest.json` (validated by JSON Schema)
-* one or more data files
-* optional `meta/` (logs, plots, etc.)
-
-### 4.1 Artifact types (initial set)
-
-1. **Geometry / manufacturing**
-
-* `kicad_project` (zipped project or directory)
-* `gerbers` (zipped)
-* `drill_files`
-* `coupon_manifest` (the design vector `x`, constraints, connector type)
-
-2. **EM oracle outputs**
-
-* `sparams_touchstone` (`.s2p`, `.s4p`, etc.)
-* `sparams_binary` (NPZ with complex64/complex128 arrays, plus frequency grid)
-* `em_run_log` (compressed)
-* `em_config` (ports, boundary conditions, mesh parameters)
-
-3. **Derived network objects**
-
-* `network_features` (normalized features, dimensionless groups, etc.)
-* `vectorfit_model` (poles/residues; JSON + NPZ)
-* `passivity_report` (metrics and pass/fail)
-
-4. **Symbolic regression & discovery**
-
-* `sr_search_trace` (compressed trace of candidate evaluations)
-* `formula_candidate` (SymPy expression, codegen outputs, constraints status)
-* `falsification_counterexample_set` (adversarial points + failures)
-
-5. **Reports**
-
-* `benchmark_report` (HTML/PDF/Markdown)
-* `comparison_plots` (PNG/SVG; small)
-
-### 4.2 Artifact location scheme
-
-Artifacts are stored under:
-
-```
-data/objects/<type>/<prefix>/<artifact_id>/
-  manifest.json
-  payload/... (files)
-```
-
-Where `prefix` is first 2–3 hex characters of `artifact_id` to avoid giant directories.
-
----
-
-## 5) Manifest schemas (executable contracts)
-
-Every artifact must include a manifest with **strict schema versioning**.
-
-### 5.1 Shared manifest fields (required)
-
-```json
+Batched rational macromodel evaluation
+Efficient evaluation of the canonical form used in this project:
+
+𝐻
+(
+𝑠
+)
+=
+𝐷
++
+𝑠
+𝐸
++
+∑
+𝑘
+=
+1
+𝐾
+𝑅
+𝑘
+𝑠
+−
+𝑎
+𝑘
+H(s)=D+sE+
+k=1
+∑
+K
+	​
+
+s−a
+k
+	​
+
+R
+k
+	​
+
+	​
+
+
+where 
+𝐻
+(
+𝑠
+)
+H(s) is multiport complex (typically 2×2 or 4×4), 
+𝑎
+𝑘
+a
+k
+	​
+
+ poles, 
+𝑅
+𝑘
+R
+k
+	​
+
+ residue matrices, 
+𝐷
+,
+𝐸
+D,E constant matrices.
+Must support batch dimensions over:
+
+many designs 
+𝐵
+B
+
+many frequencies 
+𝐹
+F
+
+small port counts 
+𝑃
+∈
 {
-  "schema_version": "m3.artifact.v1",
-  "artifact_id": "blake3:...",
-  "content_hash": "blake3:...",
-  "spec_id": "blake3:...",
-  "type": "sparams_binary",
-  "created_at_utc": "2026-01-19T00:00:00Z",
-  "producer": {
-    "name": "openems_runner",
-    "version": "git:<commit>",
-    "container_image": "sha256:<digest>"
-  },
-  "parents": [
-    {"artifact_id": "blake3:...", "role": "geometry"},
-    {"artifact_id": "blake3:...", "role": "em_config"}
-  ],
-  "files": [
-    {
-      "relative_path": "payload/sparams.npz",
-      "bytes": 123456,
-      "sha256": "...",
-      "mime": "application/octet-stream"
-    }
-  ],
-  "units": {
-    "frequency": "Hz"
-  },
-  "parameters": { "..." : "..." },
-  "quality": {
-    "status": "pass|fail",
-    "checks": [
-      {"name": "schema_valid", "status": "pass"},
-      {"name": "hash_match", "status": "pass"}
-    ]
-  }
+2
+,
+4
 }
-```
+P∈{2,4}
 
-### 5.2 Numeric determinism policy fields
+moderate poles 
+𝐾
+∈
+[
+4
+,
+40
+]
+K∈[4,40] (configurable)
 
-For artifacts produced by solvers or floating computations, manifest includes:
+Fast objective evaluation (GPU reductions)
+Compute, at minimum:
 
-```json
-"determinism": {
-  "class": "bitwise|tolerance",
-  "tolerance_policy": {
-    "metric": "max_abs_error",
-    "threshold": 1e-9,
-    "reference_artifact_id": "blake3:..."
-  }
+weighted complex error norms vs ground truth
+
+max error metrics (per-design and global)
+
+optional band-limited metrics (e.g., 0.5–6 GHz, etc.)
+
+penalty terms for constraint violations
+
+Constraint check kernels
+At minimum:
+
+stability (Re(poles)<0)
+
+passivity proxy (largest singular value ≤ 1 for S-parameters)
+
+reciprocity/symmetry checks where applicable
+Must include both:
+
+fast approximate checks for inner-loop search
+
+strict checks for promotion/acceptance gates
+
+Backend abstraction + no-silent-fallback
+Everything must run on GPU by default and hard-fail if it silently falls back to CPU.
+
+Custom CUDA kernels for the true bottlenecks
+Use CuPy’s user-defined kernels (RawKernel/RawModule, ElementwiseKernel, ReductionKernel) as the primary vehicle.
+(Rationale: CuPy kernels can be JIT compiled/cached per device and reused across processes.)
+
+Optional torch.compile acceleration path for any PyTorch-based components
+torch.compile uses TorchInductor as default compiler and leverages Triton for GPU codegen on major GPU backends.
+Triton is a Python-based GPU kernel language/compiler.
+
+Zero-copy interchange where needed
+Support moving tensors between frameworks via DLPack when required. CuPy explicitly supports DLPack import/export.
+
+Performance gates + correctness harness
+M5 is not “done” until benchmarks and correctness tests pass with strict tolerances and reproducible profiles.
+
+### 2.2 Non-goals (explicitly out of M5)
+
+Running openEMS (M2)
+
+Performing vector fitting itself (M4), except optional GPU helpers
+
+Running symbolic regression search (M6)
+
+Orchestrating agent workflows (M8)
+M5 exists to make those milestones fast and repeatable, not to implement them.
+
+## 3) External dependencies (pinned + why)
+### 3.1 Primary GPU numeric substrate: CuPy
+
+CuPy provides GPU arrays with a NumPy-like interface and supports custom kernel creation via ElementwiseKernel, ReductionKernel, and RawKernel/RawModule.
+
+### 3.2 Optional compiler substrate: PyTorch + torch.compile
+
+torch.compile compiles PyTorch code to optimized kernels; TorchInductor is the default backend and uses Triton for GPU codegen in many cases.
+
+### 3.3 CUDA Graph support (optional but prioritized)
+
+CUDA Graph concept & benefits:
+
+PyTorch CUDA graph support:
+
+Limitations for CUDA graphs (fixed args, no control flow, no sync triggers):
+
+### 3.4 BLAS/solver libraries (only when needed)
+
+cuBLAS supports batched GEMM/strided batched GEMM.
+
+cuSOLVER provides GPU-accelerated decompositions/linear solves.
+
+Design bias: for 
+𝑃
+∈
+{
+2
+,
+4
 }
-```
+P∈{2,4}, prefer hand-coded small-matrix kernels over calling cuBLAS/cuSOLVER repeatedly.
+
+## 4) High-level architecture
+### 4.1 Package layout (repo contract)
+
+Create a dedicated module (example naming):
+
+repo/
+  m5_gpu/
+    __init__.py
+    backend/
+      device.py
+      array.py
+      streams.py
+      memory.py
+      dlpack.py
+    kernels/
+      build.py
+      cache.py
+      rational_eval.cu
+      smallmat.cu
+      reductions.cu
+      passivity.cu
+    ops/
+      rational.py
+      smallmat.py
+      metrics.py
+      constraints.py
+      objectives.py
+    profiling/
+      nvtx.py
+      timers.py
+      nsight.md
+    benchmarks/
+      bench_rational_eval.py
+      bench_objective.py
+      bench_passivity.py
+      suite.py
+    tests/
+      test_rational_eval_correctness.py
+      test_objective_correctness.py
+      test_constraints_correctness.py
+      test_no_cpu_fallback.py
+      test_memory_no_explosions.py
+      test_determinism_policy.py
 
-* **bitwise**: content_hash must match reference exactly.
-* **tolerance**: content_hash may differ, but numeric equivalence gates must pass vs a reference.
+### 4.2 Integration points (upstream/downstream)
 
-> Note: M3 does not decide the numeric tolerance thresholds; it enforces that *a threshold exists* and is applied consistently.
+Inputs from M4: fitted macromodel parameters (poles/residues/D/E), plus target responses (Touchstone data or converted arrays).
 
----
+Inputs from M6: candidate formula predicted parameters OR direct predicted responses.
 
-## 6) Dataset snapshots (versioned, queryable)
+Inputs from M7: large candidate sets of 
+𝑥
+x requiring fast evaluation + “worst-case” extraction.
 
-A **dataset snapshot** is a content‑addressed object describing an immutable set of samples.
+Outputs:
 
-### 6.1 Dataset snapshot structure
+scalar objectives
 
-```
-data/registry/datasets/<dataset_id>/
-  dataset.json
-  index.parquet
-  splits.json
-  manifest.sha256
-```
+per-design metrics for active learning
 
-* `dataset.json` (small, human‑readable):
+pass/fail gates for promotion
 
-  * dataset name, domain (“via_transition_v1”)
-  * creation metadata
-  * pointers to `index.parquet`
-  * parent dataset IDs (lineage)
-* `index.parquet`:
+## 5) Data model and tensor layout (this is make-or-break)
+### 5.1 Canonical symbols
 
-  * the authoritative table of sample rows (fast to query in Python/pandas)
-  * each row references artifact IDs for required pieces
+𝐵
+B: number of designs in the evaluation batch (dataset batch)
 
-Example required columns for an “EM S‑params dataset”:
+𝐹
+F: number of frequency samples
 
-* `sample_id` (stable: e.g., blake3 of coupon manifest)
-* `geometry_artifact_id`
-* `em_config_artifact_id`
-* `sparams_artifact_id`
-* `freq_grid_id` (if shared)
-* `tags` (stackup, connector, diff/se, etc.)
-* `created_at_utc`
+𝑃
+P: number of ports (2 or 4 initially)
 
-### 6.2 Dataset ID definition
+𝐾
+K: number of poles
 
-`dataset_id = blake3(canonical(dataset.json sans timestamps) + canonical(index.parquet content hash))`
+### 5.2 Canonical GPU representation (S-domain preferred)
 
-This makes dataset IDs stable across machines and ensures **exact dataset identity** for downstream SR.
+You want to avoid repeated Z↔S conversions if possible; therefore M4 should export (or you should convert once) into a canonical domain. For constraint checks and corporate use, S-parameters are common.
 
----
+Canonical arrays (GPU resident, complex64 by default):
 
-## 7) Pipeline DAGs (DVC as the canonical DAG executor)
+s: shape (F,) complex64 containing 
+𝑠
+=
+𝑗
+2
+𝜋
+𝑓
+s=j2πf
+
+A: shape (B, K) complex64 poles 
+𝑎
+𝑘
+a
+k
+	​
+
 
-We use **DVC pipelines** as the authoritative definition of deterministic transformations:
+R: shape (B, K, P, P) complex64 residue matrices
 
-* Each stage declares deps/outs/metrics/params in `dvc.yaml`. ([Data Version Control · DVC][1])
-* Stage outputs are cached via DVC’s content‑addressable cache. ([Data Version Control · DVC][2])
-* Metrics/plots/params are first‑class for comparisons and can be integrated into experiments. ([Data Version Control · DVC][6])
+D: shape (B, P, P) complex64
 
-### 7.1 DVC pipeline design principles
+E: shape (B, P, P) complex64
 
-1. **Stages must be pure**
-   Given the same deps + params + tool versions, they produce the same outputs (bitwise or within defined tolerances).
+S_target: shape (B, F, P, P) complex64 (or chunk-streamed)
 
-2. **No implicit inputs**
-   No stage may read from:
+### 5.3 Memory layout choice: AoS vs SoA
 
-* user home directories
-* system temp directories
-* the network (unless explicitly declared and hashed)
-* uncontrolled environment variables
+For 
+𝑃
+≤
+4
+P≤4, the performance bottleneck is reading residues and accumulating.
 
-3. **Outputs must be deterministic in shape and location**
-   DVC does not support wildcard outputs; stages must output to known paths. For dynamic outputs, track a directory output. ([DVC Community Forum][7])
+You will support two residue layouts, because it’s cheap to convert once and critical for performance tuning:
 
-4. **Shard outputs to avoid pathological file counts**
-   DVC can become slow with extremely large numbers of files (hundreds of thousands to millions). ([GitHub][8])
-   We therefore shard and/or bundle artifacts in predictable ways (see §10).
+Layout L0 (AoS): R[B,K,P,P]
 
-### 7.2 Canonical `dvc.yaml` skeleton (M3 baseline)
+Pros: natural, simple.
+Cons: may cause less-coalesced loads for per-element threads.
 
-```yaml
-stages:
-  build_param_sweep:
-    cmd: python -m tools.sweep.generate --params params.yaml --out data/tmp/sweep_spec.jsonl
-    deps:
-      - tools/sweep/generate.py
-      - params.yaml
-    outs:
-      - data/tmp/sweep_spec.jsonl
+Layout L1 (SoA-flattened): R_flat[B,K,P2] where P2=P*P
+
+and element index e = p*P + q.
+Pros: contiguous loads per element index.
+Cons: requires consistent flattening.
+
+Contract: The GPU kernel API accepts either layout via a flag and uses the corresponding indexing. Provide a conversion function to_residue_layout(R, layout).
 
-  generate_geometry:
-    cmd: python -m tools.geom.batch --spec data/tmp/sweep_spec.jsonl --out data/tmp/geom_out/
-    deps:
-      - data/tmp/sweep_spec.jsonl
-      - tools/geom/
-    outs:
-      - data/tmp/geom_out/
+### 5.4 Chunking policy (VRAM constraints)
+
+Even with 24 GB VRAM, (B,F,P,P) can blow up.
 
-  run_openems:
-    cmd: python -m tools.em.run_batch --in data/tmp/geom_out/ --out data/tmp/em_out/
-    deps:
-      - data/tmp/geom_out/
-      - tools/em/
-    outs:
-      - data/tmp/em_out/
+M5 must support:
+
+chunk_B: process designs in chunks
 
-  register_dataset:
-    cmd: python -m tools.m3.register --em data/tmp/em_out/ --out data/registry/datasets/
-    deps:
-      - data/tmp/em_out/
-      - tools/m3/
-    outs:
-      - data/registry/datasets/
-    metrics:
-      - data/registry/metrics/dataset_build.json
-```
+chunk_F: process frequency in chunks
 
-**Policy:** `data/tmp/**` is a staging area; only `data/registry/**` and `data/objects/**` become canonical.
+combined chunking if needed
 
----
+Hard requirement: chunking must preserve exactly identical outputs (up to floating tolerance) vs non-chunked evaluation.
 
-## 8) Artifact store implementation details (the “object database”)
+## 6) Core operators and kernel designs
+### 6.1 Operator: Rational macromodel evaluation
 
-### 8.1 Storage backend
+API (public, stable):
 
-* Primary: local filesystem under `data/objects/**`
-* Managed by DVC (outs tracked in pipeline stages)
-* DVC cache provides dedup and supports efficient link types (reflinks preferred). ([Data Version Control · DVC][3])
+S_pred = rational_eval(
+    s: cupy.ndarray[F] complex64,
+    A: cupy.ndarray[B,K] complex64,
+    R: cupy.ndarray[B,K,P,P] complex64  (or R_flat[B,K,P2]),
+    D: cupy.ndarray[B,P,P] complex64,
+    E: cupy.ndarray[B,P,P] complex64,
+    out: optional cupy.ndarray[B,F,P,P] complex64,
+    *,
+    layout: {"aos","soa"},
+    chunk_B: int | None,
+    chunk_F: int | None,
+    stream: cupy.cuda.Stream | None,
+) -> cupy.ndarray[B,F,P,P]
 
-### 8.2 DVC cache configuration (performance + safety)
 
-DVC supports different file link types for cache efficiency; reflink is preferred when available, with hardlink/symlink as alternatives depending on filesystem layout. ([Data Version Control · DVC][3])
+Correctness definition:
+For each (b,f):
 
-**We set:**
+𝐻
+𝑏
+(
+𝑠
+𝑓
+)
+=
+𝐷
+𝑏
++
+𝑠
+𝑓
+𝐸
+𝑏
++
+∑
+𝑘
+=
+1
+𝐾
+𝑅
+𝑏
+,
+𝑘
+𝑠
+𝑓
+−
+𝐴
+𝑏
+,
+𝑘
+H
+b
+	​
 
-* `cache.type = reflink,copy` (prefer reflink, fallback to copy)
-* If cache moved to a different filesystem: `symlink,copy` may be appropriate. ([Data Version Control · DVC][3])
+(s
+f
+	​
 
-**Why:**
-Reflinks provide copy‑on‑write safety and avoid cache corruption risks from in‑place edits. ([Data Version Control · DVC][3])
+)=D
+b
+	​
 
-### 8.3 Remote storage (optional, future‑proof)
++s
+f
+	​
 
-Even on a single laptop, you want an abstraction for “remote”:
+E
+b
+	​
 
-* external SSD
-* NAS
-* S3/minio
++
+k=1
+∑
+K
+	​
 
-DVC supports remotes and can garbage collect remote objects with `dvc gc --cloud`. ([Data Version Control · DVC][4])
-**Default** for M3: local remote path (e.g., external drive mount) for backups.
+s
+f
+	​
 
-### 8.4 Atomic writes (mandatory)
+−A
+b,k
+	​
 
-To prevent partial artifacts from being referenced:
+R
+b,k
+	​
 
-1. write to `.../<artifact_id>.tmp/`
-2. fsync files
-3. write manifest last
-4. rename to `.../<artifact_id>/` (atomic rename on same filesystem)
-5. only then update dataset snapshot / registry
+	​
 
-### 8.5 Immutability enforcement
 
-Any attempt to modify files under an artifact directory must fail:
+Elementwise complex float error within tolerance vs CPU float64 reference (see §10).
 
-* enforce read‑only permissions post‑commit
-* verify content_hash matches stored hash in `m3 verify`
+#### 6.1.1 Why a custom kernel is required
 
----
+The naive GPU implementation would broadcast 1/(s - A) into a tensor of shape (B,F,K), then broadcast residues to (B,F,K,P,P), causing:
 
-## 9) Experiment tracking (MLflow integration)
+huge intermediates: 
+𝑂
+(
+𝐵
+𝐹
+𝐾
+𝑃
+2
+)
+O(BFKP
+2
+) memory
 
-### 9.1 What MLflow is used for (and what it is NOT used for)
+catastrophic VRAM thrash
 
-**MLflow used for:**
+Custom kernel requirement: must be streaming in K: never materialize (B,F,K,...).
 
-* run tables: params/metrics/tags
-* quick comparisons across SR seeds, objective weights, model orders
-* storing small artifacts: plots, small JSON summaries, candidate formula text
+#### 6.1.2 CUDA kernel mapping (warp-per-(b,f))
 
-MLflow provides tracking and an artifact store concept; it defaults to local filesystem but supports other storage backends. ([MLflow][9])
+Primary design: one warp computes one (b,f) S-matrix.
 
-**MLflow NOT used for:**
+Each warp handles one design-frequency pair (b,f)
 
-* storing large EM datasets, Touchstone corpora, or heavy binary arrays
-  (because MLflow doesn’t dedup like DVC; you will blow the SSD).
+Warp lanes map to matrix elements:
 
-### 9.2 MLflow backend store: SQLite (local)
+For P=4: lanes 0–15 map to the 16 elements
 
-MLflow can log to a local SQLite backend store via `MLFLOW_TRACKING_URI=sqlite:///...`. ([MLflow][10])
-If we run an MLflow server, backend store URI can be configured with `--backend-store-uri`. ([MLflow][5])
+For P=2: lanes 0–3 map to 4 elements
 
-### 9.3 MLflow run metadata contract
+Denominator for each pole is shared:
 
-Every MLflow run must include tags:
+lane 0 computes den = 1/(s[f] - A[b,k])
 
-* `git_commit`
-* `dvc_lock_hash` (hash of `dvc.lock`)
-* `dataset_id_in`
-* `dataset_id_out`
-* `pipeline_stage` or `campaign_id`
-* `container_digest`
+broadcast den within warp via warp shuffle
 
-And must log:
+Each active lane loads the corresponding residue element R[b,k,e] and accumulates.
 
-* `metrics.json` (machine‑readable)
-* `pointers.json` (artifact IDs produced)
+Launch configuration:
 
-This bridges MLflow’s view to the DVC‑managed object store.
+WARPS_PER_BLOCK = 4 or 8 (tuned)
 
----
+block threads = 32 * WARPS_PER_BLOCK
 
-## 10) Scaling strategy: file count, sharding, and I/O efficiency
+grid = ceil((B*F) / WARPS_PER_BLOCK)
 
-### 10.1 Why we care
+Pseudocode (conceptual):
 
-DVC and filesystem operations degrade with huge numbers of files; DVC has reported issues with very large file counts (e.g., millions of files) being slow or problematic. ([GitHub][8])
-Even if we never reach millions, we design so we *don’t paint ourselves into a corner*.
+warp_id = threadIdx.x / 32
+lane    = threadIdx.x % 32
+idx     = blockIdx.x * WARPS_PER_BLOCK + warp_id
+if idx >= B*F: return
+b = idx / F
+f = idx % F
 
-### 10.2 Sharding policy (mandatory)
+if lane < P2:
+  acc = D[b,lane] + s[f] * E[b,lane]
+  for k in 0..K-1:
+    if lane == 0:
+      den = 1 / (s[f] - A[b,k])
+    den = shfl_broadcast(den)
+    acc += R[b,k,lane] * den
+  out[b,f,lane] = acc
 
-We define *artifact payload policies* by type:
 
-#### Type A: “small per‑sample objects” (default)
+This design:
 
-* `sparams_binary` per sample (NPZ)
-* `vectorfit_model` per sample (JSON+NPZ)
-* `coupon_manifest` per sample
+avoids B×F×K intermediates
 
-This is fine up to ~50k–150k samples (depending on file count per sample).
+uses warp shuffles instead of shared memory
 
-#### Type B: “bundled shards”
+keeps accumulation in registers
 
-For high‑volume derived outputs (e.g., features used for SR loops):
+#### 6.1.3 Numerical stability considerations
 
-* bundle into deterministic shards:
+Division near pole: if |s - a| is tiny, values can spike. For scoring, this is real physics (near resonance), but you must avoid NaNs.
 
-  * shard size: e.g., 1024 samples
-  * shard file: `features_shard_<shard_idx>.npz.zst`
-  * include an index table mapping sample_id → offset
+Implement:
 
-**Rule:** shards are immutable. Add new samples ⇒ create new shard, never rewrite old shards.
+safe reciprocal: if |s-a| < eps, clamp denominator magnitude or add tiny complex epsilon
 
-#### Type C: “debug‑heavy logs”
+track NaN/Inf counters in a debug mode kernel and fail-fast when detected
 
-EM logs can be large and numerous; store:
+#### 6.1.4 Dtypes
 
-* a compressed log per sample only when needed
-* otherwise store:
+Default:
 
-  * a summary (`stderr_tail`, warnings, solver status, runtime)
-  * and keep full logs only for failed / selected samples
+complex64 compute + accumulate
 
-### 10.3 Memory layout for GPU‑first evaluation loops
+Optional:
 
-For SR/falsification you’ll repeatedly evaluate many samples on GPU. Therefore:
+accumulate in complex128 for strict-validation mode (slower, used only in gating tests).
 
-* prefer storing dense numeric arrays in contiguous formats that load quickly (NPZ/NPY)
-* maintain a “compiled dataset” artifact:
+Contract: dtype is selectable via dtype_policy object.
 
-  * `compiled_features_v1` that contains:
+### 6.2 Operator: Objective evaluation (fused eval+reduce)
 
-    * `X` (float32)
-    * `Y` (float32/complex64)
-    * plus index arrays
-  * chunked by shard for VRAM‑safe streaming
+Storing S_pred[B,F,P,P] is often unnecessary; for inner-loop candidate scoring you typically need:
 
-**Goal:** minimize Python object overhead and disk seeks, maximize sequential reads.
+a scalar objective
 
----
+some per-design summary metrics (for active learning)
 
-## 11) Lineage graph (auditable provenance)
+possibly an argmax location for falsification
 
-M3 must be able to answer, deterministically:
+Therefore implement two modes:
 
-* “Which exact S‑parameter samples produced this formula?”
-* “Which openEMS settings produced those S‑parameters?”
-* “Which geometry parameters define those samples?”
-* “Which commit and container image created this?”
+#### 6.2.1 Mode A: eval_only
 
-### 11.1 Lineage graph model
+Returns S_pred (for debugging, plotting, or best-candidate export).
 
-We represent lineage as a DAG of nodes:
+#### 6.2.2 Mode B: eval_reduce (primary hot path)
 
-* artifact nodes (`artifact_id`)
-* dataset nodes (`dataset_id`)
-* run nodes (`run_id`)
+Computes metrics without materializing S_pred.
 
-Edges:
+API:
 
-* artifact → artifact (parent relationships)
-* dataset → artifact (contains)
-* run → artifact (produced)
-* run → dataset (output)
-* dataset → dataset (derived_from)
+metrics = rational_eval_reduce(
+    s, A, R, D, E,
+    S_target,
+    weights_f: cupy.ndarray[F] float32 | None,
+    *,
+    return_per_design: bool,
+    return_argmax: bool,
+    layout, chunk_B, chunk_F, stream
+) -> ObjectiveMetrics
 
-### 11.2 Where lineage is stored
 
-* Canonical lineage is implicit via manifests + dataset index.
-* A derived `lineage.sqlite` index is rebuilt from manifests (fast queries).
-* A derived `lineage.graphml` export can be generated for visualization.
+ObjectiveMetrics contains:
 
-**Never** make the SQLite index the source of truth.
+loss_total: float32
 
----
+optional loss_per_design[B]
 
-## 12) Integrity, validation, and “no orphan artifacts” enforcement
+optional max_err_per_design[B]
 
-### 12.1 Invariants (hard requirements)
+optional global_max_err: float32
 
-1. Every artifact directory contains a valid `manifest.json`.
-2. Every `artifact_id` in the manifest matches:
+optional argmax: (b*, f*, p*, q*)
 
-   * directory name
-   * content hash computed by `m3 verify`
-3. Every dataset snapshot references only existing artifact IDs.
-4. Every artifact is reachable from at least one dataset snapshot **OR** is explicitly pinned by a retention policy (e.g., “keep failed logs for 14 days”).
-5. Every run references:
+#### 6.2.3 Canonical error metric definitions
 
-   * git commit
-   * dvc lock hash
-   * environment stamp
+You need metrics that are:
 
-### 12.2 Schema validation
+differentiable-ish (not required, but good)
 
-* JSON schema files live in `tools/m3/schemas/`
-* `m3 verify` validates every manifest and dataset JSON
+robust to scale
 
-### 12.3 Tamper detection
+stable
 
-* each dataset snapshot has `manifest.sha256`
-* each artifact file entry has `sha256`
-* optional future: sign dataset snapshots (Ed25519) if you start sharing externally
+Implement at minimum:
 
----
+Weighted relative Frobenius error over S-matrix:
 
-## 13) Caching & recomputation rules (compute efficiency)
+e
+r
+r
+𝑏
+=
+∑
+𝑓
+𝑤
+𝑓
+∥
+𝑆
+𝑝
+𝑟
+𝑒
+𝑑
+(
+𝑏
+,
+𝑓
+)
+−
+𝑆
+𝑡
+𝑔
+𝑡
+(
+𝑏
+,
+𝑓
+)
+∥
+𝐹
+2
+∑
+𝑓
+𝑤
+𝑓
+∥
+𝑆
+𝑡
+𝑔
+𝑡
+(
+𝑏
+,
+𝑓
+)
+∥
+𝐹
+2
++
+𝜖
+err
+b
+	​
 
-### 13.1 Stage caching (DVC)
+=
+∑
+f
+	​
 
-DVC will skip stage recomputation when deps/outs unchanged, because the pipeline is defined in `dvc.yaml` and locked in `dvc.lock`. ([Data Version Control · DVC][1])
+w
+f
+	​
 
-### 13.2 Artifact reuse (M3 internal)
+∥S
+tgt
+	​
 
-Before running a stage for a spec:
+(b,f)∥
+F
+2
+	​
 
-* compute `spec_id`
-* query registry: do we already have an artifact with this spec_id and matching tool versions?
-* if yes: reuse and skip compute
-* if no: compute and store
++ϵ
+∑
+f
+	​
 
-### 13.3 “Recompute on tool drift”
+w
+f
+	​
 
-If any of these change, `spec_id` changes:
+∥S
+pred
+	​
 
-* solver version
-* vector fitting implementation version
-* SR engine version
-* schema version
-* critical params
+(b,f)−S
+tgt
+	​
 
-This is how we prevent “silent invalid reuse.”
+(b,f)∥
+F
+2
+	​
 
----
+	​
 
-## 14) Retention, eviction, garbage collection
+	​
 
-### 14.1 Storage tiers
 
-* **Tier 0 (ephemeral)**: `data/tmp/**` — always safe to delete.
-* **Tier 1 (canonical)**: `data/registry/**`, `data/objects/**` — must be reproducible and versioned.
-* **Tier 2 (derived indices)**: SQLite registries — rebuildable.
+Then overall objective:
 
-### 14.2 DVC garbage collection
+l
+o
+s
+s
+=
+m
+e
+a
+n
+𝑏
+(
+e
+r
+r
+𝑏
+)
+loss=mean
+b
+	​
 
-We rely on `dvc gc` to remove unused objects from local cache and optionally remote when configured. ([Data Version Control · DVC][4])
+(err
+b
+	​
 
-### 14.3 Pinning policy
+)
 
-Define:
+Max absolute element error (per design, across f,p,q):
 
-* “pinned datasets” (e.g., baseline corpora used in papers/demos)
-* “pinned runs” (best formula candidates)
-  Pinned means:
-* cannot be removed by `m3 gc`
-* requires explicit unpin
+m
+a
+x
+e
+r
+r
+𝑏
+=
+max
+⁡
+𝑓
+,
+𝑝
+,
+𝑞
+∣
+𝑆
+𝑝
+𝑟
+𝑒
+𝑑
+−
+𝑆
+𝑡
+𝑔
+𝑡
+∣
+maxerr
+b
+	​
 
-### 14.4 Space budget enforcement
+=
+f,p,q
+max
+	​
 
-`m3 gc --policy laptop_default` enforces:
+∣S
+pred
+	​
 
-* keep last N datasets of each campaign
-* keep all datasets that are ancestors of pinned datasets
-* keep failed EM logs for X days
-* keep all “published” artifacts forever
+−S
+tgt
+	​
 
----
+∣
 
-## 15) Concurrency, locking, and resumability
+Optional: band-limited versions (user provides frequency masks).
 
-### 15.1 Requirements
+#### 6.2.4 Reduction strategy
 
-* Multiple processes may run concurrently (CPU openEMS + GPU SR).
-* Artifact creation must be safe under concurrency.
-* Partial runs must be resumable and must not corrupt the store.
+To avoid atomic contention:
 
-### 15.2 Locking strategy
+Each warp computes partial sums for its (b,f) matrix
 
-* global lock file: `data/.locks/artifact_store.lock` for store‑wide metadata updates
-* per‑artifact lock on spec_id during creation to avoid duplicate work
-* atomic rename commit pattern (see §8.4)
+Accumulate into per-(b) accumulators using block-level reduction, then atomic add once per block per design
+OR
 
-### 15.3 Resumability
+Use a two-pass reduction:
 
-* A run writes `runs/<run_id>/run.json` early.
-* Each stage appends progress records.
-* On restart, `m3 run` can detect incomplete stage outputs and either:
+pass 1: write partial sums into temporary buffer [B, F_chunk]
 
-  * resume (if safe), or
-  * delete staging and recompute.
+pass 2: reduce over frequency
 
----
+Preference: two-pass is more deterministic; one-pass is faster.
 
-## 16) Verification: how we know M3 is “done” and high‑quality
+Hard requirement: provide both modes:
 
-This is the strict, automated Definition of Done.
+reduce_mode="fast" (atomics allowed)
 
-### 16.1 M3 Definition of Done (DoD)
+reduce_mode="deterministic" (two-pass)
 
-M3 is complete only when all items below are implemented and **`m3 verify` passes on CI and on a fresh clone**.
+### 6.3 Operator: Passivity check (S-parameter domain)
 
-#### A) Correctness & integrity gates
+For an N-port S-matrix, passivity implies singular values ≤ 1 for all frequencies. In practice you check:
 
-1. **Schema compliance:** 100% of artifacts and dataset snapshots validate.
-2. **No orphan artifacts:** every artifact is either referenced by a dataset snapshot or pinned.
-3. **Hash correctness:** computed content hashes match manifest for a sampled set and for all small artifacts.
-4. **Lineage closure:** tracing a formula candidate to raw S‑params must always succeed and must return:
+𝜎
+𝑚
+𝑎
+𝑥
+(
+𝑆
+(
+𝑗
+𝜔
+)
+)
+≤
+1
+σ
+max
+	​
 
-   * geometry manifest
-   * EM config
-   * solver logs summary
-   * commit + container digest
-5. **Determinism check (smoke):**
+(S(jω))≤1
 
-   * rerun a tiny pipeline twice → identical dataset_id
-   * for artifacts with `determinism.class=bitwise`, identical content_hash
+Compute 
+𝜎
+𝑚
+𝑎
+𝑥
+σ
+max
+	​
 
-#### B) Reproducibility gates
+ by:
 
-6. **Rebuild from scratch:** On a clean workspace:
+𝐴
+=
+𝑆
+𝐻
+𝑆
+A=S
+H
+S (Hermitian PSD)
 
-   * `dvc pull` (if remote configured) + `dvc repro` produces the same dataset snapshot IDs.
-7. **Cache correctness:** repeated `dvc repro` triggers no recomputation when inputs unchanged.
+𝜆
+𝑚
+𝑎
+𝑥
+(
+𝐴
+)
+=
+𝜎
+𝑚
+𝑎
+𝑥
+2
+λ
+max
+	​
 
-#### C) Performance gates (single‑laptop realism)
+(A)=σ
+max
+2
+	​
 
-8. **Index query latency:** `m3 dataset diff` and `m3 artifact show` must run in:
 
-   * < 200 ms for 10k samples (warm cache)
-   * < 1 s for 100k samples (warm cache)
-9. **Artifact ingest throughput:** storing N=1000 small artifacts must exceed a minimum throughput (define per‑type).
-10. **Garbage collection:** `m3 gc` must reclaim space and leave store consistent; `dvc gc` invocation documented and tested. ([Data Version Control · DVC][4])
+#### 6.3.1 Fast exact check for P=2 (analytic)
 
-#### D) Operational gates
+For 2×2 Hermitian 
+𝐴
+A, eigenvalues are analytic via trace/determinant:
 
-11. **Crash safety:** simulate power‑loss mid‑artifact write → no broken artifact is referenced (atomic commit).
-12. **Audit report:** `m3 audit <formula_candidate_id>` generates a deterministic report listing all ancestors and key metrics.
+tr = A11 + A22
 
-### 16.2 The `m3 verify` test suite (mandatory)
+det = A11*A22 - |A12|^2
 
-`m3 verify` runs:
+lambda_max = (tr + sqrt(tr^2 - 4*det))/2
 
-1. **Schema validation**
+sigma_max = sqrt(lambda_max)
 
-* validate all manifests against JSON schema
-* validate dataset snapshots and parquet schema
+Implement as fused kernel:
 
-2. **Store integrity scan**
+compute S elements (from rational eval)
 
-* verify directory structure
-* verify referenced files exist
-* verify recorded sizes
+compute A11, A22, A12
 
-3. **Hash audit**
+compute sigma_max
 
-* recompute sha256 for a stratified sample of large artifacts
-* recompute all hashes for small artifacts
-* recompute dataset snapshot manifest hashes
+track maximum over frequency
 
-4. **Lineage audit**
+#### 6.3.2 Fast approximate check for P=4 (power iteration)
 
-* for a chosen set of artifacts (at least one per type), trace to roots and ensure required roles exist (geometry, config, oracle output)
+For 4×4:
 
-5. **Pipeline cache audit**
+compute A = S^H S
 
-* run `dvc repro` twice on a small pipeline and verify no stages rerun the second time
+run small fixed-iteration power method (e.g., 5–8 iterations)
 
-6. **GC dry‑run**
+use fixed initial vector (e.g., [1,1,1,1]/2) for determinism
 
-* compute what would be deleted and ensure pinned objects are preserved
-* optionally run in CI with a sandbox store
+compute Rayleigh quotient
 
----
+This is extremely fast and good for inner-loop screening.
 
-## 17) DVC “artifact metadata” feature usage (optional, but recommended)
+#### 6.3.3 Strict check for P=4 (promotion gate)
 
-DVC supports an `artifacts:` section in `dvc.yaml` to declare structured metadata about artifacts. ([Data Version Control · DVC][1])
-DVC can also download artifacts by name via `dvc artifacts get`. ([Data Version Control · DVC][11])
+Provide a strict passivity routine using a “more exact” method:
 
-**How we use this:**
+Option 1 (preferred): implement a small-matrix Jacobi eigen solver in CUDA for 4×4 Hermitian; deterministic iterations, no library overhead.
 
-* For *published* artifacts (best formula candidates, demo models), we declare them in the root `dvc.yaml` `artifacts:` section so they’re easy to fetch and reference in external demos.
-* We do **not** declare every single artifact here (too many); this is only for curated outputs.
+Option 2: call cuSOLVER batched eigen routines where applicable. cuSOLVER is NVIDIA’s GPU-accelerated decomposition/solve library.
+(If you choose cuSOLVER, do it in batched form; do not loop per matrix on CPU.)
 
----
+Contract: M5 exposes:
 
-## 18) Implementation plan (engineering tasks)
+passivity = check_passivity(
+  A,R,D,E,s, *,
+  mode={"fast","strict"},
+  ports=P,
+  return_sigma_max=True,
+  return_violation_mask=True,
+)
 
-### Phase 1 — Foundation (weekend‑scale, but rigorous)
 
-1. Create schemas (`artifact.v1`, `dataset.v1`, `run.v1`).
-2. Implement `ArtifactStore` with atomic writes + content hash + manifest.
-3. Implement `DatasetSnapshot` writer/reader with parquet index.
-4. Implement basic `LineageGraph` tracer from manifests.
+Output includes:
 
-### Phase 2 — Tool integration
+sigma_max_per_design[B] (max over frequency)
 
-5. Configure DVC:
+violation_mask[B] = sigma_max>1+tol
 
-   * cache type preference: reflink then copy ([Data Version Control · DVC][3])
-   * remote optional
-6. Configure MLflow:
+optional sigma_max_overall
 
-   * SQLite backend store path and local artifact root ([MLflow][10])
-7. Implement `m3 run` wrapper that stamps run metadata + logs pointers.
+### 6.4 Operator: Stability check (pole locations)
 
-### Phase 3 — Verification & hardening
+This is trivial but must be GPU-accelerated for batch screening.
 
-8. Implement `m3 verify` end‑to‑end gates.
-9. Add CI jobs:
+Definition: stable if real(A[b,k]) < -margin for all k.
+Return:
 
-   * unit tests (schema, hashing)
-   * integration tests (tiny pipeline with DVC)
-10. Implement retention policy + `m3 gc` calling `dvc gc` safely. ([Data Version Control · DVC][4])
+stable_mask[B]
 
----
+max_real_pole[B]
 
-## 19) How M3 directly increases odds of discovering a novel equation
+Implement as elementwise+reduction kernel (CuPy ReductionKernel is explicitly for custom reductions).
 
-A “novel equation” is only valuable if it is:
+### 6.5 Operator: Reciprocity/symmetry checks
 
-* **real** (not a bug),
-* **robust** (not a cherry‑picked domain),
-* **reproducible** (can be re‑run and verified),
-* **auditable** (a customer can trust the provenance),
-* **efficient** (you can iterate fast enough to actually search).
+For reciprocal networks, S is symmetric: S_ij = S_ji.
 
-M3’s backbone is what lets you:
+Provide a kernel that computes:
 
-* run falsification tournaments without losing the counterexamples,
-* compare formulas across dataset versions and *prove* which dataset created which improvement,
-* and most importantly: **avoid wasting compute** by preventing duplicate sims and by enabling precise caching and lineage.
+max symmetry error per design:
 
----
+max
+⁡
+𝑓
+,
+𝑖
+<
+𝑗
+∣
+𝑆
+𝑖
+𝑗
+−
+𝑆
+𝑗
+𝑖
+∣
+f,i<j
+max
+	​
 
-## 20) Minimal “gold standard” demo of M3 (what you should be able to do immediately)
+∣S
+ij
+	​
 
-After M3 is complete, the following must work on a fresh clone:
+−S
+ji
+	​
 
-1. `m3 init`
-2. `m3 run em_dataset_smoke`
-   (creates a tiny dataset: e.g., 10 coupons)
-3. `m3 dataset show <dataset_id>`
-4. `m3 dataset diff <dataset_id> <dataset_id>` (no changes)
-5. `m3 verify` (all green)
-6. delete `data/tmp/**`, rerun `m3 run em_dataset_smoke` → no recompute of already‑stored objects
-7. `m3 gc --policy laptop_default` reclaims space without breaking lineage
+∣
 
-If all of that holds, M3 is truly “done” in the sense that the repository can now scale to thousands of runs without collapsing into ambiguity.
+Can be fused into eval_reduce if desired.
 
----
+### 6.6 Operator: Domain conversions (optional but recommended)
 
-If you want, I can also provide **concrete JSON Schemas**, a fully fleshed **reference `dvc.yaml`**, and a proposed **SQLite registry schema** (tables + indexes + queries) so implementation is copy‑pasteable into the repo.
+If M4 exports Z or Y models, you may need:
 
-[1]: https://doc.dvc.org/user-guide/project-structure/dvcyaml-files?utm_source=chatgpt.com "dvc.yaml Files | Data Version Control · DVC"
-[2]: https://doc.dvc.org/user-guide/project-structure/internal-files?utm_source=chatgpt.com "Internal Directories and Files"
-[3]: https://doc.dvc.org/user-guide/data-management/large-dataset-optimization?utm_source=chatgpt.com "Large Dataset Optimization | Data Version Control · DVC"
-[4]: https://doc.dvc.org/command-reference/gc?utm_source=chatgpt.com "gc | Data Version Control · DVC"
-[5]: https://mlflow.org/docs/latest/self-hosting/architecture/backend-store/?utm_source=chatgpt.com "Backend Stores"
-[6]: https://doc.dvc.org/start/data-pipelines/metrics-parameters-plots?utm_source=chatgpt.com "Get Started: Metrics, Plots, and Parameters"
-[7]: https://discuss.dvc.org/t/how-to-handle-dynamic-number-of-outputs/1724?utm_source=chatgpt.com "How to handle dynamic number of outputs?"
-[8]: https://github.com/iterative/dvc/issues/7681?utm_source=chatgpt.com "repro: DVC is slow with million of files · Issue #7681"
-[9]: https://mlflow.org/docs/latest/ml/tracking/?utm_source=chatgpt.com "MLflow Tracking"
-[10]: https://mlflow.org/docs/latest/ml/tracking/tutorials/local-database/?utm_source=chatgpt.com "Tracking Experiments with Local Database"
-[11]: https://doc.dvc.org/command-reference/artifacts/get?utm_source=chatgpt.com "artifacts get - DVC Documentation - Data Version Control"
+𝑆
+=
+(
+𝑍
+−
+𝑍
+0
+𝐼
+)
+(
+𝑍
++
+𝑍
+0
+𝐼
+)
+−
+1
+S=(Z−Z
+0
+	​
 
+I)(Z+Z
+0
+	​
+
+I)
+−1
+
+or the Y equivalent
+
+For P=2 and P=4, implement explicit small-matrix inverse/solve kernels rather than generic batched LU.
+
+## 7) Kernel implementation strategy (CuPy-first, then Triton/PyTorch optional)
+### 7.1 CuPy kernel types and when to use them
+
+CuPy supports:
+
+Elementwise kernels
+
+Reduction kernels
+
+Raw kernels / raw modules
+
+Policy:
+
+Use RawKernel/RawModule for fused rational-eval and multi-output reductions.
+
+Use ReductionKernel for custom reductions that don’t justify a full raw kernel.
+
+Use ElementwiseKernel for simple transformations (dtype casts, feature scaling, masks).
+
+Why RawKernel: it’s compiled on first call and cached per device, and the compiled binary is also cached to disk under ~/.cupy/kernel_cache/.
+
+### 7.2 Compilation, caching, and versioning
+
+M5 must implement a “kernel build cache key” that includes:
+
+CUDA source hash
+
+compile flags
+
+compute capability target
+
+CuPy version
+
+CUDA runtime version
+
+Even if CuPy caches, you need repo-level tracking so results are reproducible and debuggable.
+
+### 7.3 Optional Triton path
+
+Triton is a language/compiler for writing efficient GPU kernels in Python.
+PyTorch’s compiler stack commonly uses Triton via TorchInductor.
+
+When to use Triton:
+
+If you need kernels that integrate seamlessly with PyTorch tensors and torch.compile.
+
+If you want autotuning across block sizes (Triton can do this idiomatically).
+
+But: for complex arithmetic + warp-shuffle patterns, Raw CUDA may still win. Therefore Triton is optional, not mandatory, for M5.
+
+## 8) CUDA Graph integration (shape-stable hot loops)
+### 8.1 Why
+
+In M6/M7 you will call “eval_reduce” thousands of times with identical shapes. CUDA graphs reduce CPU launch overhead by capturing and replaying the same GPU work.
+
+### 8.2 Constraints
+
+CUDA graph capture requires fixed kernel arguments, dependencies, and (critically) stable memory addresses; control flow and sync-triggering ops are not allowed.
+
+### 8.3 M5 design for graphs
+
+Provide:
+
+GraphableWorkspace object that preallocates all buffers needed for eval_reduce at fixed (B,F,P,K) and stores them in a stable pool.
+
+A function capture_eval_reduce_graph(workspace, ...) that returns a callable replay().
+
+Rule: If the caller changes B/F/K/P, they must request a new workspace and re-capture.
+
+## 9) Interop: CuPy ↔ PyTorch via DLPack
+### 9.1 Why this is needed
+
+Some parts of the repo may be PyTorch-first (neural surrogates, etc.)
+
+M5 kernels may be CuPy-first
+
+You need a safe, explicit way to exchange buffers without copies
+
+DLPack is the common in-memory tensor structure for sharing tensors among frameworks, and CuPy supports importing/exporting DLPack.
+
+### 9.2 Required utilities
+
+Implement:
+
+torch_tensor_to_cupy(t) using DLPack
+
+cupy_to_torch_tensor(a) using DLPack
+
+Important engineering note: In most frameworks, DLPack exchange does not preserve autograd graphs automatically; treat this as a raw buffer interchange unless you explicitly wrap it.
+
+## 10) Correctness strategy (how you will know it’s right)
+
+This section is one of your “engineering rigor” pillars. M5 is not complete unless every item below is implemented and passes in CI.
+
+### 10.1 CPU reference implementation (gold)
+
+Create a pure NumPy reference that is:
+
+float64 + complex128
+
+uses the exact formula
+
+optionally uses Kahan summation in K loop for tighter reference
+
+Reference function:
+
+rational_eval_np(s, A, R, D, E) -> S_pred_np
+
+### 10.2 Property-based correctness tests
+
+Use randomized tests over:
+
+B ∈ {1, 2, 8, 64}
+
+F ∈ {8, 64, 512}
+
+P ∈ {2, 4}
+
+K ∈ {4, 8, 16, 32}
+
+dtypes: complex64/complex128
+
+Test invariants:
+
+GPU eval matches CPU reference within tolerances:
+
+absolute tol and relative tol defined per dtype
+
+Chunked evaluation equals non-chunked evaluation (within tighter tol)
+
+eval_reduce metrics match metrics computed from eval_only outputs
+
+### 10.3 Special case tests
+
+Poles very close to frequency points (stress denominator)
+
+Purely real poles/residues
+
+Conjugate-pair poles (if used)
+
+Zero residues for some poles
+
+D/E only, no poles
+
+### 10.4 Passivity test correctness
+
+For P=2:
+
+compare analytic sigma_max kernel to a CPU SVD reference (numpy.linalg.svd) for random complex matrices.
+
+For P=4:
+
+compare fast power-iteration estimate to CPU SVD, ensure:
+
+it is a lower bound or near value (depending on method)
+
+strict mode matches within tolerances.
+
+## 11) Performance strategy (how you will know it’s fast enough)
+### 11.1 Benchmark suite (must exist)
+
+M5 must ship benchmarks/suite.py that runs:
+
+bench_rational_eval
+
+bench_eval_reduce
+
+bench_passivity_fast
+
+bench_passivity_strict
+
+bench_chunking_overhead
+
+bench_cuda_graph_replay (if graphs enabled)
+
+Each benchmark prints:
+
+shapes (B,F,P,K)
+
+dtype
+
+wall time
+
+achieved throughput:
+
+evaluations/sec (B*F per second)
+
+“term-updates/sec” (BFK*P2 per second)
+
+VRAM peak usage (from allocator stats)
+
+kernel launch counts (where possible)
+
+### 11.2 Baselines that must be compared
+
+For each benchmark, compare:
+
+CPU NumPy baseline
+
+naive CuPy broadcast baseline (if feasible)
+
+fused kernel (your implementation)
+
+### 11.3 Hard performance gates (Definition-of-Done)
+
+You must define concrete, measurable acceptance criteria. Here is the recommended set:
+
+Gate G1 — No VRAM explosion
+For a representative “real” workload (you will pin it):
+
+B=2048, F=512, P=2, K=16, complex64
+The fused eval_reduce must not allocate any tensor larger than O(BFP2) and must not allocate an O(BFK*P2) intermediate.
+Verification method:
+
+allocator peak memory check + code inspection + optional debug instrumentation.
+
+Gate G2 — Fused kernel dominates
+On the same workload:
+
+end-to-end eval_reduce must be GPU-time dominated; CPU time per call must be “small” compared to GPU time.
+Verification:
+
+Nsight Systems trace (documented workflow in profiling/nsight.md)
+
+kernel launch count should be minimal (ideally 1–3 kernels per call, depending on reductions)
+
+Gate G3 — CUDA graph replay speedup
+For repeated fixed-shape calls (e.g., 1000 replays), CUDA graph replay must reduce per-call overhead vs non-graph by a measurable factor when kernels are small. (Graphs are known to help when CPU launch overhead is significant.)
+
+Gate G4 — Regression guard
+You must add a CI performance test that fails if throughput regresses by >X% versus a stored baseline (where the runner GPU is stable).
+If CI doesn’t have a stable GPU, then require a local “release gate” script that records baselines and requires manual sign-off.
+
+## 12) Determinism + reproducibility policy
+
+You cannot get perfect bitwise determinism on GPUs for all reductions without major cost, but you can enforce:
+
+deterministic seeds for any randomized operations
+
+deterministic “reduce_mode” option (two-pass)
+
+strict promotion checks use deterministic mode
+
+Repo contract:
+
+any run that promotes a formula must include:
+
+M5 version hash
+
+kernel cache key
+
+dtype policy
+
+reduction mode
+
+chunking parameters
+
+passivity mode
+
+## 13) Debuggability + observability requirements
+### 13.1 NVTX ranges
+
+Add NVTX ranges around:
+
+H(s) evaluation kernel
+
+metric reduction kernel
+
+passivity kernel
+
+host-device transfers
+
+graph capture / replay
+
+### 13.2 Failure modes must be explicit
+
+If any of the following occurs, M5 must raise a structured error with dumpable context:
+
+NaNs/Infs produced
+
+CPU fallback detected (array not on GPU)
+
+shape mismatch
+
+dtype mismatch
+
+out-of-memory without chunking fallback available
+
+### 13.3 “Explain the objective” mode
+
+Provide a debug mode that returns:
+
+per-frequency error contributions for a chosen design b*
+
+per-term (per pole) partial sums for a chosen (b*, f*, element)
+This is invaluable when a discovered formula fails and you need to see why.
+
+## 14) Security and correctness boundaries
+
+Even though this is local, treat kernel compilation as a controlled surface:
+
+The kernel source comes only from the repo (not arbitrary strings from an agent) unless explicitly allowed.
+
+If you later add expression-to-kernel compilation, it must be sandboxed by:
+
+allowlisted functions/operators
+
+code generation that cannot inject arbitrary code beyond expression
+
+## 15) M5 Definition of Done (DoD) — the “we know it’s complete” checklist
+
+M5 is only complete when all items below are true:
+
+### 15.1 Functional completeness
+
+ rational_eval implemented for P=2 and P=4
+
+ rational_eval_reduce implemented with at least:
+
+weighted relative Frobenius error
+
+max error per design
+
+global max + argmax (optional but recommended)
+
+ check_stability implemented (GPU)
+
+ check_passivity implemented:
+
+fast mode for P=2 (analytic)
+
+fast mode for P=4 (power iteration)
+
+strict mode for P=4 (Jacobi or batched solver)
+
+ Chunking works for both B and F
+
+ No-silent-fallback enforcement
+
+### 15.2 Correctness rigor
+
+ CPU float64 reference exists and is used in tests
+
+ Property-based randomized tests cover multiple shapes and dtypes
+
+ Chunked == unchunked within tolerance
+
+ eval_reduce metrics == eval_only-derived metrics within tolerance
+
+ Passivity check validated vs CPU SVD for random matrices (P=2 and P=4 strict)
+
+### 15.3 Performance rigor
+
+ Benchmark suite exists and produces stable reports
+
+ Gate G1 (no VRAM explosion) passes on the representative workload
+
+ Gate G2 (GPU-dominant) verified with at least one profiler trace saved as artifact
+
+ Gate G3 (CUDA graphs) implemented + benchmarked (if graphs enabled)
+
+### 15.4 Reproducibility + integration
+
+ Kernel cache key recorded in run metadata
+
+ All APIs are documented with exact shapes/dtypes
+
+ Interop utilities via DLPack exist (CuPy↔Torch)
+
+ Works on compute capability 12.0 GPU (RTX 5090 class)
+
+ Environment pinned such that GPU stack is actually usable on sm_120 (or CuPy-only fallback works).
+
+## 16) How M5 maximizes odds of discovering a novel equation
+
+This milestone is not “just speed.” It directly enables discovery success by letting you:
+
+Search a larger hypothesis space
+Symbolic regression + falsification is compute-hungry. Faster scoring means more candidates and deeper tournaments.
+
+Use stronger oracles in the objective
+Passivity, stability, reciprocity—these are expensive checks. If they’re cheap, you can enforce them every generation rather than as an afterthought.
+
+Do adversarial robustness at scale
+M7’s falsification depends on evaluating formulas on huge candidate sets to find counterexamples. Without M5, you will under-sample and accept brittle formulas.
+
+Produce corporate-grade artifacts
+Your “secret formula” must be not only accurate but stable/passive and fast to evaluate. M5 is the evaluation engine that will eventually ship as the proprietary runtime.
+
+## 17) Recommended implementation order (so you don’t get stuck)
+
+Implement CPU reference + tests first (even before GPU kernels).
+
+Implement a naive CuPy version (broadcasting) to establish correctness baseline.
+
+Implement fused rational_eval kernel for P=2.
+
+Extend fused kernel to P=4.
+
+Implement eval_reduce fused path.
+
+Add chunking (B then F).
+
+Add passivity P=2 analytic kernel; validate vs CPU.
+
+Add passivity P=4 fast (power iter).
+
+Add strict P=4 method.
+
+Add CUDA graph workspace/capture/replay.
+
+## 18) Appendix — citations used for tooling facts
+
+CuPy user-defined kernels (ElementwiseKernel/ReductionKernel/RawKernel/RawModule):
+
+RawKernel compilation caching:
+
+torch.compile / TorchInductor / Triton:
+
+Triton overview:
+
+CUDA Graphs concept and PyTorch support/limitations:
+
+DLPack and CuPy interoperability:
+
+cuBLAS batched GEMM/strided batched:
+
+cuSOLVER purpose:
+
+RTX 5090 compute capability:
+
+sm_120 / PyTorch compatibility issue evidence:
+
+RTX 5090 laptop 24GB context:
+
+M6 — Equation Discovery Engine
+
+Symbolic regression + physics‑guided search + unit/dimension constraints (GPU‑first, audit‑grade)
+
+This design document specifies exactly what must exist in the repository for Milestone M6 to be considered complete, how it must behave, and the objective evidence (tests, benchmarks, reproducibility artifacts, constraint certificates) that proves we’ve reached the engineering rigor required for a high‑stakes “equation foundry” intended to discover commercially valuable, physically correct, novel formulas.
+
+## 0. Mission directive and success definition
+### 0.1 Mission directive (what M6 is for)
+
+M6 exists to convert a dataset of the form:
+
+inputs: a manufacturable geometry/stackup design vector x (with units), and
+
+targets: physically meaningful response parameters θ(x) (e.g., rational macromodel poles/residues, equivalent circuit elements, or “optimal geometry” values),
+
+into one or more interpretable symbolic formulas that:
+
+Generalize across the domain of interest (not just interpolate),
+
+Obey physics (dimensional consistency, stability, passivity/reciprocity constraints, expected monotonicity/asymptotics where applicable),
+
+Are computationally cheap to evaluate (microseconds–milliseconds, batched on GPU),
+
+Are auditable and reproducible from a commit hash + dataset version,
+
+Provide competitive advantage by replacing expensive parametric sweeps / solver loops.
+
+M6 is not a “cool SR demo.” It is the core IP foundry for discovering a drop‑in formula that big companies would embed into EDA optimization loops.
+
+### 0.2 M6 completion = evidence, not vibes
+
+M6 is “done” only when the repo can run a full discovery campaign and produce:
+
+A ranked Pareto frontier of candidate formulas (accuracy vs complexity),
+
+Constraint certificates (dimensional correctness + physics gates) across declared domains,
+
+End‑to‑end validation against the golden oracle outputs (S‑parameters / Z/Y, not just θ),
+
+Reproducibility artifacts (run manifests, seeds, exact dataset hashes, deterministic replays),
+
+Performance reports proving GPU‑dominant scoring and no accidental CPU fallback.
+
+## 1. External SOTA components we build on (and why)
+
+M6 must integrate multiple SR paradigms because no single SR engine wins universally. We build a unified discovery framework that can accept candidates from multiple engines, then applies our physics constraints, end‑to‑end scoring, and GPU acceleration consistently.
+
+### 1.1 PySR / SymbolicRegression.jl (workhorse)
+
+PySR is engineered as a configurable, high‑performance symbolic regression tool and uses SymbolicRegression.jl as the search engine. It also explicitly supports workflows like “symbolic distillation” (distilling a neural net into an analytic equation) for higher‑dimensional problems.
+
+SymbolicRegression.jl provides critical capabilities M6 will exploit:
+
+Dimensional analysis with units (via DynamicQuantities) and options like dimensional_constraint_penalty and dimensionless_constants_only.
+
+Template expressions to impose structure and variable access constraints (physics‑guided structural priors).
+
+Examples for complex numbers, multiple outputs, and dimensional constraints.
+
+### 1.2 AI Feynman 2.0 (physics‑oriented decomposition + robustness)
+
+AI Feynman 2.0 targets Pareto‑optimal formulas and reports improvements in robustness to noise and “bad data,” plus methods for discovering generalized symmetries/modularity from gradient properties of a neural network fit, and hypothesis‑testing‑accelerated search.
+
+This is valuable for our mission because our data (full‑wave EM sims + vector fitting) can contain:
+
+imperfect fits,
+
+numerical noise,
+
+regime changes (mode transitions).
+
+AI Feynman’s decomposition/symmetry detection is a strong complement to evolutionary SR.
+
+### 1.3 SINDy / PySINDy (sparse identification when we can cast structure)
+
+PySINDy is built around SINDy (Sparse Identification of Nonlinear Dynamical Systems), originally introduced by Brunton et al. (2016), and offers multiple optimizers (including sparse regression variants).
+
+Even if our primary mapping is static x → θ, SINDy becomes essential if we:
+
+discover state‑space surrogate dynamics,
+
+enforce differential constraints,
+
+use time‑domain responses as targets.
+
+### 1.4 Benchmarking culture: SRBench
+
+SRBench provides a “living benchmark” framework for symbolic regression, with a scikit‑learn style API requirement and a large set of benchmark datasets/methods (including many SR methods and datasets sourced from PMLB).
+
+M6 will include a benchmark harness aligned with this culture to prevent “we broke SR quality and didn’t notice.”
+
+### 1.5 Unit/Dimension infra: Pint + SymPy units (repo‑side)
+
+We require unit metadata and dimensional reasoning at multiple layers (typed grammar generation, validation, export). We will use:
+
+Pint for practical unit definitions, registry, and quantity handling.
+
+SymPy physics.units for symbolic unit expressions, simplification, and codegen‑adjacent dimension reasoning.
+
+Additionally, we will leverage SymbolicRegression.jl’s built‑in dimensional support for the PySR engine path.
+
+## 2. M6 scope boundaries
+### 2.1 In scope
+
+M6 must deliver:
+
+A unified discovery pipeline that:
+
+ingests datasets from M3/M4 (design vectors + fitted macromodel parameters + raw S if available),
+
+enforces dimensional and physics constraints,
+
+runs multiple SR engines,
+
+scores candidates end‑to‑end,
+
+outputs a Pareto frontier and a selected “champion set.”
+
+A GPU‑first candidate scoring layer:
+
+batched evaluation of expressions over large datasets,
+
+batched frequency response reconstruction for end‑to‑end error,
+
+batched constraint checks (stability/passivity/reciprocity).
+
+A hard dimensional consistency guarantee for accepted formulas:
+
+“accepted” means dimensionally correct by proof (typed inference), not probabilistic.
+
+A physics constraint framework that supports our EM macromodel mission:
+
+stability gates,
+
+passivity gates (for S or Z/Y),
+
+reciprocity / symmetry gates,
+
+optional monotonicity/asymptotics constraints.
+
+Auditable artifacts and run manifests for deterministic reruns.
+
+### 2.2 Explicitly out of scope for M6 (handled elsewhere)
+
+Generating designs/Gerbers (M1)
+
+Running openEMS oracle sims (M2)
+
+Vector fitting and passivity enforcement of fitted models (M4)
+
+Active learning / falsification loop (M7)
+
+Multi‑agent orchestration (M8)
+
+Physical measurement ingestion (M9)
+
+M6, however, must expose stable tool interfaces so M7/M8 can call into it.
+
+## 3. Data contracts M6 requires (no ambiguity)
+
+M6 cannot be “over‑engineered” without strict contracts. These are mandatory.
+
+### 3.1 Core dataset objects
+
+We define a canonical dataset package EquationDiscoveryDataset with:
+
+X: shape (N, d) numeric feature matrix (float32 preferred for GPU scoring).
+
+X_schema: list of FeatureSpec (name, units, dimension vector, bounds, type).
+
+Y_targets: dictionary of target groups:
+
+theta_raw: raw fitted parameters from M4 (poles/residues/etc).
+
+theta_canonical: canonicalized/aligned/parameterized version used for learning.
+
+Y_schema: list of TargetSpec (name, units, dimension vector, bounds, constraints).
+
+aux:
+
+optional freq_grid: (F,)
+
+optional S_measured_oracle: (N, F, nports, nports) complex64/complex128
+
+optional S_fitted_oracle: same
+
+optional weights: (N,) sample weights
+
+splits:
+
+train/val/test indices
+
+plus domain splits (see 7.2)
+
+### 3.2 FeatureSpec / TargetSpec required fields
+
+Each FeatureSpec must include:
+
+name: stable string key
+
+unit: Pint unit string (e.g., mm, dimensionless)
+
+dimension: 7‑vector (SI base dims) or reduced vector (L, M, T, I) with explicit mapping
+
+bounds: [min, max] in SI (float)
+
+dtype: float | int | bool
+
+role: continuous | discrete_count | categorical_encoded
+
+normalization: none | standardize | log | scale_to_unit_interval
+
+Each TargetSpec must include:
+
+name
+
+unit
+
+dimension
+
+bounds
+
+constraint_set: list of constraints (see section 6)
+
+evaluation_transform: identity | log | log1p | signed_log | etc (must be dimensionally legal)
+
+### 3.3 Canonical target representations (critical for macromodel work)
+
+Vector fitting outputs poles/residues that are not automatically aligned across samples. M6 must define canonicalization pipelines per target family:
+
+#### 3.3.1 Canonical form for stable complex poles
+
+Represent each pole as:
+
+a = -σ ± j ω, with σ > 0, ω >= 0
+
+Learn symbolic formulas for:
+
+σ(x) (units 1/s)
+
+ω(x) (units 1/s)
+
+This makes stability constraints easy and avoids “Re(a)<0” in raw complex form.
+
+#### 3.3.2 Conjugate pairing and realness constraints
+
+If the time‑domain response must be real, then poles and residues must occur in complex conjugate pairs. The canonicalizer must:
+
+detect pairs,
+
+store only one member per pair (or store (σ, ω)).
+
+#### 3.3.3 Residue parameterization options
+
+We define two supported residue models (choose per task; both implemented):
+
+Option A — elementwise residues
+Learn expressions for each independent residue matrix entry (e.g., upper triangle) and enforce symmetry/reciprocity by reconstruction.
+Pros: straightforward.
+Cons: passivity harder; many targets.
+
+Option B — low‑rank PSD factorization (preferred for passivity)
+Parameterize residue matrices as:
+
+R_k(x) = B_k(x) B_k(x)^H (or sum of a few rank‑1 terms),
+ensuring PSD by construction (if appropriate for the representation).
+Pros: passivity constraints become more tractable.
+Cons: requires careful derivation for the chosen network representation.
+
+M6 must support both, but Option A is the minimum viable for first implementation; Option B is the “ideal” path for stronger physical guarantees.
+
+## 4. System architecture (repo modules and responsibilities)
+### 4.1 High‑level block diagram
+            +---------------------------+
+            | EquationDiscoveryRunner   |
+            | (orchestrates pipeline)   |
+            +-------------+-------------+
+                          |
+                          v
+ +----------------+   +---+-------------------+   +----------------------+
+ | Preprocessing  |-->| Candidate Generation  |-->| Unified GPU Scoring   |
+ | & Canonicalize |   | (multiple engines)    |   | + Constraint Engine   |
+ +----------------+   +---+-------------------+   +----------+-----------+
+                          |                                 |
+                          v                                 v
+                 +------------------+             +----------------------+
+                 | Pareto Frontier  |<------------| Postfit + Simplify   |
+                 | + Model Selection|             | + Export             |
+                 +------------------+             +----------------------+
+                          |
+                          v
+                 +------------------+
+                 | Artifacts +      |
+                 | Certificates     |
+                 +------------------+
+
+### 4.2 Mandatory repository packages (M6 namespace)
+
+A suggested (but strict) module map:
+
+m6/
+
+dataset/
+
+schemas.py (Pydantic models: FeatureSpec/TargetSpec/etc)
+
+io.py (parquet/arrow read/write, validation)
+
+splits.py (domain splits, group CV)
+
+canonicalization/
+
+pole_tracking.py
+
+residue_models.py
+
+target_transforms.py
+
+units/
+
+dimensions.py (dimension vectors, operator rules)
+
+pint_registry.py
+
+sympy_units.py
+
+expressions/
+
+ir.py (ExpressionIR, Node, Operator)
+
+parsers.py (from SymPy/PySR/AI‑Feynman strings)
+
+simplify.py (SymPy rewrite pipeline, normalization)
+
+hashing.py (stable expression hash)
+
+constraints/
+
+base.py (Constraint interface)
+
+dimension.py (hard dimension typing + proof)
+
+domain.py (finite, no singularities, bounded eval)
+
+physics.py (stability/passivity/reciprocity/monotonicity)
+
+repair.py (constraint‑preserving transforms)
+
+engines/
+
+base.py (EngineAdapter interface)
+
+pysr_adapter.py
+
+aifeynman_adapter.py
+
+pysindy_adapter.py
+
+grammar_search.py (our typed grammar sampler/enumerator)
+
+optional/ (SISSO/Operon etc as future adapters)
+
+scoring/
+
+metrics.py (param loss, end‑to‑end loss)
+
+gpu_eval.py (CuPy/Torch compiled evaluation)
+
+pareto.py (Pareto maintenance, domination checks)
+
+robustness.py (bootstrap, noise injection, OOD tests)
+
+export/
+
+codegen.py (C/CUDA/Python export)
+
+latex.py
+
+model_package.py (artifact bundling)
+
+cli/
+
+discover.py
+
+score.py
+
+export.py
+
+reports/
+
+certificates.py
+
+html_report.py
+
+## 5. Candidate generation engines (design and contracts)
+### 5.1 EngineAdapter interface (strict)
+
+All engines implement:
+
+fit(dataset: EquationDiscoveryDataset, task: TaskSpec) -> EngineRunResult
+
+yield_candidates() -> Iterator[CandidateExpression] (streaming)
+
+stop() / cleanup()
+
+get_run_manifest() -> dict (engine versioning, seeds, config)
+
+CandidateExpression must contain:
+
+expr_ir: ExpressionIR
+
+expr_source: original string / engine object
+
+engine_name, engine_version
+
+target_name(s)
+
+raw_metrics (engine’s own loss/complexity if available)
+
+time_created, seed, config_hash
+
+### 5.2 PySR / SymbolicRegression.jl adapter
+
+PySR is used for:
+
+fast baseline discovery on low‑dimensional problems,
+
+generating an initial Pareto set,
+
+enabling template structures and unit constraints (via backend).
+
+Key implementation requirements:
+
+Dimensional constraints integration
+Use SymbolicRegression.jl’s unit/dimensional support: it can accept units (via DynamicQuantities) and includes hyperparameters like dimensional_constraint_penalty and dimensionless_constants_only.
+
+Template / structure priors
+Use TemplateExpressionSpec (or equivalent) to enforce known structure and variable access constraints. TemplateExpression is designed for domain‑specific structure constraints.
+
+Performance knobs
+Expose in config:
+
+population size, iterations, procs/threads
+
+turbo / LoopVectorization acceleration (when supported)
+
+optional Bumper acceleration hooks when available
+
+Export formats
+PySR can export expressions to SymPy and other formats (including JAX and PyTorch), which we will use for GPU‑side re‑scoring and codegen.
+
+### 5.3 AI Feynman 2.0 adapter
+
+AI Feynman is used to:
+
+exploit modularity/symmetry discovery,
+
+handle noisy datasets robustly,
+
+produce complementary candidates that PySR may miss.
+
+We integrate it as:
+
+a batch candidate generator + decomposition suggestions,
+
+plus its discovered substructure used to generate templates for PySR/grammar search.
+
+AI Feynman 2.0 seeks Pareto‑optimal formulas and includes techniques leveraging gradient properties of neural nets, normalizing flows, and hypothesis testing to improve robustness and search speed.
+
+### 5.4 PySINDy adapter
+
+Used when the task is naturally expressed as sparse regression over a library (especially dynamic/state‑space). PySINDy is explicitly a system identification package built around SINDy (Brunton et al. 2016) and includes additional optimizers.
+
+### 5.5 Typed Grammar Search engine (must exist)
+
+This is our engine for enforcing hard dimensional legality at generation time and exploiting GPU scoring.
+
+It is required because:
+
+dimensional constraints reduce the search space dramatically,
+
+we cannot rely on “soft penalties” for correctness.
+
+We will implement grammar search using attribute grammar ideas: dimensional constraints can be represented via attribute grammars and transformed into probabilistic grammars, improving benchmark equation discovery results (reported improvements on Feynman benchmarks).
+
+This engine is the key to “physics‑guided symbolic search” rather than generic GP.
+
+## 6. Constraint system (hard gates + penalties + repairs)
+
+Constraints are not optional. M6 must treat constraints as first‑class citizens in both candidate generation and candidate acceptance.
+
+### 6.1 Constraint types
+
+We define constraints in four tiers:
+
+Dimensional constraints (hard)
+
+Domain safety constraints (hard)
+
+Physical sign/stability constraints (hard)
+
+System/network constraints (hard, but may be “probabilistically certified” over grids)
+
+### 6.2 Dimensional constraints (hard proof)
+#### 6.2.1 Dimension representation
+
+Represent dimension as integer/rational exponent vector over base dimensions:
+
+Minimum for EM/macromodel work:
+[L, M, T, I] (length, mass, time, current)
+
+Full SI (optional):
+[L, M, T, I, Θ, N, J]
+
+Every feature/target must specify its dimension vector.
+
+#### 6.2.2 Operator legality rules
+
+Operators must carry dimension typing rules, e.g.:
+
++/-: same dim required
+
+*: dims add
+
+/: dims subtract
+
+pow(x, p):
+
+p must be dimensionless
+
+if p is rational, result dims scaled by p
+
+sqrt(x): dims * 1/2
+
+log/exp/sin/cos: argument must be dimensionless (output dimensionless)
+
+abs: preserves dim
+
+max/min: same dim
+
+sign: dimensionless
+
+#### 6.2.3 Enforcement modes
+
+M6 must support three modes:
+
+Strict typed generation: candidates are generated only if dimensionally valid (grammar search; preferred).
+
+Strict post‑check: candidates from external engines are rejected unless dimensionally valid.
+
+Soft penalty: only for exploration; never for final acceptance.
+
+Note: SymbolicRegression.jl already supports dimensional analysis with hyperparameters like dimensional_constraint_penalty and can restrict constants to be dimensionless (dimensionless_constants_only).
+We will still apply our own post‑check to guarantee correctness.
+
+#### 6.2.4 Unit systems integration
+
+Pint provides practical unit registry and references Buckingham Pi theorem in its advanced topics, indicating it’s used for dimensional analysis workflows.
+
+SymPy provides physics.units capabilities for symbolic unit handling.
+
+M6 will:
+
+store units in Pint for I/O and conversions,
+
+store symbolic dimensions in a lightweight internal structure for speed,
+
+optionally use SymPy for final expression unit annotation and export checks.
+
+### 6.3 Domain safety constraints (hard)
+
+These prevent “fits” that exploit undefined behavior.
+
+Required checks:
+
+no NaN/Inf on train/val/test
+
+denominator bounded away from zero over declared domain (with margin)
+
+log/sqrt domain legality across domain
+
+no catastrophic overflow under float32 evaluation across domain
+
+bounded gradients (optional; used for robust physical behavior)
+
+Implementation:
+
+A GPU batched evaluator computes:
+
+isfinite masks,
+
+denominator minima,
+
+domain‑guard booleans.
+
+Any violation → candidate rejected or repaired (if repairable).
+
+### 6.4 Physical constraints (hard)
+
+These are target‑dependent and declared in TargetSpec.constraint_set.
+
+Minimum required constraints for our macromodel mission:
+
+#### 6.4.1 Positivity constraints
+
+For parameters like R, L, C, σ, ω:
+
+enforce > 0 or >= 0 with margin
+
+Implementation:
+
+post‑fit check + optional “repair transform” (see 6.6).
+
+#### 6.4.2 Stability constraints for poles
+
+If target is a pole parameterization:
+
+require σ(x) > 0 (since pole real part is -σ), thus Re(a)<0.
+
+#### 6.4.3 Reciprocity / symmetry
+
+For reciprocal N‑port networks, enforce matrix symmetry constraints, e.g. S = S^T (or on Z/Y depending representation).
+This can be implemented by:
+
+learning only independent entries,
+
+reconstructing full matrix deterministically,
+
+verifying residual symmetry error.
+
+### 6.5 System/network constraints (hard, but certified on grids)
+
+These constraints validate the resulting network behavior from predicted θ.
+
+For each candidate formula set producing a macromodel:
+
+reconstruct frequency response on a grid,
+
+verify:
+
+passivity,
+
+stability,
+
+(optional) causality consistency checks.
+
+Because exact symbolic passivity proof is difficult, we require grid‑certification with adversarial augmentation:
+
+deterministic frequency grid over the band,
+
+plus random frequency samples,
+
+plus worst‑case “stress grid” near resonances.
+
+The certificate must record:
+
+grid definition,
+
+max violation margin,
+
+GPU numeric precision used,
+
+commit + dataset hash.
+
+### 6.6 Repair operators (constraint‑preserving transforms)
+
+Repairs are allowed only if they preserve interpretability and are explicitly recorded.
+
+Example repairs:
+
+positivity: y = g(x)^2 or y = (g(x))^2 + ε
+
+negativity: y = -g(x)^2
+
+boundedness: y = y_max * tanh(g(x)) (used only if physically justified; usually avoid)
+
+stability: σ = g(x)^2 then a = -σ + j ω
+
+Repair policy:
+
+repairs are applied only as:
+
+outermost wrapper, or
+
+within template‑declared slots,
+so the “core” formula remains readable.
+
+## 7. Physics‑guided search (how we bias toward true, novel laws)
+
+Physics guidance is not “add a penalty.” It must shape the hypothesis space.
+
+### 7.1 Dimensional analysis + dimensionless groups
+
+We will implement automated Buckingham‑Pi feature construction:
+
+Given dimensional matrix D ∈ ℚ^{k × d} for d variables in k base dims:
+
+compute nullspace basis Π = {π_1, …, π_{d-k}}
+
+each π is a product of variables with exponents yielding dimensionless.
+
+We then offer three discovery modes:
+
+Pure π‑space SR: discover ŷ = f(π_1,…,π_m) where y has been nondimensionalized.
+
+Hybrid: allow both raw vars and π‑groups with strong priors for π usage.
+
+Template scaling: enforce y = y0(x) * f(π) where y0 provides dimensional scaling.
+
+This dramatically improves generalization across scale changes and reduces search complexity.
+
+### 7.2 Domain splits (anti‑overfitting by construction)
+
+Beyond train/val/test, we require domain splits that reflect our real use:
+
+Interpolation split: random holdout in the interior of parameter ranges.
+
+Extrapolation split: hold out corners and edges of the parameter hypercube.
+
+Regime split: hold out regions known to cause behavior shifts (e.g., stub resonance entering the band).
+
+A candidate is not “accepted” unless it meets thresholds on all declared splits.
+
+### 7.3 Structural priors via templates
+
+Use SymbolicRegression.jl template expressions to encode known physical structure and variable access constraints. TemplateExpression is explicitly designed to impose structured combinations of subexpressions and constrain variable usage.
+
+Examples relevant to our mission:
+
+rational forms: y = (a0 + a1*π1 + …) / (1 + b1*π2 + …)
+
+log‑like inductance behavior templates: L ~ α * log(β * ratio + 1) + γ
+
+separable structure: f(x1,x2,x3) = g(x1,x2) + h(x3)
+
+### 7.4 Decomposition priors from AI Feynman
+
+AI Feynman 2.0 can discover modularity/symmetry structures and is designed for robust Pareto‑optimal discovery.
+We will:
+
+use AI Feynman’s discovered modular forms to propose templates,
+
+reduce dimensionality before PySR/grammar search.
+
+### 7.5 Sparse library priors (SINDy‑style)
+
+When we can propose a physically motivated library (polynomials in π‑groups, rational basis, log terms), we use sparse regression:
+
+find minimal active terms,
+
+then “lift” into symbolic expression form.
+
+PySINDy provides this sparse system identification machinery.
+
+## 8. Unified scoring: end‑to‑end, GPU‑dominant, multi‑objective
+### 8.1 Why end‑to‑end scoring is mandatory
+
+If we learn formulas for intermediate θ (e.g., poles), small parameter error can yield large response error. Therefore every candidate formula must be scored on:
+
+parameter loss: error in θ space (fast)
+
+response loss: error in reconstructed S/Z/Y over frequency (ground truth)
+
+constraint loss: violations (hard rejection or heavy penalty)
+
+complexity cost: expression size and operator costs
+
+### 8.2 Metrics definitions (must be implemented)
+
+For each candidate f:
+
+Parameter loss (per target):
+
+Lθ = median_i ( |θ_i - f(x_i)| / (|θ_i| + ε) )
+(median for robustness; also compute max and 95th percentile)
+
+Response loss (band‑weighted):
+
+for each sample i, compute response error across freq:
+
+magnitude + phase or complex error
+
+require:
+
+worst‑case (max) error ≤ threshold
+
+and band‑weighted RMS error ≤ threshold
+
+Constraint gates:
+
+dimensional validity: pass/fail
+
+domain safety: pass/fail
+
+physics constraints: pass/fail
+
+network constraints: pass/fail (grid certificate)
+
+Complexity
+We use two complexity measures:
+
+Engine complexity (node count or engine’s complexity definition)
+
+Operator‑weighted complexity:
+
+assign weights: {+, -, *} = 1, / = 2, log/sqrt = 3, exp = 5, etc.
+
+complexity = sum of node weights
+
+We keep a Pareto frontier of (loss, complexity). AI Feynman explicitly targets Pareto optimality; we will maintain our own cross‑engine Pareto set.
+
+SymbolicRegression.jl also uses a “score” notion based on change in log‑loss vs change in complexity between neighboring frontier points, and we will store this as a diagnostic metric.
+
+### 8.3 GPU evaluation architecture (must be built)
+
+M6 must reuse the GPU acceleration concepts from M5, but it must also function independently with a defined API.
+
+#### 8.3.1 Expression evaluation backends
+
+We implement ExpressionEvaluator with backends:
+
+cupy_fused: preferred, highest throughput
+
+torch_compile: optional (torch.compile + CUDA)
+
+numpy: correctness baseline only
+
+Key requirement: candidates are scored in large batches, and evaluation is GPU‑dominant.
+
+#### 8.3.2 Kernel fusion strategy (essential)
+
+Naively evaluating an expression tree as many small GPU ops causes kernel launch overhead. M6 must implement at least one of:
+
+#### A) Codegen to a fused CUDA kernel (ideal)
+
+Convert ExpressionIR to CUDA source (single kernel doing full expression)
+
+Compile via CuPy RawKernel / NVRTC
+
+Cache compiled kernels by expression hash
+
+#### B) Torch graph fusion (acceptable if stable)
+
+Convert ExpressionIR to Torch ops
+
+Use torch.compile to fuse where possible
+
+Cache compiled graphs by expression hash
+
+The repo must include benchmark evidence showing fusion effectiveness.
+
+#### 8.3.3 Batched end‑to‑end response reconstruction
+
+Given predicted θ(x), reconstruct S(f;x) on GPU:
+
+batched over N samples,
+
+batched over F frequencies.
+
+Then compute response loss and passivity constraints using GPU linear algebra:
+
+compute SᴴS eigenvalues/singular values per frequency (for passivity in S‑domain),
+
+compute symmetry errors.
+
+Chunking is mandatory to avoid VRAM thrash (24 GB cap).
+
+### 8.4 Asynchronous scoring pipeline (CPU generates, GPU scores)
+
+To saturate hardware:
+
+CPU threads/processes generate candidates (PySR/AI Feynman/grammar)
+
+candidates are queued to GPU scorer
+
+GPU scorer evaluates in micro‑batches and returns metrics
+
+Pareto set is updated online
+
+This prevents GPU idle time during heavy symbolic search.
+
+## 9. Constant handling and post‑fit refinement (must be present)
+
+Symbolic regression engines often optimize constants internally, but for engineering rigor we require post‑fit refinement under our end‑to‑end objective.
+
+### 9.1 Constant types
+
+We distinguish:
+
+dimensionless constants (preferred default)
+
+units‑carrying constants (allowed only if explicitly enabled and recorded)
+
+SymbolicRegression.jl supports settings around dimensionless constants vs dimensional penalties.
+
+### 9.2 Post‑fit refinement algorithm
+
+For each candidate expression, we optionally run:
+
+Quick linear solve if the expression is linear in parameters (detectable via SymPy).
+
+Else bounded nonlinear optimization on GPU:
+
+objective = response loss + regularization
+
+constraints enforced (e.g., positivity via squaring)
+
+optimizer = LBFGS/Adam (torch) or custom (cupy)
+
+Refinement output must be recorded:
+
+refined constants,
+
+improvement metrics,
+
+time cost.
+
+### 9.3 Symbolic distillation path (optional but designed in)
+
+If the mapping is higher dimensional than SR can handle directly, we support the PySR‑documented “symbolic distillation” workflow: train a neural net surrogate then distill it into a symbolic equation.
+
+This is not the primary path for our low‑dimensional via family, but it must be supported because it can unlock future expansions (more geometry parameters, more complex families).
+
+## 10. Output artifacts (what the repo must emit)
+
+Every discovery run must emit a deterministic artifact bundle:
+
+### 10.1 Required artifacts
+
+run_manifest.json
+
+git commit hash
+
+dataset DVC hash
+
+engine configs + versions
+
+seeds
+
+hardware info (GPU model, CUDA version)
+
+numeric precision settings (float32/float64)
+
+pareto_frontier.json
+
+all non‑dominated candidates
+
+metrics (loss, complexity, constraints pass/fail)
+
+engine provenance per candidate
+
+champions/
+
+top K formulas chosen by model selection policy
+
+certificates/
+
+dimensional_certificate.json: proof traces / dimension inference results
+
+physics_certificate.json: stability/positivity checks
+
+network_certificate.json: passivity/reciprocity checks on declared grids
+
+reports/
+
+human‑readable HTML/PDF summary (plots, tables)
+
+exports/
+
+formula.sympy
+
+formula.tex
+
+formula.py
+
+optionally formula.c / formula.cu
+
+### 10.2 Deterministic hashing
+
+Expression canonical form must produce a stable hash:
+
+commutative normalization (a+b sorted)
+
+constant normalization (float rounding policy)
+
+operator canonicalization
+
+This enables caching compiled GPU kernels and avoids duplicate evaluations.
+
+## 11. CLI + API specification (must be stable)
+### 11.1 CLI commands
+
+m6 discover --config task.yaml --dataset <path> --out <run_dir>
+
+m6 score --formula <formula.json> --dataset <path> --report <out>
+
+m6 export --formula <formula.json> --format {py,c,cu,tex,sympy} --out <dir>
+
+m6 certify --formula <formula.json> --dataset <path> --domain-grid <grid.yaml>
+
+### 11.2 Python API
+
+Must expose:
+
+discover(task: TaskSpec, dataset: EquationDiscoveryDataset) -> DiscoveryResult
+
+score(formula: FormulaBundle, dataset: EquationDiscoveryDataset) -> ScoreReport
+
+certify(formula: FormulaBundle, dataset: EquationDiscoveryDataset, domain: DomainSpec) -> CertificateBundle
+
+compile(formula: FormulaBundle, backend: str) -> CompiledEvaluator
+
+All APIs must be:
+
+type‑hinted
+
+deterministic under fixed seeds
+
+fail‑fast on contract violation
+
+## 12. Testing and verification plan (how we know it’s correct)
+
+This is the “we will know for certain” section: objective pass/fail gates.
+
+### 12.1 Unit tests (must exist)
+
+Dimension inference correctness
+
+generate random expression trees + random dimension assignments
+
+verify operator legality
+
+verify inference matches expected dim arithmetic
+
+Parser/IR roundtrip
+
+SymPy ↔ IR ↔ SymPy must be stable (modulo canonical formatting)
+
+GPU evaluator correctness
+
+compare GPU evaluation vs NumPy baseline across random inputs and random expressions
+
+require max relative error ≤ 1e‑6 (float32) for stable ops
+
+Constraint checks correctness
+
+craft expressions that violate each constraint type and ensure rejection
+
+Kernel cache determinism
+
+same expression hash → same compiled kernel signature
+
+### 12.2 Integration tests (must exist)
+#### 12.2.1 “Known law recovery” suite
+
+A set of synthetic datasets with ground truth formulas:
+
+dimensionless laws,
+
+log‑like laws,
+
+rational laws,
+
+multi‑output laws,
+
+stable pole parameterizations.
+
+Each test requires the system to:
+
+rediscover a formula within a complexity bound,
+
+achieve error ≤ threshold on extrapolation split,
+
+pass all dimensional constraints.
+
+#### 12.2.2 Noise robustness suite
+
+For each synthetic dataset:
+
+inject noise (Gaussian + heavy‑tailed)
+
+require the engine still recovers either:
+
+the true formula, or
+
+a mathematically equivalent formula within tolerance.
+
+AI Feynman 2.0 is explicitly designed to improve robustness to noise/bad data; this test ensures our integration and scoring doesn’t destroy that advantage.
+
+#### 12.2.3 “Macromodel consistency” suite
+
+Using a small set of known passive rational models:
+
+generate synthetic S‑parameter responses,
+
+“fit” θ,
+
+run M6 to rediscover θ(x) laws,
+
+confirm reconstructed S passes passivity checks.
+
+### 12.3 Benchmark tests (must exist)
+
+We will include a lightweight SR benchmark harness referencing SRBench’s style:
+
+scikit‑learn compatible runner
+
+run on a fixed subset of benchmark problems
+
+assert that our engine meets baseline success rates and doesn’t regress.
+
+SRBench exists explicitly to provide reproducible comparisons across SR methods and datasets.
+
+### 12.4 Performance tests (must exist)
+
+We define two benchmark tiers:
+
+Tier 1 — microbench
+Evaluate a set of ~100 expressions across:
+
+N=100k samples, d~20
+
+require throughput target (see 13)
+
+Tier 2 — end‑to‑end scorebench
+Reconstruct and score responses for:
+
+N=2048 samples, F=512 frequencies, 2‑port
+
+require total scoring time per candidate ≤ T_target
+
+Each benchmark must print:
+
+GPU utilization evidence,
+
+kernel launch counts (if feasible),
+
+VRAM usage,
+
+CPU fallback warnings (must be zero).
+
+## 13. Performance targets (laptop‑feasible but aggressive)
+
+These are not “nice to have.” They are acceptance gates.
+
+### 13.1 GPU scoring throughput targets
+
+On the single‑laptop GPU (24 GB VRAM class):
+
+Expression evaluation:
+
+Achieve ≥10× speedup vs NumPy CPU baseline for N≥100k, complexity≥30 nodes.
+
+End‑to‑end response scoring (2‑port):
+
+For one candidate formula set (producing θ, reconstructing S on F=512):
+
+≤ 50 ms for N=2048 (chunked if needed).
+
+These numbers are adjustable after the first profiling pass, but M6 must include benchmarks and enforce non‑regression.
+
+### 13.2 Memory management requirements
+
+All GPU operations must support chunking in N and/or F dimensions.
+
+No intermediate tensor > 60% VRAM without explicit override.
+
+Kernel compilation cache must have eviction policy.
+
+### 13.3 Determinism requirements
+
+All “final selection” runs must be reproducible:
+
+same seed + same dataset hash + same commit = same champion formulas (within allowed tie‑break nondeterminism rules that are explicitly defined).
+
+## 14. Definition of Done (DoD): the exact checklist
+
+M6 is complete only when all items below are true.
+
+### 14.1 Functional completeness
+
+ m6 discover runs end‑to‑end on a provided dataset and emits the full artifact bundle (section 10).
+
+ PySR adapter integrated and passing integration tests.
+
+ AI Feynman 2.0 adapter integrated and passing integration tests.
+
+ PySINDy adapter integrated (at least for one dynamic identification test).
+
+ Typed grammar engine exists and can generate dimensionally valid candidates (section 5.5).
+
+### 14.2 Correctness + physics rigor
+
+ Dimensional correctness is guaranteed: every accepted formula has a dimensional certificate.
+
+ Domain safety gates prevent NaN/Inf/singularities across declared domains.
+
+ Stability constraints enforced for pole parameterizations.
+
+ Passivity/reciprocity grid‑certificates generated for network outputs.
+
+### 14.3 Robustness
+
+ Known‑law recovery suite passes on:
+
+interpolation split,
+
+extrapolation split,
+
+noise‑injected split.
+
+ Candidate selection is not based solely on train loss; validation and OOD are enforced.
+
+### 14.4 Performance
+
+ GPU scoring benchmarks meet targets (section 13) and are enforced in CI (or local gated workflow if CI GPU unavailable).
+
+ No silent CPU fallback: if GPU backend requested and unavailable, run fails loudly.
+
+### 14.5 Reproducibility and auditing
+
+ Every run emits run_manifest.json with dataset hash and commit.
+
+ Every candidate in pareto set stores provenance (engine + config + seed).
+
+ Re‑running with same inputs reproduces the same frontier and champion set.
+
+## 15. Engineering rigor standards (repo‑level expectations for M6 code)
+
+Even though M0 establishes repo substrate, M6 must adhere to these local standards:
+
+Type‑driven interfaces (Pydantic models for configs and artifacts)
+
+Pure functions where possible (to aid determinism)
+
+No implicit global state (units registry must be explicit)
+
+Structured logging for every candidate scoring event
+
+Property‑based tests for dimension rules and IR evaluation
+
+Version pinning in manifests (engine versions recorded)
+
+## 16. Why this design maximizes the odds of discovering a novel equation
+
+This M6 design increases discovery probability by combining:
+
+Multiple complementary SR paradigms (evolutionary SR + modularity‑based SR + sparse regression)
+
+Hard dimensional legality, which prevents huge volumes of nonsense candidates and forces the search into physically meaningful spaces (supported by both SymbolicRegression.jl unit tooling and attribute‑grammar approaches).
+
+Physics‑guided structural priors (templates and variable constraints) to drastically reduce the hypothesis space and direct search toward plausible macromodel laws.
+
+GPU‑dominant scoring, enabling far larger candidate throughput and more aggressive validation/certification than CPU‑only SR (critical on single‑laptop constraints).
+
+End‑to‑end response‑level validation (not just parameter fitting), which is the difference between a publishable “fit” and a deployable “formula.”
+
+## 17. Minimal “first implementation” vs “absolute ideal” (so you can stage without compromising rigor)
+
+You asked for the absolute ideal. Here’s the minimum subset that still meets strict standards, and what remains “ideal‑plus.”
+
+### 17.1 Minimum viable but rigorous (still passes DoD)
+
+PySR adapter + typed dimension post‑checker
+
+AI Feynman adapter (candidate generator)
+
+Grammar engine for dimensionally consistent candidate sampling (even if simple)
+
+GPU evaluator for:
+
+expression evaluation,
+
+end‑to‑end S reconstruction and error
+
+Dimensional + stability + reciprocity constraints
+
+Passivity certification on grids for 2‑port S
+
+### 17.2 Ideal‑plus (recommended for maximum discovery odds)
+
+Low‑rank PSD residue parameterization (passivity by construction)
+
+Post‑fit GPU constant refinement for top candidates
+
+Distillation path (NN → SR) to scale feature count
+
+Full SRBench regression harness across a curated subset.
+
+## 18. What you should expect M6 to produce for our specific mission (via/launch formula)
+
+Once M6 is implemented, the repo must be capable of producing, for example:
+
+A symbolic law for σ_k(x) and ω_k(x) (stable pole trajectories) with correct units (1/s),
+
+A symbolic law for equivalent circuit values (R/L/C) with positivity constraints,
+
+A symbolic design law for “optimal antipad radius / return‑via pitch” expressed as dimensionless ratios and scaling.
+
+And crucially: the formula must ship with certificates proving:
+
+unit correctness,
+
+stability,
+
+passivity/reciprocity (on declared bands/domains),
+
+robust error bounds on held‑out corners.
+
+That is the point where you can say, with engineering certainty, “we have properly developed M6.”
+
+## Normative Requirements
+
+The following requirements are normative for M4 and must be satisfied before the milestone is considered complete:
+
+- [REQ-M4-001] Design document must pass the spec lint contract (milestone line, requirements, Definition of Done, Test Matrix)
+- [REQ-M4-002] Vector fitting implementation must produce rational macromodels from S-parameter data
+- [REQ-M4-003] Passivity enforcement must guarantee all poles have non-positive real parts
+- [REQ-M4-004] SPICE export must produce valid subcircuit netlists from macromodels
+
+## Definition of Done
+
+M4 is complete when all of the following criteria are met:
+
+1. All REQ-M4-XXX requirements pass their mapped tests
+2. Vector fitting produces stable, passive macromodels from openEMS S-parameter outputs
+3. SPICE subcircuits generated from macromodels simulate correctly in ngspice
+4. End-to-end pipeline from coupon → S-parameters → macromodel → SPICE is demonstrated
+5. Documentation and test coverage meet project standards
+
+## Test Matrix
+
+| Requirement | pytest node id(s) |
+|-------------|-------------------|
+| REQ-M4-001 | tests/test_design_document_contract.py::test_design_document_contract |
+| REQ-M4-002 | tests/test_m2_sparam_extract.py::test_extract_sparams_from_touchstone |
+| REQ-M4-003 | tests/test_m2_touchstone_validation.py::TestPassivityValidation::test_passive_network_passes |
+| REQ-M4-004 | tests/test_m2_touchstone_validation.py::TestReciprocityValidation::test_reciprocal_network_passes |

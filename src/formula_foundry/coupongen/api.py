@@ -407,7 +407,7 @@ def build_coupon(
     )
     if evaluation.spec.constraints.drc.must_pass and report.returncode != 0:
         raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
-    export_hashes = export_fab(
+    export_hashes_raw = export_fab(
         project.board_path,
         output_dir / "fab",
         evaluation.spec.toolchain.kicad,
@@ -415,6 +415,8 @@ def build_coupon(
         runner=runner,
         lock_file=lock_file,
     )
+    # Add fab/ prefix to export paths so manifest paths match actual file locations
+    export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
     manifest = build_manifest(
         spec=evaluation.spec,
         resolved=resolved,
@@ -591,7 +593,7 @@ def build_coupon_with_engine(
         raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
 
     # Export fabrication files
-    export_hashes = export_fab(
+    export_hashes_raw = export_fab(
         project.board_path,
         output_dir / "fab",
         spec.toolchain.kicad,
@@ -599,6 +601,8 @@ def build_coupon_with_engine(
         runner=runner,
         lock_file=lock_file,
     )
+    # Add fab/ prefix to export paths so manifest paths match actual file locations
+    export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
 
     # Build and write manifest
     # Note: We need to convert the TieredConstraintProof to the legacy ConstraintProof format
