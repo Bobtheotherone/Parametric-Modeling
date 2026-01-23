@@ -21,6 +21,38 @@ from typing import Any, Protocol
 from formula_foundry.substrate import canonical_json_dumps
 
 from .constraints import ConstraintEvaluation, constraint_proof_payload, enforce_constraints
+
+
+class KicadExportError(RuntimeError):
+    """Raised when KiCad export commands fail.
+
+    This exception provides detailed diagnostic information including the
+    command that failed, exit code, stdout, and stderr to help diagnose
+    export failures (e.g., permission issues, missing files).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        command: list[str] | None = None,
+        returncode: int | None = None,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        self.command = command or []
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        details = [message]
+        if command:
+            details.append(f"Command: {' '.join(command)}")
+        if returncode is not None:
+            details.append(f"Exit code: {returncode}")
+        if stdout:
+            details.append(f"stdout: {stdout}")
+        if stderr:
+            details.append(f"stderr: {stderr}")
+        super().__init__("\n".join(details))
 from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
 from .kicad import BackendA, KicadCliRunner
@@ -348,7 +380,11 @@ class ExportPipeline:
         out_dir: Path,
         toolchain: KicadToolchain,
     ) -> dict[str, str]:
-        """Export fabrication files and compute canonical hashes."""
+        """Export fabrication files and compute canonical hashes.
+
+        Raises:
+            KicadExportError: If Gerber or drill export fails (non-zero exit code).
+        """
         out_dir.mkdir(parents=True, exist_ok=True)
         runner = self._get_runner(toolchain)
 
@@ -357,8 +393,51 @@ class ExportPipeline:
         gerber_dir.mkdir(parents=True, exist_ok=True)
         drill_dir.mkdir(parents=True, exist_ok=True)
 
-        runner.export_gerbers(board_path, gerber_dir)
-        runner.export_drill(board_path, drill_dir)
+        # Export Gerbers with fail-fast behavior
+        gerber_result = runner.export_gerbers(board_path, gerber_dir)
+        if gerber_result.returncode != 0:
+            raise KicadExportError(
+                f"KiCad Gerber export failed for {board_path.name}",
+                command=getattr(gerber_result, "args", None),
+                returncode=gerber_result.returncode,
+                stdout=gerber_result.stdout,
+                stderr=gerber_result.stderr,
+            )
+
+        # Verify Gerbers were actually produced
+        gerber_files = list(gerber_dir.glob("*.gbr")) + list(gerber_dir.glob("*.g*"))
+        if not gerber_files:
+            raise KicadExportError(
+                f"KiCad Gerber export completed but no Gerber files were created in {gerber_dir}. "
+                "This typically indicates a permissions issue (container cannot write to bind-mounted directory).",
+                command=getattr(gerber_result, "args", None),
+                returncode=gerber_result.returncode,
+                stdout=gerber_result.stdout,
+                stderr=gerber_result.stderr,
+            )
+
+        # Export drill files with fail-fast behavior
+        drill_result = runner.export_drill(board_path, drill_dir)
+        if drill_result.returncode != 0:
+            raise KicadExportError(
+                f"KiCad drill export failed for {board_path.name}",
+                command=getattr(drill_result, "args", None),
+                returncode=drill_result.returncode,
+                stdout=drill_result.stdout,
+                stderr=drill_result.stderr,
+            )
+
+        # Verify drill files were actually produced
+        drill_files = list(drill_dir.glob("*.drl")) + list(drill_dir.glob("*.exc"))
+        if not drill_files:
+            raise KicadExportError(
+                f"KiCad drill export completed but no drill files were created in {drill_dir}. "
+                "This typically indicates a permissions issue (container cannot write to bind-mounted directory).",
+                command=getattr(drill_result, "args", None),
+                returncode=drill_result.returncode,
+                stdout=drill_result.stdout,
+                stderr=drill_result.stderr,
+            )
 
         return _hash_export_tree(out_dir)
 

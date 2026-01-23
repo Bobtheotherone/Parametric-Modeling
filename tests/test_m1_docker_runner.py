@@ -79,6 +79,49 @@ class TestDockerKicadRunner:
         assert "pcb" in cmd
         assert "drc" in cmd
 
+    def test_build_docker_command_includes_user_flag(self, tmp_path: Path) -> None:
+        """Docker command must include --user flag for bind-mount permissions.
+
+        This is critical for CI environments where the host user ID (e.g., 1001
+        on GitHub Actions) differs from the container user (uid 1000 in kicad/kicad).
+        Without --user, the container cannot write to bind-mounted directories.
+        """
+        import os
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+        cmd = runner._build_docker_command(["--version"], tmp_path)
+
+        # Verify --user flag is present with host UID:GID
+        assert "--user" in cmd, "Docker command must include --user flag"
+        user_idx = cmd.index("--user")
+        user_value = cmd[user_idx + 1]
+
+        # Verify format is uid:gid
+        assert ":" in user_value, "--user value must be uid:gid format"
+        uid, gid = user_value.split(":")
+        assert uid.isdigit(), "UID must be numeric"
+        assert gid.isdigit(), "GID must be numeric"
+
+        # Verify it matches host user
+        assert int(uid) == os.getuid(), f"UID should be {os.getuid()}, got {uid}"
+        assert int(gid) == os.getgid(), f"GID should be {os.getgid()}, got {gid}"
+
+    def test_build_docker_command_sets_home_env(self, tmp_path: Path) -> None:
+        """Docker command must set HOME=/tmp for numeric UID without passwd entry.
+
+        When running as --user uid:gid, the numeric UID may not have a passwd
+        entry in the container. KiCad needs a writable HOME for config files.
+        """
+        runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
+        cmd = runner._build_docker_command(["--version"], tmp_path)
+
+        # Find all -e flags and their values
+        env_values = []
+        for i, arg in enumerate(cmd):
+            if arg == "-e" and i + 1 < len(cmd):
+                env_values.append(cmd[i + 1])
+
+        assert "HOME=/tmp" in env_values, "Docker command must set HOME=/tmp"
+
     def test_build_docker_command_with_env(self, tmp_path: Path) -> None:
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
         cmd = runner._build_docker_command(

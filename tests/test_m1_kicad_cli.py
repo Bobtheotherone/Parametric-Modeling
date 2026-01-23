@@ -58,6 +58,60 @@ def test_kicad_cli_runner_modes(tmp_path: Path) -> None:
     assert "kicad/kicad:9.0.7@sha256:deadbeef" in docker_cmd
 
 
+def test_kicad_cli_runner_docker_includes_user_flag(tmp_path: Path) -> None:
+    """Docker command must include --user flag for bind-mount permissions.
+
+    This is critical for CI environments where the host user ID (e.g., 1001
+    on GitHub Actions) differs from the container user (uid 1000 in kicad/kicad).
+    Without --user, the container cannot write to bind-mounted directories.
+    """
+    import os
+    runner = KicadCliRunner(mode="docker", docker_image="kicad/kicad:9.0.7")
+    cmd = runner.build_command(["--version"], workdir=tmp_path)
+
+    # Verify --user flag is present with host UID:GID
+    assert "--user" in cmd, "Docker command must include --user flag"
+    user_idx = cmd.index("--user")
+    user_value = cmd[user_idx + 1]
+
+    # Verify format is uid:gid
+    assert ":" in user_value, "--user value must be uid:gid format"
+    uid, gid = user_value.split(":")
+    assert uid.isdigit(), "UID must be numeric"
+    assert gid.isdigit(), "GID must be numeric"
+
+    # Verify it matches host user
+    assert int(uid) == os.getuid(), f"UID should be {os.getuid()}, got {uid}"
+    assert int(gid) == os.getgid(), f"GID should be {os.getgid()}, got {gid}"
+
+
+def test_kicad_cli_runner_docker_sets_home_env(tmp_path: Path) -> None:
+    """Docker command must set HOME=/tmp for numeric UID without passwd entry.
+
+    When running as --user uid:gid, the numeric UID may not have a passwd
+    entry in the container. KiCad needs a writable HOME for config files.
+    """
+    runner = KicadCliRunner(mode="docker", docker_image="kicad/kicad:9.0.7")
+    cmd = runner.build_command(["--version"], workdir=tmp_path)
+
+    # Find all -e flags and their values
+    env_values = []
+    for i, arg in enumerate(cmd):
+        if arg == "-e" and i + 1 < len(cmd):
+            env_values.append(cmd[i + 1])
+
+    assert "HOME=/tmp" in env_values, "Docker command must set HOME=/tmp"
+
+
+def test_kicad_cli_runner_local_mode_no_user_flag(tmp_path: Path) -> None:
+    """Local mode should NOT include Docker-specific flags."""
+    runner = KicadCliRunner(mode="local")
+    cmd = runner.build_command(["--version"], workdir=tmp_path)
+
+    assert "--user" not in cmd, "Local mode should not have --user flag"
+    assert "-e" not in cmd, "Local mode should not have -e flag"
+
+
 def test_drc_invocation_flags(tmp_path: Path) -> None:
     board = tmp_path / "coupon.kicad_pcb"
     report = tmp_path / "drc.json"

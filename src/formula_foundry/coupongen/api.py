@@ -41,6 +41,7 @@ from .kicad.cli import KicadCliMode
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash, resolve
 from .spec import CouponSpec, KicadToolchain
+from .export import KicadExportError
 from .toolchain import ToolchainLoadError, resolve_docker_image_ref
 from .toolchain_capture import capture_toolchain_provenance
 
@@ -262,6 +263,12 @@ def export_fab(
     runner: KicadRunnerProtocol | None = None,
     lock_file: Path | None = None,
 ) -> dict[str, str]:
+    """Export fabrication files (Gerbers and drill) from a board.
+
+    Raises:
+        KicadExportError: If Gerber or drill export fails (non-zero exit code
+            or no files produced).
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     if runner is None:
         # Resolve docker image from lock file if spec has placeholder
@@ -275,8 +282,53 @@ def export_fab(
     drill_dir = out_dir / "drill"
     gerber_dir.mkdir(parents=True, exist_ok=True)
     drill_dir.mkdir(parents=True, exist_ok=True)
-    runner.export_gerbers(board_path, gerber_dir)
-    runner.export_drill(board_path, drill_dir)
+
+    # Export Gerbers with fail-fast behavior
+    gerber_result = runner.export_gerbers(board_path, gerber_dir)
+    if gerber_result.returncode != 0:
+        raise KicadExportError(
+            f"KiCad Gerber export failed for {board_path.name}",
+            command=getattr(gerber_result, "args", None),
+            returncode=gerber_result.returncode,
+            stdout=gerber_result.stdout,
+            stderr=gerber_result.stderr,
+        )
+
+    # Verify Gerbers were actually produced
+    gerber_files = list(gerber_dir.glob("*.gbr")) + list(gerber_dir.glob("*.g*"))
+    if not gerber_files:
+        raise KicadExportError(
+            f"KiCad Gerber export completed but no Gerber files were created in {gerber_dir}. "
+            "This typically indicates a permissions issue (container cannot write to bind-mounted directory).",
+            command=getattr(gerber_result, "args", None),
+            returncode=gerber_result.returncode,
+            stdout=gerber_result.stdout,
+            stderr=gerber_result.stderr,
+        )
+
+    # Export drill files with fail-fast behavior
+    drill_result = runner.export_drill(board_path, drill_dir)
+    if drill_result.returncode != 0:
+        raise KicadExportError(
+            f"KiCad drill export failed for {board_path.name}",
+            command=getattr(drill_result, "args", None),
+            returncode=drill_result.returncode,
+            stdout=drill_result.stdout,
+            stderr=drill_result.stderr,
+        )
+
+    # Verify drill files were actually produced
+    drill_files = list(drill_dir.glob("*.drl")) + list(drill_dir.glob("*.exc"))
+    if not drill_files:
+        raise KicadExportError(
+            f"KiCad drill export completed but no drill files were created in {drill_dir}. "
+            "This typically indicates a permissions issue (container cannot write to bind-mounted directory).",
+            command=getattr(drill_result, "args", None),
+            returncode=drill_result.returncode,
+            stdout=drill_result.stdout,
+            stderr=drill_result.stderr,
+        )
+
     return _hash_export_tree(out_dir)
 
 
