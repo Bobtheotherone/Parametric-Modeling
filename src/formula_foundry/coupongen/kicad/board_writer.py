@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
+from ..constraints.core import resolve_fab_limits
 from ..families import FAMILY_F1
 from ..geom.layout import LayoutPlan
 from ..resolve import ResolvedDesign
@@ -205,9 +206,11 @@ class BoardWriter:
         elements.append(self._build_general())
         elements.append(self._build_paper())
         elements.append(self._build_layers())
+        elements.append(self._build_setup())
 
-        # Add net declarations
+        # Add net declarations and net classes (design rules)
         elements.extend(self._build_nets())
+        elements.extend(self._build_net_classes())
 
         # Add board outline
         elements.extend(self._build_outline())
@@ -227,6 +230,10 @@ class BoardWriter:
             elements.extend(self._build_antipads())
             elements.extend(self._build_cutouts())
 
+        # Add ground plane fills for return via connectivity (F1 coupons)
+        if self.spec.discontinuity is not None and self.spec.discontinuity.return_vias is not None:
+            elements.extend(self._build_ground_planes())
+
         return elements
 
     def _build_general(self) -> SExprList:
@@ -243,6 +250,125 @@ class BoardWriter:
         for layer_id, name, layer_type in DEFAULT_LAYER_DEFS:
             result.append([layer_id, name, layer_type])
         return result
+
+    def _build_setup(self) -> SExprList:
+        """Build the setup section with design rules from fab profile.
+
+        Configures KiCad design rules based on the fab profile limits:
+        - min_via_diameter: minimum via pad diameter
+        - min_via_drill: minimum via hole size
+        - min_track_width: minimum trace width
+        - min_clearance: minimum copper-to-copper clearance
+
+        These are specified in the default netclass to set board-wide design rules.
+
+        Raises:
+            RuntimeError: If fab limits cannot be resolved. The oracle MUST fail
+                loudly when constraints are unknown - silent defaults would hide
+                real DRC violations.
+        """
+        # Get resolved fab limits using the standard constraint resolution
+        # M1 Oracle requirement: NO silent fallback - if we can't resolve limits,
+        # the board rules will be wrong and DRC results meaningless.
+        try:
+            limits = resolve_fab_limits(self.spec)
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot resolve fab limits for spec (fab_profile={self.spec.fab_profile.id!r}). "
+                f"Board rules require known fab constraints for DRC validity. "
+                f"Original error: {e}"
+            ) from e
+
+        # Convert from nm to mm for KiCad
+        min_via_dia = nm_to_mm(limits.get("min_via_diameter_nm", 200000))
+        min_via_drill = nm_to_mm(limits.get("min_drill_nm", 200000))
+        min_track = nm_to_mm(limits.get("min_trace_width_nm", 100000))
+        min_clearance = nm_to_mm(limits.get("min_gap_nm", 100000))
+
+        return [
+            "setup",
+            ["pad_to_mask_clearance", 0],
+            ["allow_soldermask_bridges_in_footprints", "no"],
+            [
+                "pcbplotparams",
+                ["layerselection", "0x00010fc_ffffffff"],
+                ["plot_on_all_layers_selection", "0x0000000_00000000"],
+                ["disableapertmacros", "false"],
+                ["usegerberextensions", "false"],
+                ["usegerberattributes", "true"],
+                ["usegerberadvancedattributes", "true"],
+                ["creategerberjobfile", "true"],
+                ["svguseinch", "false"],
+                ["svgprecision", 4],
+                ["excludeedgelayer", "true"],
+                ["plotframeref", "false"],
+                ["viasonmask", "false"],
+                ["mode", 1],
+                ["useauxorigin", "false"],
+                ["hpglpennumber", 1],
+                ["hpglpenspeed", 20],
+                ["hpglpendiameter", 15.000000],
+                ["pdf_front_fp_property_popups", "true"],
+                ["pdf_back_fp_property_popups", "true"],
+                ["dxfpolygonmode", "true"],
+                ["dxfimperialunits", "true"],
+                ["dxfusepcbnewfont", "true"],
+                ["psnegative", "false"],
+                ["psa4output", "false"],
+                ["plotreference", "true"],
+                ["plotvalue", "true"],
+                ["plotfptext", "true"],
+                ["plotinvisibletext", "false"],
+                ["sketchpadsonfab", "false"],
+                ["subtractmaskfromsilk", "false"],
+                ["outputformat", 1],
+                ["mirror", "false"],
+                ["drillshape", 1],
+                ["scaleselection", 1],
+                ["outputdirectory", ""],
+            ],
+        ]
+
+    def _build_net_classes(self) -> list[SExprList]:
+        """Build net class definitions with design rules from fab profile.
+
+        The Default net class sets the board-wide minimum design rules.
+
+        Raises:
+            RuntimeError: If fab limits cannot be resolved. The oracle MUST fail
+                loudly when constraints are unknown - silent defaults would hide
+                real DRC violations.
+        """
+        # Get resolved fab limits
+        # M1 Oracle requirement: NO silent fallback - if we can't resolve limits,
+        # the board rules will be wrong and DRC results meaningless.
+        try:
+            limits = resolve_fab_limits(self.spec)
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot resolve fab limits for spec (fab_profile={self.spec.fab_profile.id!r}). "
+                f"Net class rules require known fab constraints for DRC validity. "
+                f"Original error: {e}"
+            ) from e
+
+        min_clearance = nm_to_mm(limits.get("min_gap_nm", 100000))
+        min_track = nm_to_mm(limits.get("min_trace_width_nm", 100000))
+        min_via_dia = nm_to_mm(limits.get("min_via_diameter_nm", 200000))
+        min_via_drill = nm_to_mm(limits.get("min_drill_nm", 200000))
+
+        return [
+            [
+                "net_class",
+                "Default",
+                "",
+                ["clearance", min_clearance],
+                ["trace_width", min_track],
+                ["via_dia", min_via_dia],
+                ["via_drill", min_via_drill],
+                ["uvia_dia", min_via_dia],
+                ["uvia_drill", min_via_drill],
+            ]
+        ]
 
     def _build_nets(self) -> list[SExprList]:
         """Build net declarations."""
@@ -449,9 +575,8 @@ class BoardWriter:
 
         # Return vias if present - use F1 composition for correct positioning
         # (the F1 builder uses the same discontinuity position internally)
-        # Note: Return vias are on net 0 (unconnected) because without actual
-        # ground plane fills, they have no copper connectivity. This avoids
-        # DRC "unconnected_items" errors for M1 test coupons.
+        # Return vias are on GND net (net 2) and connect to ground plane fills
+        # on F.Cu and B.Cu generated by _build_ground_planes().
         if disc.return_vias is not None:
             if self._f1_composition is not None and self._f1_composition.return_vias:
                 # Use pre-computed return via positions from the F1 builder
@@ -464,7 +589,7 @@ class BoardWriter:
                             ["size", nm_to_mm(return_via.diameter_nm)],
                             ["drill", nm_to_mm(return_via.drill_nm)],
                             ["layers", return_via.layers[0], return_via.layers[1]],
-                            ["net", 0],
+                            ["net", 2],  # GND net
                             ["tstamp", via_uuid],
                         ]
                     )
@@ -487,7 +612,7 @@ class BoardWriter:
                             ["size", nm_to_mm(int(rv.via.diameter_nm))],
                             ["drill", nm_to_mm(int(rv.via.drill_nm))],
                             ["layers", "F.Cu", "B.Cu"],
-                            ["net", 0],
+                            ["net", 2],  # GND net
                             ["tstamp", via_uuid],
                         ]
                     )
@@ -601,6 +726,75 @@ class BoardWriter:
             cutouts.append(zone)
 
         return cutouts
+
+    def _build_ground_planes(self) -> list[SExprList]:
+        """Build ground ring traces for return via connectivity.
+
+        Creates copper track segments connecting return vias in a ring on
+        F.Cu and B.Cu, connected to GND net. This ring provides the copper
+        connectivity that return vias need on each layer, satisfying KiCad
+        DRC via connectivity requirements.
+
+        The ring is drawn with trace width equal to the return via diameter
+        to ensure solid overlap with the via pads.
+        """
+        elements: list[SExprList] = []
+        disc = self.spec.discontinuity
+
+        if disc is None or disc.return_vias is None:
+            return elements
+
+        lp = self._layout_plan
+        center_x = lp.x_disc_nm
+        center_y = lp.y_centerline_nm
+
+        if center_x is None:
+            return elements
+
+        # Get return via positions and diameter
+        if self._f1_composition is not None and self._f1_composition.return_vias:
+            return_via_positions = [
+                (v.position.x, v.position.y)
+                for v in self._f1_composition.return_vias
+            ]
+            via_diameter = self._f1_composition.return_vias[0].diameter_nm if self._f1_composition.return_vias else 500000
+        else:
+            # Fallback: calculate positions
+            rv = disc.return_vias
+            radius = int(rv.radius_nm)
+            count = rv.count
+            via_diameter = int(rv.via.diameter_nm)
+            return_via_positions = []
+            for i in range(count):
+                angle = 2 * math.pi * i / count
+                vx = center_x + int(radius * math.cos(angle))
+                vy = center_y + int(radius * math.sin(angle))
+                return_via_positions.append((vx, vy))
+
+        if len(return_via_positions) < 2:
+            return elements
+
+        # Create ground ring on both F.Cu and B.Cu
+        # Connect vias in sequence, then close the ring
+        for layer in ["F.Cu", "B.Cu"]:
+            for i in range(len(return_via_positions)):
+                start_x, start_y = return_via_positions[i]
+                end_x, end_y = return_via_positions[(i + 1) % len(return_via_positions)]
+
+                track_uuid = self._indexed_uuid(f"gnd_ring.{layer}", i)
+
+                track: SExprList = [
+                    "segment",
+                    ["start", nm_to_mm(start_x), nm_to_mm(start_y)],
+                    ["end", nm_to_mm(end_x), nm_to_mm(end_y)],
+                    ["width", nm_to_mm(via_diameter)],  # Wide trace for solid overlap
+                    ["layer", layer],
+                    ["net", 2],  # GND net
+                    ["tstamp", track_uuid],
+                ]
+                elements.append(track)
+
+        return elements
 
     def write(self, out_path: Path) -> None:
         """Write the board file to disk.

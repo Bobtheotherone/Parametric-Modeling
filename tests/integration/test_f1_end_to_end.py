@@ -374,14 +374,32 @@ class TestF1BoardWriter:
         assert isinstance(board, list)
         assert board[0] == "kicad_pcb"
 
-    def test_f1_board_has_two_track_segments(self, f1_spec: CouponSpec) -> None:
-        """F1 board should have two track segments (left and right)."""
+    def test_f1_board_has_two_signal_track_segments(self, f1_spec: CouponSpec) -> None:
+        """F1 board should have exactly two signal track segments (left and right).
+
+        The board also contains ground ring segments for return via connectivity,
+        but these are on net 2 (GND). Signal traces are on net 1 (SIG).
+        """
         resolved = resolve(f1_spec)
         writer = BoardWriter(f1_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 2
+        # Get all segments
+        all_segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+
+        # Filter for signal segments (net 1)
+        def get_net(seg: list) -> int:
+            for elem in seg:
+                if isinstance(elem, list) and elem[0] == "net":
+                    return elem[1]
+            return -1
+
+        signal_segments = [s for s in all_segments if get_net(s) == 1]
+        assert len(signal_segments) == 2, f"Expected 2 signal segments, got {len(signal_segments)}"
+
+        # Ground ring segments should also be present (4 vias × 2 layers = 8 segments)
+        gnd_segments = [s for s in all_segments if get_net(s) == 2]
+        assert len(gnd_segments) == 8, f"Expected 8 ground ring segments, got {len(gnd_segments)}"
 
     def test_f1_board_has_signal_via(self, f1_spec: CouponSpec) -> None:
         """F1 board should have a signal via at the discontinuity."""
@@ -532,45 +550,86 @@ class TestF1ViaGeometry:
             assert abs(distance - expected_radius_nm) < 1000  # 1um tolerance
 
 
+def _get_segment_net(seg: list) -> int:
+    """Extract net ID from a segment S-expression."""
+    for elem in seg:
+        if isinstance(elem, list) and elem[0] == "net":
+            return elem[1]
+    return -1
+
+
+def _get_segment_layer(seg: list) -> str:
+    """Extract layer name from a segment S-expression."""
+    for elem in seg:
+        if isinstance(elem, list) and elem[0] == "layer":
+            return elem[1]
+    return ""
+
+
+def _get_signal_segments(board: list) -> list:
+    """Extract signal trace segments (net 1) from a board S-expression."""
+    all_segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+    return [s for s in all_segments if _get_segment_net(s) == 1]
+
+
 class TestF1TrackGeometry:
     """Tests for F1 track geometry correctness."""
 
-    def test_f1_tracks_on_correct_layer(self, f1_spec: CouponSpec) -> None:
-        """F1 tracks should be on the specified layer."""
+    def test_f1_signal_tracks_on_correct_layers(self, f1_spec: CouponSpec) -> None:
+        """F1 signal tracks should be on correct layers for via transition.
+
+        For F1 via transitions:
+        - Left signal segment is on entry layer (F.Cu)
+        - Right signal segment is on exit layer (B.Cu)
+
+        This ensures the signal via connects traces on both layers, eliminating
+        via_dangling DRC warnings.
+        """
         resolved = resolve(f1_spec)
         writer = BoardWriter(f1_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        for segment in segments:
-            layer_elem = [e for e in segment if isinstance(e, list) and e[0] == "layer"][0]
-            assert layer_elem[1] == "F.Cu"
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 2, "F1 should have exactly 2 signal segments"
 
-    def test_f1_tracks_have_correct_width(self, f1_spec: CouponSpec) -> None:
-        """F1 tracks should have the correct width from spec."""
+        # Collect layers from signal segments
+        layers = {_get_segment_layer(s) for s in signal_segments}
+
+        # F1 via transition: left on F.Cu, right on B.Cu
+        # Both layers must be present for proper via connectivity
+        assert "F.Cu" in layers, "Missing F.Cu signal segment (left/entry)"
+        assert "B.Cu" in layers, "Missing B.Cu signal segment (right/exit)"
+
+    def test_f1_signal_tracks_have_correct_width(self, f1_spec: CouponSpec) -> None:
+        """F1 signal tracks should have the correct width from spec."""
         resolved = resolve(f1_spec)
         writer = BoardWriter(f1_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        for segment in segments:
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 2
+
+        for segment in signal_segments:
             width_elem = [e for e in segment if isinstance(e, list) and e[0] == "width"][0]
             # Width in mm = 300000 nm / 1000000 = 0.3 mm
-            assert width_elem[1] == "0.3"
+            assert width_elem[1] == "0.3", f"Signal segment width should be 0.3mm"
 
-    def test_f1_tracks_on_signal_net(self, f1_spec: CouponSpec) -> None:
-        """F1 tracks should be on the SIG net (net 1)."""
+    def test_f1_signal_tracks_on_signal_net(self, f1_spec: CouponSpec) -> None:
+        """F1 signal tracks should be on the SIG net (net 1)."""
         resolved = resolve(f1_spec)
         writer = BoardWriter(f1_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        for segment in segments:
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 2
+
+        # Verify all signal segments are on net 1 (by definition of filter)
+        for segment in signal_segments:
             net_elem = [e for e in segment if isinstance(e, list) and e[0] == "net"][0]
             assert net_elem[1] == 1
 
-    def test_f1_tracks_meet_at_discontinuity(self, f1_spec: CouponSpec) -> None:
-        """F1 tracks should meet at the discontinuity center."""
+    def test_f1_signal_tracks_meet_at_discontinuity(self, f1_spec: CouponSpec) -> None:
+        """F1 signal tracks should meet at the discontinuity center."""
         resolved = resolve(f1_spec)
         layout = resolved.layout_plan
         assert layout is not None
@@ -579,12 +638,12 @@ class TestF1TrackGeometry:
         writer = BoardWriter(f1_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 2
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 2, "F1 should have exactly 2 signal segments"
 
-        # Get endpoints
+        # Get endpoints from signal segments only
         endpoints = []
-        for segment in segments:
+        for segment in signal_segments:
             start_elem = [e for e in segment if isinstance(e, list) and e[0] == "start"][0]
             end_elem = [e for e in segment if isinstance(e, list) and e[0] == "end"][0]
             endpoints.append(float(start_elem[1]))
@@ -595,7 +654,7 @@ class TestF1TrackGeometry:
 
         # At least one endpoint should be at discontinuity (from each segment)
         at_disc = [x for x in endpoints if abs(x - disc_x_mm) < 0.001]
-        assert len(at_disc) == 2  # Both segments meet at discontinuity
+        assert len(at_disc) == 2, "Both signal segments should meet at discontinuity"
 
 
 class TestF1GoldenSpecs:
@@ -608,7 +667,7 @@ class TestF1GoldenSpecs:
 
     @pytest.mark.parametrize(
         "spec_path",
-        _collect_f1_golden_specs()[:5],  # Test first 5 for speed
+        _collect_f1_golden_specs(),  # Test ALL F1 golden specs (no sampling)
         ids=lambda p: p.stem,
     )
     def test_f1_golden_spec_loads(self, spec_path: Path) -> None:
@@ -622,7 +681,7 @@ class TestF1GoldenSpecs:
 
     @pytest.mark.parametrize(
         "spec_path",
-        _collect_f1_golden_specs()[:5],
+        _collect_f1_golden_specs(),  # Test ALL F1 golden specs (no sampling)
         ids=lambda p: p.stem,
     )
     def test_f1_golden_spec_resolves(self, spec_path: Path) -> None:
@@ -639,7 +698,7 @@ class TestF1GoldenSpecs:
 
     @pytest.mark.parametrize(
         "spec_path",
-        _collect_f1_golden_specs()[:5],
+        _collect_f1_golden_specs(),  # Test ALL F1 golden specs (no sampling)
         ids=lambda p: p.stem,
     )
     def test_f1_golden_spec_generates_board(self, spec_path: Path, tmp_path: Path) -> None:
@@ -685,12 +744,17 @@ class TestF1EndToEndPipeline:
         parsed = parse(content)
 
         # Should have expected elements
-        segments = [e for e in parsed if isinstance(e, list) and e[0] == "segment"]
+        all_segments = [e for e in parsed if isinstance(e, list) and e[0] == "segment"]
         footprints = [e for e in parsed if isinstance(e, list) and e[0] == "footprint"]
         vias = [e for e in parsed if isinstance(e, list) and e[0] == "via"]
         zones = [e for e in parsed if isinstance(e, list) and e[0] == "zone"]
 
-        assert len(segments) == 2, "F1 should have exactly 2 track segments"
+        # F1 boards have:
+        # - 2 signal trace segments (net 1: left on F.Cu, right on B.Cu)
+        # - 8 ground ring segments (net 2: 4 vias × 2 layers for return via connectivity)
+        signal_segments = _get_signal_segments(parsed)
+        assert len(signal_segments) == 2, "F1 should have exactly 2 signal trace segments"
+        assert len(all_segments) == 10, "F1 should have 10 total segments (2 signal + 8 ground ring)"
         assert len(footprints) == 2, "F1 should have exactly 2 footprints"
         assert len(vias) == 5, "F1 should have 5 vias (1 signal + 4 return)"
         assert len(zones) >= 2, "F1 should have antipads/cutouts as zones"

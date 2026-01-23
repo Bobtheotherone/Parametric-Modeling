@@ -126,7 +126,8 @@ class TestGetGerberExtensionMap:
 
     def test_extension_format(self) -> None:
         ext_map = get_gerber_extension_map()
-        assert ext_map["F.Cu"].endswith(".gbr")
+        # KiCad uses industry-standard extensions like .gtl for F.Cu
+        assert ext_map["F.Cu"].endswith(".gtl")
 
 
 class TestExtractLayersFromExports:
@@ -134,8 +135,8 @@ class TestExtractLayersFromExports:
 
     def test_extracts_copper_layers(self) -> None:
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
             "drill/drill.drl",
         ]
         layers = extract_layers_from_exports(export_paths)
@@ -144,8 +145,8 @@ class TestExtractLayersFromExports:
 
     def test_extracts_mask_layers(self) -> None:
         export_paths = [
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert "F.Mask" in layers
@@ -153,8 +154,8 @@ class TestExtractLayersFromExports:
 
     def test_extracts_inner_layers(self) -> None:
         export_paths = [
-            "gerbers/board-In1_Cu.gbr",
-            "gerbers/board-In2_Cu.gbr",
+            "gerbers/board-In1_Cu.g1",
+            "gerbers/board-In2_Cu.g2",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert "In1.Cu" in layers
@@ -170,14 +171,14 @@ class TestExtractLayersFromExports:
 
     def test_ignores_files_outside_gerber_dir(self) -> None:
         export_paths = [
-            "other/board-F_Cu.gbr",
+            "other/board-F_Cu.gtl",
         ]
         layers = extract_layers_from_exports(export_paths)
         assert len(layers) == 0
 
     def test_custom_gerber_dir(self) -> None:
         export_paths = [
-            "fab/board-F_Cu.gbr",
+            "fab/board-F_Cu.gtl",
         ]
         layers = extract_layers_from_exports(export_paths, gerber_dir="fab/")
         assert "F.Cu" in layers
@@ -207,32 +208,38 @@ class TestValidateFamilyLayerRequirements:
 class TestValidateLayerSet:
     """Tests for validate_layer_set function."""
 
-    def test_valid_4_layer_set_passes(self) -> None:
+    def test_valid_4_layer_set_passes_strict(self) -> None:
+        """Verify strict=True does NOT raise on a complete 4-layer export set.
+
+        This is the oracle pass-case: a complete export must not trigger
+        LayerSetValidationError when strict=True.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-In1_Cu.gbr",
-            "gerbers/board-In2_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-In1_Cu.g1",
+            "gerbers/board-In2_Cu.g2",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
+        # strict=True must NOT raise for complete exports
         result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=4,
             family="F1_SINGLE_ENDED_VIA",
-            strict=False,
+            strict=True,
         )
         assert result.passed is True
         assert len(result.missing_layers) == 0
 
     def test_missing_layer_fails(self) -> None:
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
             # Missing In1.Cu, In2.Cu, B.Cu
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
         result = validate_layer_set(
             export_paths=export_paths,
@@ -247,7 +254,7 @@ class TestValidateLayerSet:
 
     def test_strict_mode_raises_on_missing_layers(self) -> None:
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
+            "gerbers/board-F_Cu.gtl",
         ]
         with pytest.raises(LayerSetValidationError) as exc_info:
             validate_layer_set(
@@ -259,37 +266,47 @@ class TestValidateLayerSet:
         assert exc_info.value.result.passed is False
         assert len(exc_info.value.result.missing_layers) > 0
 
-    def test_2_layer_set_validation(self) -> None:
+    def test_2_layer_set_validation_strict(self) -> None:
+        """Verify strict=True does NOT raise on a complete 2-layer export set.
+
+        This is the oracle pass-case for F0 calibration coupons.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
         ]
+        # strict=True must NOT raise for complete exports
         result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=2,
             family="F0_CAL_THRU_LINE",
-            strict=False,
+            strict=True,
         )
         assert result.passed is True
         assert result.copper_layer_count == 2
 
-    def test_extra_layers_recorded(self) -> None:
+    def test_extra_layers_recorded_strict(self) -> None:
+        """Verify strict=True works with optional layers present.
+
+        Optional layers (like silkscreen) should not affect pass/fail.
+        """
         export_paths = [
-            "gerbers/board-F_Cu.gbr",
-            "gerbers/board-B_Cu.gbr",
-            "gerbers/board-F_Mask.gbr",
-            "gerbers/board-B_Mask.gbr",
-            "gerbers/board-Edge_Cuts.gbr",
-            "gerbers/board-F_SilkS.gbr",  # Optional
+            "gerbers/board-F_Cu.gtl",
+            "gerbers/board-B_Cu.gbl",
+            "gerbers/board-F_Mask.gts",
+            "gerbers/board-B_Mask.gbs",
+            "gerbers/board-Edge_Cuts.gm1",
+            "gerbers/board-F_Silkscreen.gto",  # Optional
         ]
+        # strict=True must NOT raise for complete exports with optional layers
         result = validate_layer_set(
             export_paths=export_paths,
             copper_layers=2,
             family="F0_CAL_THRU_LINE",
-            strict=False,
+            strict=True,
         )
         assert result.passed is True
         # F.SilkS is optional, not extra

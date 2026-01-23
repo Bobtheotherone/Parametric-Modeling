@@ -1,5 +1,7 @@
 # Golden spec F1-002: Small via F1 single-ended via transition
-# Parameters: 127um trace, 127um gap, 254um via drill (min for OSH Park)
+# Parameters: 127um trace, 127um gap, 300um via drill
+# Note: Via drill/diameter meet KiCad DRC defaults (min 300um drill, 500um diameter)
+# which are more restrictive than oshpark_4layer fab limits (254um drill, 457um diameter)
 schema_version: 1
 coupon_family: F1_SINGLE_ENDED_VIA
 units: nm
@@ -54,23 +56,23 @@ transmission_line:
 discontinuity:
   type: VIA_TRANSITION
   signal_via:
-    drill_nm: "254 um"
-    diameter_nm: "457 um"
-    pad_diameter_nm: "600 um"
+    drill_nm: "300 um"
+    diameter_nm: "500 um"
+    pad_diameter_nm: "700 um"
   antipads:
     L2:
       shape: CIRCLE
-      r_nm: "430 um"
+      r_nm: "500 um"
     L3:
       shape: CIRCLE
-      r_nm: "430 um"
+      r_nm: "500 um"
   return_vias:
     pattern: QUAD
     count: 4
-    radius_nm: "900 um"
+    radius_nm: "1000 um"
     via:
-      drill_nm: "254 um"
-      diameter_nm: "460 um"
+      drill_nm: "300 um"
+      diameter_nm: "510 um"
 
 constraints:
   mode: REJECT

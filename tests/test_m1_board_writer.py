@@ -298,14 +298,17 @@ class TestWriteBoard:
 
     def test_write_board_f1_with_vias(self, f1_spec: CouponSpec, tmp_path: Path) -> None:
         """F1 board file should contain via elements."""
+        import re
+
         resolved = resolve(f1_spec)
         board_path = write_board(f1_spec, resolved, tmp_path)
 
         content = board_path.read_text(encoding="utf-8")
         assert "(via" in content
-        # Should have signal via and return vias
-        via_count = content.count("(via")
-        assert via_count == 5  # 1 signal + 4 return
+        # Should have exactly 1 signal via + 4 return vias = 5 total
+        # Use regex to match actual via elements (not "vias" in keepout zones)
+        via_count = len(re.findall(r"\(via\n", content))
+        assert via_count == 5, f"Expected 5 vias (1 signal + 4 return), got {via_count}"
 
 
 @pytest.fixture
@@ -508,10 +511,12 @@ class TestF1RequirementCoverageInBoardWriter:
         footprint_matches = re.findall(r"\(footprint\s+[\w:]+", content)
         assert len(footprint_matches) == 2  # Left and right connectors
 
-        # 3. Transmission line tracks
+        # 3. Transmission line tracks (2 signal traces + 8 ground ring traces)
+        # Signal traces: left on F.Cu, right on B.Cu (for via transition)
+        # Ground ring: 4 return vias × 2 layers (F.Cu, B.Cu) = 8 traces
         assert "(segment" in content
         segment_count = content.count("(segment")
-        assert segment_count == 2  # Left and right tracks
+        assert segment_count == 10, f"Expected 10 segments (2 signal + 8 ground ring), got {segment_count}"
 
         # 4. Signal via
         assert "(via" in content
@@ -520,7 +525,7 @@ class TestF1RequirementCoverageInBoardWriter:
         # Count via elements (not "vias" attributes in keepout zones)
         # Via elements start with "(via" followed by newline, not "(vias"
         via_count = len(re.findall(r"\(via\n", content))
-        assert via_count == 5  # 1 signal + 4 return
+        assert via_count == 5, f"Expected 5 vias (1 signal + 4 return), got {via_count}"
 
         # 6. Antipads (zones on internal layers)
         assert "(zone" in content
@@ -867,11 +872,13 @@ class TestReturnViasNetAssignment:
     there are no ground plane fills to provide copper connectivity.
     """
 
-    def test_return_vias_on_net_zero(self, f1_spec_with_antipads: CouponSpec) -> None:
-        """Return vias must be on net 0 (unconnected) for M1.
+    def test_return_vias_on_gnd_net(self, f1_spec_with_antipads: CouponSpec) -> None:
+        """Return vias must be on GND net (net 2) with proper connectivity.
 
-        Regression test: return vias on GND net caused 'unconnected_items'
-        DRC errors because there are no ground planes connecting them.
+        Return vias are connected to GND (net 2) via ground ring traces
+        that form a ring connecting all return vias on F.Cu and B.Cu layers.
+        This ensures proper DRC compliance with no via_dangling or
+        unconnected_items violations.
         """
         resolved = resolve(f1_spec_with_antipads)
         writer = BoardWriter(f1_spec_with_antipads, resolved)
@@ -881,8 +888,8 @@ class TestReturnViasNetAssignment:
         vias = [e for e in board if isinstance(e, list) and e[0] == "via"]
         assert len(vias) >= 2, "F1 board should have signal + return vias"
 
-        # Count how many vias are on net 0 (return vias) vs net 1 (signal via)
-        net_0_count = 0
+        # Count how many vias are on net 2 (GND/return vias) vs net 1 (signal via)
+        net_2_count = 0
         net_1_count = 0
 
         for via in vias:
@@ -890,17 +897,17 @@ class TestReturnViasNetAssignment:
             assert len(net_elems) == 1, "Each via should have exactly one net element"
             net_id = net_elems[0][1]
 
-            if net_id == 0:
-                net_0_count += 1
+            if net_id == 2:
+                net_2_count += 1
             elif net_id == 1:
                 net_1_count += 1
 
-        # Should have exactly 1 signal via on net 1 and all others on net 0
+        # Should have exactly 1 signal via on net 1 and all others on net 2 (GND)
         assert net_1_count == 1, f"Should have exactly 1 signal via on net 1, got {net_1_count}"
-        assert net_0_count >= 1, (
-            f"Return vias should be on net 0 (unconnected), "
-            f"but found {net_0_count} vias on net 0. "
-            f"Return vias must be on net 0 to avoid 'unconnected_items' DRC errors."
+        assert net_2_count >= 1, (
+            f"Return vias should be on net 2 (GND), "
+            f"but found {net_2_count} vias on net 2. "
+            f"Return vias are connected via ground ring traces."
         )
 
     def test_signal_via_on_signal_net(self, f1_spec_with_antipads: CouponSpec) -> None:
