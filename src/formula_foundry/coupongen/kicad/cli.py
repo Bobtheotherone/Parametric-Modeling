@@ -25,6 +25,15 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Iterator, Literal
 
+
+def _get_host_uid_gid() -> tuple[int, int]:
+    """Get the current host user's UID and GID.
+
+    Returns:
+        Tuple of (uid, gid).
+    """
+    return os.getuid(), os.getgid()
+
 KicadCliMode = Literal["local", "docker"]
 
 # Default timeout for kicad-cli operations (5 minutes)
@@ -385,14 +394,30 @@ class KicadCliRunner:
             ) from e
 
     def build_command(self, args: Iterable[str], *, workdir: Path) -> list[str]:
+        """Build the command to run kicad-cli.
+
+        For docker mode, includes --user flag to run as host UID:GID,
+        which is essential for bind-mounted directories to be writable.
+        Without this, the container runs as uid 1000 (kicad) which cannot
+        write to directories owned by different UIDs (e.g., uid 1001 on
+        GitHub Actions runners).
+        """
         if self.mode == "local":
             return [self.kicad_bin, *args]
         if not self.docker_image:
             raise ValueError("docker_image is required for docker mode")
+
+        # Get host UID/GID for container user mapping
+        uid, gid = _get_host_uid_gid()
+
         return [
             "docker",
             "run",
             "--rm",
+            "--user",
+            f"{uid}:{gid}",
+            "-e",
+            "HOME=/tmp",
             "-v",
             f"{workdir.resolve()}:/workspace",
             "-w",
@@ -418,6 +443,7 @@ class KicadCliRunner:
             return ""
 
         workdir_abs = workdir.resolve()
+        uid, gid = _get_host_uid_gid()
         diagnostics: list[str] = [
             "\n" + "=" * 60,
             "DEBUG DIAGNOSTICS (returncode 3: Failed to load board)",
@@ -442,6 +468,10 @@ class KicadCliRunner:
                     "docker",
                     "run",
                     "--rm",
+                    "--user",
+                    f"{uid}:{gid}",
+                    "-e",
+                    "HOME=/tmp",
                     "-v",
                     f"{workdir_abs}:/workspace",
                     "-w",

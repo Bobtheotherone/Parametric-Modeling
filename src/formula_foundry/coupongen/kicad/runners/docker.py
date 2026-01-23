@@ -15,6 +15,7 @@ See Section 13.1.2 of the design document.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -24,6 +25,15 @@ from .protocol import IKicadRunner, KicadRunResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+
+def _get_host_uid_gid() -> tuple[int, int]:
+    """Get the current host user's UID and GID.
+
+    Returns:
+        Tuple of (uid, gid).
+    """
+    return os.getuid(), os.getgid()
 
 # Default timeout for Docker kicad-cli operations (5 minutes)
 DEFAULT_DOCKER_TIMEOUT_SEC: float = 300.0
@@ -264,21 +274,38 @@ class DockerKicadRunner(IKicadRunner):
 
         Returns:
             Full Docker command as a list of strings.
+
+        Note:
+            This command includes --user to run as the host user's UID:GID,
+            which is essential for bind-mounted directories to be writable.
+            Without this, the container runs as uid 1000 (kicad) which cannot
+            write to directories owned by different UIDs (e.g., uid 1001 on
+            GitHub Actions runners).
         """
         # Resolve to absolute path for volume mounting
         cwd_abs = cwd.resolve()
+
+        # Get host UID/GID for container user mapping
+        # This ensures the container can write to bind-mounted directories
+        uid, gid = _get_host_uid_gid()
 
         cmd = [
             "docker",
             "run",
             "--rm",
+            "--user",
+            f"{uid}:{gid}",
             "-v",
             f"{cwd_abs}:/workspace",
             "-w",
             "/workspace",
         ]
 
-        # Add environment variables if provided
+        # Set HOME to /tmp since the numeric UID may not have a passwd entry
+        # in the container. KiCad needs a writable home for config files.
+        cmd.extend(["-e", "HOME=/tmp"])
+
+        # Add additional environment variables if provided
         if env:
             for key, value in env.items():
                 cmd.extend(["-e", f"{key}={value}"])
@@ -306,12 +333,17 @@ class DockerKicadRunner(IKicadRunner):
             DockerMountError: If mount verification fails.
         """
         cwd_abs = cwd.resolve()
+        uid, gid = _get_host_uid_gid()
 
         # Run a quick ls to check if mount is visible
         check_cmd = [
             "docker",
             "run",
             "--rm",
+            "--user",
+            f"{uid}:{gid}",
+            "-e",
+            "HOME=/tmp",
             "-v",
             f"{cwd_abs}:/workspace",
             "-w",
@@ -344,6 +376,10 @@ class DockerKicadRunner(IKicadRunner):
                     "docker",
                     "run",
                     "--rm",
+                    "--user",
+                    f"{uid}:{gid}",
+                    "-e",
+                    "HOME=/tmp",
                     "-v",
                     f"{cwd_abs}:/workspace",
                     "-w",
@@ -446,6 +482,7 @@ class DockerKicadRunner(IKicadRunner):
             Formatted diagnostic output string.
         """
         cwd_abs = cwd.resolve()
+        uid, gid = _get_host_uid_gid()
         diagnostics: list[str] = [
             "\n" + "=" * 60,
             "DEBUG DIAGNOSTICS (returncode 3: Failed to load board)",
@@ -470,6 +507,10 @@ class DockerKicadRunner(IKicadRunner):
                     "docker",
                     "run",
                     "--rm",
+                    "--user",
+                    f"{uid}:{gid}",
+                    "-e",
+                    "HOME=/tmp",
                     "-v",
                     f"{cwd_abs}:/workspace",
                     "-w",
