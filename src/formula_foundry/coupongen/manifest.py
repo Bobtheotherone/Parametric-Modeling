@@ -108,7 +108,7 @@ def build_manifest(
     failed_constraints = [result.constraint_id for result in proof.constraints if not result.passed]
     drc_summary = parse_drc_summary(drc_report_path)
     drc_canonical_hash = canonicalize_drc_report(drc_report_path)
-    return {
+    manifest = {
         "schema_version": spec.schema_version,
         "coupon_family": spec.coupon_family,
         "design_hash": design_hash,
@@ -142,6 +142,9 @@ def build_manifest(
             "timestamp_utc": timestamp,
         },
     }
+    if resolved.spec_consumption is not None:
+        manifest["spec_consumption"] = resolved.spec_consumption.to_dict()
+    return manifest
 
 
 def parse_drc_summary(drc_report_path: Path) -> dict[str, int]:

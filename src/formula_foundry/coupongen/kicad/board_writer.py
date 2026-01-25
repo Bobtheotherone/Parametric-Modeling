@@ -18,6 +18,7 @@ Satisfies REQ-M1-007, REQ-M1-010, REQ-M1-012, REQ-M1-013 and CP-2.6 (ECO-M1-ALIG
 from __future__ import annotations
 
 import base64
+import copy
 import math
 import uuid
 from pathlib import Path
@@ -26,11 +27,13 @@ from typing import TYPE_CHECKING
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
 from ..constraints.core import resolve_fab_limits
 from ..families import FAMILY_F1
+from ..geom.footprint_meta import load_footprint_meta
 from ..geom.layout import LayoutPlan
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
 from .annotations import build_annotations_from_spec
+from .footprints import load_footprint_module
 from .sexpr import SExprList, nm_to_mm
 
 
@@ -50,7 +53,7 @@ def _coupon_id_from_design_hash(design_hash: str) -> str:
     return encoded[:12]
 
 if TYPE_CHECKING:
-    pass
+    from ..geom.footprint_meta import FootprintMeta
 
 # UUIDv5 namespace for coupongen deterministic IDs
 _UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "coupongen")
@@ -99,6 +102,22 @@ SPEC_TO_KICAD_LAYER: dict[str, str] = {
     "B.Cu": "B.Cu",
 }
 
+_LAYER_FLIP_MAP: dict[str, str] = {
+    "F.Cu": "B.Cu",
+    "B.Cu": "F.Cu",
+    "F.Paste": "B.Paste",
+    "B.Paste": "F.Paste",
+    "F.Mask": "B.Mask",
+    "B.Mask": "F.Mask",
+    "F.SilkS": "B.SilkS",
+    "B.SilkS": "F.SilkS",
+    "F.CrtYd": "B.CrtYd",
+    "B.CrtYd": "F.CrtYd",
+    "F.Fab": "B.Fab",
+    "B.Fab": "F.Fab",
+    "F.Adhes": "B.Adhes",
+    "B.Adhes": "F.Adhes",
+}
 
 def map_layer_to_kicad(spec_layer: str) -> str:
     """Map a spec layer name to a KiCad layer name.
@@ -435,100 +454,154 @@ class BoardWriter:
         ]
 
     def _build_footprints(self) -> list[SExprList]:
-        """Build footprint instances for connectors with inline pad definitions.
-
-        Uses LayoutPlan port positions as the single source of truth for
-        connector placement (CP-2.6). The footprint reference position and
-        rotation are read from the LayoutPlan's left_port and right_port.
-
-        Footprints include inline pad definitions so that:
-        1. No external footprint library is required
-        2. Tracks can properly connect to the signal pad
-        3. DRC does not report dangling tracks or missing library errors
-
-        The signal pad is positioned at the signal_pad_x_nm, signal_pad_y_nm
-        coordinates from the LayoutPlan, converted to footprint-local coordinates.
-
-        The pad layer is determined from the connecting segment's layer, which
-        ensures proper connectivity for via transition coupons where left and
-        right traces may be on different layers.
-        """
+        """Build footprint instances for connectors using vendored .kicad_mod files."""
         footprints: list[SExprList] = []
         lp = self._layout_plan
 
-        # Get trace width from spec for pad sizing
-        trace_width_nm = int(self.spec.transmission_line.w_nm)
-
         # Determine the layer for each side based on connecting segments
-        # For F0: both segments on same layer
-        # For F1: left segment on entry layer, right segment on exit layer
-        segment_layers_by_side = {}
+        segment_layers_by_side: dict[str, str] = {}
         for seg in lp.segments:
             if seg.label == "left":
                 segment_layers_by_side["left"] = seg.layer
             elif seg.label == "right":
                 segment_layers_by_side["right"] = seg.layer
+            elif seg.label == "through":
+                segment_layers_by_side["left"] = seg.layer
+                segment_layers_by_side["right"] = seg.layer
 
-        # Map side to port plan
         port_plans = {
             "left": lp.left_port,
             "right": lp.right_port,
         }
 
+        footprint_cache: dict[str, SExprList] = {}
+
         for side, port in port_plans.items():
-            uuid_value = self._next_uuid(f"connector.{side}")
-            pad_uuid = self._next_uuid(f"connector.{side}.pad1")
+            footprint = self._load_footprint_template(port.footprint, footprint_cache)
+            self._set_footprint_name(footprint, port.footprint)
+            self._set_footprint_reference(footprint, f"J_{side.upper()}")
 
-            # Use port reference position from LayoutPlan
-            x_nm = port.x_ref_nm
-            y_nm = port.y_ref_nm
-            # Convert rotation from millidegrees to degrees for KiCad
             rotation_deg = port.rotation_mdeg // 1000
+            self._set_footprint_at(footprint, port.x_ref_nm, port.y_ref_nm, rotation_deg)
 
-            # Determine layer from connecting segment
-            pad_layer = segment_layers_by_side.get(side, "F.Cu")
+            target_layer = segment_layers_by_side.get(side, "F.Cu")
+            if target_layer == "B.Cu":
+                self._flip_footprint_layers(footprint)
+                self._set_top_level_entry(footprint, ["layer", "B.Cu"], key="layer")
+            else:
+                self._set_top_level_entry(footprint, ["layer", "F.Cu"], key="layer")
 
-            # Calculate local pad position relative to footprint reference
-            # For rotated footprints, we need to transform the signal pad position
-            local_pad_x_nm = port.signal_pad_x_nm - x_nm
-            local_pad_y_nm = port.signal_pad_y_nm - y_nm
-
-            # If rotated 180 degrees, negate the local offset
-            if rotation_deg == 180:
-                local_pad_x_nm = -local_pad_x_nm
-                local_pad_y_nm = -local_pad_y_nm
-
-            # Pad size: use trace width for both dimensions (square pad)
-            # This ensures the track connects cleanly
-            pad_size_nm = trace_width_nm
-
-            # Build signal pad element
-            # Use short library-less footprint name to avoid library lookup issues
-            fp_name = port.footprint.split(":")[-1] if ":" in port.footprint else port.footprint
-
-            pad: SExprList = [
-                "pad",
-                "1",
-                "smd",
-                "rect",
-                ["at", nm_to_mm(local_pad_x_nm), nm_to_mm(local_pad_y_nm)],
-                ["size", nm_to_mm(pad_size_nm), nm_to_mm(pad_size_nm)],
-                ["layers", pad_layer],
-                ["net", 1, "SIG"],
-                ["uuid", pad_uuid],
-            ]
-
-            fp: SExprList = [
-                "footprint",
-                fp_name,
-                ["layer", pad_layer],
-                ["at", nm_to_mm(x_nm), nm_to_mm(y_nm), rotation_deg],
-                ["tstamp", uuid_value],
-                pad,
-            ]
-            footprints.append(fp)
+            meta = load_footprint_meta(port.footprint)
+            self._apply_pad_nets(footprint, meta)
+            self._remap_footprint_uuids(footprint, f"connector.{side}.footprint")
+            self._set_top_level_entry(
+                footprint,
+                ["tstamp", self._next_uuid(f"connector.{side}")],
+                key="tstamp",
+            )
+            footprints.append(footprint)
 
         return footprints
+
+    def _load_footprint_template(
+        self,
+        footprint_path: str,
+        cache: dict[str, SExprList],
+    ) -> SExprList:
+        if footprint_path not in cache:
+            cache[footprint_path] = load_footprint_module(footprint_path)
+        return copy.deepcopy(cache[footprint_path])
+
+    @staticmethod
+    def _set_footprint_name(footprint: SExprList, footprint_path: str) -> None:
+        if len(footprint) < 2:
+            footprint.insert(1, footprint_path)
+        else:
+            footprint[1] = footprint_path
+
+    @staticmethod
+    def _set_top_level_entry(footprint: SExprList, entry: SExprList, *, key: str) -> None:
+        for idx in range(2, len(footprint)):
+            item = footprint[idx]
+            if isinstance(item, list) and item and item[0] == key:
+                footprint[idx] = entry
+                return
+        insert_idx = 2
+        for idx in range(2, len(footprint)):
+            item = footprint[idx]
+            if isinstance(item, list) and item and item[0] == "layer":
+                insert_idx = idx + 1
+                break
+        footprint.insert(insert_idx, entry)
+
+    def _set_footprint_at(self, footprint: SExprList, x_nm: int, y_nm: int, rotation_deg: int) -> None:
+        self._set_top_level_entry(
+            footprint,
+            ["at", nm_to_mm(x_nm), nm_to_mm(y_nm), rotation_deg],
+            key="at",
+        )
+
+    @staticmethod
+    def _set_footprint_reference(footprint: SExprList, reference: str) -> None:
+        for item in footprint:
+            if isinstance(item, list) and item and item[0] == "fp_text" and len(item) >= 3:
+                if item[1] == "reference":
+                    item[2] = reference
+                    return
+
+    @staticmethod
+    def _set_pad_net(pad: SExprList, net_id: int, net_name: str) -> None:
+        net_entry: SExprList = ["net", net_id, net_name]
+        for idx, entry in enumerate(pad):
+            if isinstance(entry, list) and entry and entry[0] == "net":
+                pad[idx] = net_entry
+                return
+        pad.append(net_entry)
+
+    def _apply_pad_nets(self, footprint: SExprList, meta: FootprintMeta) -> None:
+        pad_map: dict[str, tuple[int, str]] = {str(meta.signal_pad.pad_number): (1, "SIG")}
+        for ground in meta.ground_pads:
+            pad_map[str(ground.pad_number)] = (2, "GND")
+        for item in footprint:
+            if not (isinstance(item, list) and item and item[0] == "pad"):
+                continue
+            if len(item) < 2:
+                continue
+            pad_number = str(item[1])
+            if pad_number not in pad_map:
+                continue
+            net_id, net_name = pad_map[pad_number]
+            self._set_pad_net(item, net_id, net_name)
+
+    def _remap_footprint_uuids(self, footprint: SExprList, base_path: str) -> None:
+        index = 0
+
+        def walk(node: sexpr.SExprNode) -> None:
+            nonlocal index
+            if isinstance(node, list):
+                if node and node[0] in ("uuid", "tstamp") and len(node) >= 2:
+                    node[1] = self._indexed_uuid(base_path, index)
+                    index += 1
+                    return
+                for child in node:
+                    walk(child)
+
+        for item in footprint[2:]:
+            walk(item)
+
+    def _flip_footprint_layers(self, footprint: SExprList) -> None:
+        def walk(node: sexpr.SExprNode) -> None:
+            if isinstance(node, list) and node:
+                if node[0] == "layer" and len(node) >= 2 and isinstance(node[1], str):
+                    node[1] = _LAYER_FLIP_MAP.get(node[1], node[1])
+                elif node[0] == "layers":
+                    for idx in range(1, len(node)):
+                        if isinstance(node[idx], str):
+                            node[idx] = _LAYER_FLIP_MAP.get(node[idx], node[idx])
+                for child in node[1:]:
+                    walk(child)
+
+        walk(footprint)
 
     def _build_tracks(self) -> list[SExprList]:
         """Build track segments for transmission lines.

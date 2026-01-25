@@ -25,6 +25,17 @@ class ParallelSettings:
 
 
 @dataclasses.dataclass(frozen=True)
+class AgentCapabilities:
+    """Capabilities for an agent."""
+
+    supports_tools: bool = True
+    supports_fs_read: bool = True
+    supports_fs_write: bool = True
+    supports_bash: bool = True
+    supports_write_access: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
 class RunConfig:
     """Configuration for an orchestration run."""
 
@@ -40,6 +51,7 @@ class RunConfig:
     agent_models: dict[str, str]
     quota_error_patterns: dict[str, list[str]]
     supports_write_access: dict[str, bool]
+    agent_capabilities: dict[str, AgentCapabilities]  # New: full capabilities per agent
     parallel: ParallelSettings
 
 

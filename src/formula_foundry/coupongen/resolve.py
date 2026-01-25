@@ -5,6 +5,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from formula_foundry.resolve.consumption import (
+    build_spec_consumption,
+    enforce_spec_consumption,
+)
+from formula_foundry.spec.consumption import SpecConsumption
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .families import FAMILY_F1
@@ -41,6 +46,7 @@ class ResolvedDesign(BaseModel):
     # Derived length_right_nm for F1 coupons (ensures continuity per CP-2.2)
     # This IS serialized and included in the design hash
     length_right_nm: int | None = Field(default=None)
+    spec_consumption: SpecConsumption | None = Field(default=None, exclude=True)
 
     # LayoutPlan is the single source of truth for geometry (CP-2.1)
     # Stored as a private attribute, excluded from serialization/hashing
@@ -63,7 +69,7 @@ class ResolvedDesign(BaseModel):
         return new_obj
 
 
-def resolve(spec: CouponSpec) -> ResolvedDesign:
+def resolve(spec: CouponSpec, *, strict: bool = False) -> ResolvedDesign:
     """Resolve a CouponSpec to a ResolvedDesign with computed geometry.
 
     This function resolves all parameters from the spec and computes the
@@ -80,6 +86,7 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
 
     Args:
         spec: The coupon specification with all geometry parameters.
+        strict: If True, raise on any unused provided or unconsumed expected paths.
 
     Returns:
         ResolvedDesign with all parameters resolved and LayoutPlan computed.
@@ -117,6 +124,10 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
     derived_features = _build_derived_features(spec, layout_plan, length_right_nm)
     dimensionless_groups = _build_dimensionless_groups(spec)
 
+    spec_consumption = build_spec_consumption(spec)
+    if strict:
+        enforce_spec_consumption(spec_consumption)
+
     # Create the final ResolvedDesign with layout_plan attached
     resolved = ResolvedDesign(
         schema_version=spec.schema_version,
@@ -125,6 +136,7 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
         derived_features=derived_features,
         dimensionless_groups=dimensionless_groups,
         length_right_nm=length_right_nm,
+        spec_consumption=spec_consumption,
     )
 
     # Attach the layout_plan (excluded from serialization/hashing)

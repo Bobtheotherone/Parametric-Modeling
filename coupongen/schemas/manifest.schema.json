@@ -13,6 +13,7 @@
     "resolved_design",
     "derived_features",
     "dimensionless_groups",
+    "spec_consumption",
     "fab_profile",
     "stackup",
     "toolchain",
@@ -61,6 +62,9 @@
       },
       "description": "Dimensionless group calculations"
     },
+    "spec_consumption": {
+      "$ref": "#/$defs/SpecConsumption"
+    },
     "fab_profile": {
       "$ref": "#/$defs/FabProfile"
     },
@@ -92,6 +96,49 @@
     }
   },
   "$defs": {
+    "SpecConsumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumed_paths",
+        "expected_paths",
+        "provided_paths",
+        "unused_provided_paths",
+        "unconsumed_expected_paths"
+      ],
+      "properties": {
+        "consumed_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provided_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unused_provided_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unconsumed_expected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "FabProfile": {
       "type": "object",
       "additionalProperties": false,

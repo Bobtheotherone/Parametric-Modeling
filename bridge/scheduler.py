@@ -165,6 +165,18 @@ class TwoLaneScheduler:
                 if dep_id in self._dependents_cache:
                     self._dependents_cache[dep_id].add(t.id)
 
+    def update_tasks(self, tasks: list[SchedulableTask]) -> None:
+        """Update the task list with new tasks (e.g., from backfill generator).
+
+        This is used to add new tasks dynamically during execution.
+        """
+        self.tasks = tasks
+        self.by_id = {t.id: t for t in tasks}
+        self.metrics.total_tasks = len(tasks)
+        # Rebuild dependency graph and clear priority cache
+        self._priority_cache.clear()
+        self._build_dependency_graph()
+
     def _compute_priority(self, task: SchedulableTask) -> float:
         """Compute priority score for a task.
 
@@ -334,14 +346,31 @@ class BackfillGenerator:
     - Unit test additions
     - Type hint additions
     - Schema validation fixes
+
+    IMPORTANT: Backfill tasks are scope-constrained to prevent merge conflicts.
+    They may only modify files in: tests/, docs/, bridge/, .github/
     """
 
+    # Allowed directories for backfill tasks
+    ALLOWED_DIRS = ["tests/", "docs/", "bridge/", ".github/"]
+
+    # Task types with scope-aware descriptions
     TASK_TYPES = [
-        ("lint", "Fix linting issues", "Run ruff check and fix any issues"),
-        ("test", "Add unit tests", "Add missing unit tests for uncovered code"),
-        ("type_hints", "Add type hints", "Add type annotations to untyped functions"),
-        ("docs", "Improve documentation", "Add or improve docstrings"),
-        ("schema_lint", "Fix schema issues", "Validate and fix JSON schema issues"),
+        ("lint", "Fix linting issues in tests/bridge",
+         "Run ruff check on tests/ and bridge/ directories and fix any issues. "
+         "MAX 3 files changed. Do NOT touch src/ or any files outside tests/, bridge/, docs/."),
+        ("test", "Add unit tests",
+         "Add missing unit tests for uncovered code in tests/ directory. "
+         "MAX 2 new test files. Do NOT touch src/ or any non-test files."),
+        ("type_hints", "Add type hints to bridge/",
+         "Add type annotations to untyped functions in bridge/ directory only. "
+         "MAX 3 files changed. Do NOT touch src/ or tests/."),
+        ("docs", "Improve documentation",
+         "Add or improve docstrings in bridge/ or docs/ directories. "
+         "MAX 3 files changed. Do NOT touch src/."),
+        ("schema_lint", "Fix schema issues",
+         "Validate and fix JSON schema issues in bridge/ or tests/ directories. "
+         "MAX 2 files changed. Do NOT touch src/."),
     ]
 
     def __init__(self, project_root: str, min_queue_depth: int = 10):

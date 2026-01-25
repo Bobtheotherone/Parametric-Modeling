@@ -57,6 +57,45 @@ ALWAYS_ALLOWED: tuple[str, ...] = (
     "bridge/**",
 )
 
+# =============================================================================
+# Backfill task scope configuration
+# Backfill tasks (FILLER-*) are limited to safe directories to prevent conflicts
+# =============================================================================
+
+BACKFILL_ALLOWLIST: tuple[str, ...] = (
+    "tests/**",
+    "docs/**",
+    "bridge/**",
+    ".github/**",
+)
+
+BACKFILL_DENYLIST: tuple[str, ...] = (
+    "src/**",
+    "coupongen/**",
+    "tools/**",
+    "*.toml",
+    "*.cfg",
+    # Hot integration files that shouldn't be touched by backfill
+    "**/api.py",
+    "**/board_writer.py",
+    "**/cli_main.py",
+    "**/pipeline.py",
+)
+
+
+def is_backfill_task(task_id: str) -> bool:
+    """Check if a task ID indicates a backfill (filler) task."""
+    return task_id.startswith("FILLER-")
+
+
+def create_backfill_scope_guard(runs_dir: Path | None = None) -> "ScopeGuard":
+    """Create a scope guard for backfill tasks with restricted allowlist."""
+    return ScopeGuard(
+        allowlist=BACKFILL_ALLOWLIST,
+        denylist=BACKFILL_DENYLIST,
+        runs_dir=runs_dir,
+    )
+
 
 @dataclass
 class ScopeViolation:
@@ -700,6 +739,11 @@ class PatchIntegrator:
 
     With scope guard enabled, patches that touch out-of-scope files are
     rejected with a SCOPE_REJECTED status, and artifacts are written for audit.
+
+    When merge conflicts occur, the integrator will:
+    1. Try basic rebase-based conflict resolution
+    2. Try agent-based intelligent conflict resolution (up to N attempts)
+    3. Only fall back to manual resolution if all automated approaches fail
     """
 
     def __init__(
@@ -707,10 +751,12 @@ class PatchIntegrator:
         project_root: Path,
         runs_dir: Path,
         scope_guard: ScopeGuard | None = None,
+        max_merge_resolution_attempts: int = 3,
     ):
         self.project_root = project_root
         self.runs_dir = runs_dir
         self.scope_guard = scope_guard
+        self.max_merge_resolution_attempts = max_merge_resolution_attempts
         self._integration_lock = None  # Set externally if threading is used
 
     def set_lock(self, lock) -> None:
@@ -727,6 +773,8 @@ class PatchIntegrator:
         task_dir: Path,
         task_branch: str,
         agent_name: str = "unknown",
+        task_context: str = "",
+        milestone_id: str = "M0",
     ) -> tuple[bool, str, str | None]:
         """Integrate a task's changes into the main branch.
 
@@ -735,6 +783,8 @@ class PatchIntegrator:
             task_dir: Directory containing the patch artifacts
             task_branch: The branch name (for fallback if needed)
             agent_name: Name of the agent that created the patch
+            task_context: Context about the task (for merge resolver)
+            milestone_id: Current milestone ID
 
         Returns:
             Tuple of (success, message, commit_sha)
@@ -742,9 +792,9 @@ class PatchIntegrator:
         """
         if self._integration_lock:
             with self._integration_lock:
-                return self._do_integrate(task_id, task_dir, task_branch, agent_name)
+                return self._do_integrate(task_id, task_dir, task_branch, agent_name, task_context, milestone_id)
         else:
-            return self._do_integrate(task_id, task_dir, task_branch, agent_name)
+            return self._do_integrate(task_id, task_dir, task_branch, agent_name, task_context, milestone_id)
 
     def _do_integrate(
         self,
@@ -752,15 +802,29 @@ class PatchIntegrator:
         task_dir: Path,
         task_branch: str,
         agent_name: str = "unknown",
+        task_context: str = "",
+        milestone_id: str = "M0",
     ) -> tuple[bool, str, str | None]:
         """Internal integration implementation."""
+        # Determine which scope guard to use
+        # Backfill tasks (FILLER-*) get a restricted scope to prevent conflicts
+        effective_scope_guard = self.scope_guard
+        if is_backfill_task(task_id):
+            backfill_guard = create_backfill_scope_guard(runs_dir=self.runs_dir)
+            # Use backfill guard if no custom scope guard is set, or combine with it
+            if effective_scope_guard is None:
+                effective_scope_guard = backfill_guard
+            else:
+                # For backfill tasks, the backfill restrictions take precedence
+                effective_scope_guard = backfill_guard
+
         # First, try patch-based integration (with scope guard if enabled)
         success, message, commit_sha = apply_patch_artifact(
             self.project_root,
             task_dir,
             task_id,
             task_branch,
-            scope_guard=self.scope_guard,
+            scope_guard=effective_scope_guard,
             runs_dir=self.runs_dir,
             agent_name=agent_name,
         )
@@ -775,6 +839,7 @@ class PatchIntegrator:
         # If patch failed, try conflict resolution
         patch_path = task_dir / "changes.patch"
         if patch_path.exists():
+            # Step 1: Try basic rebase-based conflict resolution
             resolved, resolve_msg = attempt_conflict_resolution(
                 self.project_root,
                 task_id,
@@ -792,5 +857,38 @@ class PatchIntegrator:
                     agent_name=agent_name,
                 )
 
-        # Mark as needing manual resolution
+            # Step 2: Try agent-based intelligent conflict resolution
+            print(f"[patch_integration] {task_id}: Basic resolution failed, trying agent-based merge resolver")
+            try:
+                from bridge.merge_resolver import attempt_agent_merge_resolution
+
+                merge_result = attempt_agent_merge_resolution(
+                    project_root=self.project_root,
+                    runs_dir=self.runs_dir,
+                    task_id=task_id,
+                    task_context=task_context,
+                    milestone_id=milestone_id,
+                    max_attempts=self.max_merge_resolution_attempts,
+                )
+
+                if merge_result.success:
+                    print(f"[patch_integration] {task_id}: Agent merge resolver succeeded after {merge_result.attempt} attempt(s)")
+                    # Retry integration after agent resolution
+                    return apply_patch_artifact(
+                        self.project_root,
+                        task_dir,
+                        task_id,
+                        task_branch,
+                        scope_guard=self.scope_guard,
+                        runs_dir=self.runs_dir,
+                        agent_name=agent_name,
+                    )
+                else:
+                    print(f"[patch_integration] {task_id}: Agent merge resolver failed: {merge_result.error}")
+                    print(f"[patch_integration] {task_id}: Unresolved files: {merge_result.unresolved_files}")
+
+            except Exception as e:
+                print(f"[patch_integration] {task_id}: Agent merge resolver raised exception: {e}")
+
+        # All automated resolution attempts failed - mark as needing manual resolution
         return False, f"needs_manual_resolution: {message}", None
