@@ -6,7 +6,7 @@ This module provides the public API for coupon generation, including:
 - generate_kicad: Generate KiCad project files
 - run_drc: Run KiCad DRC on a board file
 - export_fab: Export gerbers and drill files
-- build_coupon: Full build pipeline (validate/repair -> generate -> DRC -> export)
+- build_coupon: Full build pipeline (validate/repair -> resolve -> generate -> DRC -> export -> manifest)
 
 CP-3.5: Pipeline Integration
 - All validation uses ConstraintEngine as the single unified path
@@ -465,7 +465,7 @@ def _prepare_pipeline_validation(
         engine = create_constraint_engine(fab_limits=fab_limits)
         engine_result = engine.validate_or_repair(spec, mode=mode)
         return _PipelineValidation(
-            spec=spec,
+            spec=engine_result.spec,
             resolved=engine_result.resolved,
             proof=_legacy_proof_from_engine(engine_result),
             write_outputs=lambda out_dir: _write_engine_validation_outputs(engine_result, out_dir),
@@ -479,7 +479,7 @@ def run_build_pipeline(
     *,
     out_root: Path,
     kicad_mode: KicadCliMode = "local",
-    validation_mode: ValidationMode = "legacy",
+    validation_mode: ValidationMode = "engine",
     constraint_mode: ConstraintMode | None = None,
     runner: KicadRunnerProtocol | None = None,
     backend: BackendA | None = None,
@@ -568,6 +568,7 @@ def build_coupon(
     *,
     out_root: Path,
     mode: KicadCliMode = "local",
+    constraint_mode: ConstraintMode | None = None,
     runner: KicadRunnerProtocol | None = None,
     backend: BackendA | None = None,
     kicad_cli_version: str | None = None,
@@ -575,8 +576,8 @@ def build_coupon(
 ) -> BuildResult:
     """Build a coupon from a specification.
 
-    For new code, prefer build_coupon_with_engine() which uses the unified
-    ConstraintEngine with full tiered validation (Tier 0-3).
+    This is the canonical build pipeline using ConstraintEngine validation.
+    For compatibility, build_coupon_with_engine() is an alias for this entrypoint.
 
     For docker mode, this function captures complete toolchain provenance
     by running kicad-cli --version inside the container (per CP-5.3).
@@ -585,6 +586,8 @@ def build_coupon(
         spec: The coupon specification.
         out_root: Root output directory.
         mode: KiCad CLI mode ("local" or "docker").
+        constraint_mode: Override constraint mode ("REJECT" or "REPAIR").
+                        If None, uses spec.constraints.mode.
         runner: Custom KiCad runner (for testing).
         backend: Custom KiCad backend (for testing).
         kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
@@ -594,13 +597,16 @@ def build_coupon(
         BuildResult with output paths and cache status.
 
     Raises:
+        ConstraintViolationError: If constraint_mode is REJECT and constraints fail.
+        RuntimeError: If DRC fails and spec.constraints.drc.must_pass is True.
         ToolchainProvenanceError: If docker mode and provenance cannot be captured.
     """
     return run_build_pipeline(
         spec,
         out_root=out_root,
         kicad_mode=mode,
-        validation_mode="legacy",
+        validation_mode="engine",
+        constraint_mode=constraint_mode,
         runner=runner,
         backend=backend,
         kicad_cli_version=kicad_cli_version,
@@ -619,12 +625,10 @@ def build_coupon_with_engine(
     kicad_cli_version: str | None = None,
     lock_file: Path | None = None,
 ) -> BuildResult:
-    """Build coupon using ConstraintEngine (CP-3.5 unified path).
+    """Build coupon using the canonical ConstraintEngine pipeline.
 
-    This is the preferred build method that uses the unified ConstraintEngine
-    with full tiered validation (Tier 0-3) and connectivity oracle integration.
-
-    Build flow: validate/repair (Tier0-3) -> generate -> DRC -> export
+    This is a compatibility alias for build_coupon() and preserves the
+    CP-3.5 signature for callers that select the engine pipeline explicitly.
 
     For docker mode, this function captures complete toolchain provenance
     by running kicad-cli --version inside the container (per CP-5.3).
@@ -649,11 +653,10 @@ def build_coupon_with_engine(
         RuntimeError: If DRC fails and spec.constraints.drc.must_pass is True
         ToolchainProvenanceError: If docker mode and provenance cannot be captured
     """
-    return run_build_pipeline(
+    return build_coupon(
         spec,
         out_root=out_root,
-        kicad_mode=kicad_mode,
-        validation_mode="engine",
+        mode=kicad_mode,
         constraint_mode=constraint_mode,
         runner=runner,
         backend=backend,

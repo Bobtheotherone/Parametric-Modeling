@@ -5,7 +5,7 @@ This module provides the command-line interface for coupon generation:
 - generate: Generate KiCad project from spec
 - drc: Run KiCad DRC on a board file
 - export: Export gerbers and drill files
-- build: Full build pipeline (validate/repair -> generate -> DRC -> export)
+- build: Full build pipeline (validate/repair -> resolve -> generate -> DRC -> export -> manifest)
 - batch-filter: Filter batch of normalized design vectors using GPU prefilter
 - build-batch: Build multiple coupons from spec template and u vectors
 
@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--legacy",
         action="store_true",
         default=False,
-        help="Use legacy constraint system instead of ConstraintEngine",
+        help="Deprecated alias for the canonical build pipeline (kept for compatibility)",
     )
     build.add_argument(
         "--constraint-mode",
@@ -270,9 +270,14 @@ def main(argv: list[str] | None = None) -> int:
             spec_payload["toolchain"]["kicad"]["docker_image"] = args.toolchain_image
             spec = CouponSpec.model_validate(spec_payload)
 
-        # CP-3.5: Use ConstraintEngine by default unless --legacy is specified
+        # CP-3.5: Canonical build pipeline uses ConstraintEngine; --legacy is a compatibility alias.
         if args.legacy:
-            result = build_coupon(spec, out_root=args.out, mode=args.mode)
+            result = build_coupon(
+                spec,
+                out_root=args.out,
+                mode=args.mode,
+                constraint_mode=args.constraint_mode,  # type: ignore[arg-type]
+            )
         else:
             try:
                 result = build_coupon_with_engine(
