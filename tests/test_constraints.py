@@ -1095,3 +1095,462 @@ class TestConstraintSystemIntegration:
 
         # The result should be feasible after repair
         assert result.feasibility_rate >= 0.0
+
+
+# ==============================================================================
+# REQ-M1-007: Via Fence Determinism Tests
+# ==============================================================================
+
+
+class TestViaFenceDeterminism:
+    """Tests for via fence determinism (REQ-M1-007).
+
+    When ground_via_fence.enabled=true, the generator MUST place GND via fences
+    deterministically with correct pitch/offset policies, symmetry, and
+    collision/edge-clearance enforcement.
+    """
+
+    def test_fence_constraint_determinism_across_runs(self) -> None:
+        """Fence constraints should produce identical results across multiple runs."""
+        spec = CouponSpec.model_validate(_valid_spec_data())
+        limits = _default_fab_limits()
+
+        # Evaluate constraints multiple times
+        results = []
+        for _ in range(5):
+            proof = evaluate_tiered_constraints(spec, limits)
+            results.append(proof)
+
+        # All proofs should be identical
+        first = results[0]
+        for proof in results[1:]:
+            assert proof.passed == first.passed
+            assert len(proof.constraints) == len(first.constraints)
+            for c1, c2 in zip(first.constraints, proof.constraints, strict=True):
+                assert c1.constraint_id == c2.constraint_id
+                assert c1.value == c2.value
+                assert c1.limit == c2.limit
+                assert c1.margin == c2.margin
+                assert c1.passed == c2.passed
+
+    def test_fence_pitch_constraint_enforced(self) -> None:
+        """Fence pitch constraint (T1_FENCE_PITCH_MIN) should be properly enforced."""
+        data = _valid_spec_data()
+        # Set pitch too small for via spacing
+        data["transmission_line"]["ground_via_fence"]["pitch_nm"] = 400_000  # Too small
+        data["transmission_line"]["ground_via_fence"]["via"]["diameter_nm"] = 600_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+        limits["min_via_to_via_nm"] = 200_000
+
+        # Should fail fence pitch constraint
+        proof = evaluate_tiered_constraints(spec, limits, fail_fast=False)
+
+        # Find fence pitch constraint results
+        pitch_constraints = [
+            c for c in proof.constraints
+            if "FENCE_PITCH" in c.constraint_id
+        ]
+        assert len(pitch_constraints) >= 1
+        # At least one should fail since pitch < diameter + min_via_to_via
+        assert any(not c.passed for c in pitch_constraints)
+
+    def test_fence_offset_constraint_enforced(self) -> None:
+        """Fence offset from gap constraint (T2_FENCE_VIA_GAP_CLEARANCE) should be enforced."""
+        data = _valid_spec_data()
+        # Set offset too small (less than via radius)
+        data["transmission_line"]["ground_via_fence"]["offset_from_gap_nm"] = 100_000
+        data["transmission_line"]["ground_via_fence"]["via"]["diameter_nm"] = 600_000  # radius=300k
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        # Repair mode should fix this
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Check if offset was repaired
+        if "transmission_line.ground_via_fence.offset_from_gap_nm" in repair_result.repair_map:
+            repair = repair_result.repair_map["transmission_line.ground_via_fence.offset_from_gap_nm"]
+            # Repaired offset should be at least via radius
+            assert repair["after"] >= 300_000
+
+    def test_fence_parameters_in_repair_result(self) -> None:
+        """Repair result should include fence parameters in design vector (CP-3.4)."""
+        data = _valid_spec_data()
+        data["transmission_line"]["ground_via_fence"]["pitch_nm"] = 300_000  # Too small
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Original vector should have fence parameters
+        assert repair_result.original_vector is not None
+        fence_params = [
+            p for p in repair_result.original_vector.parameters.keys()
+            if "fence" in p.lower()
+        ]
+        assert len(fence_params) > 0, "Fence parameters should be in design vector"
+
+    def test_fence_enabled_false_skips_constraints(self) -> None:
+        """When fence is disabled, fence-specific constraints should not apply."""
+        data = _valid_spec_data()
+        data["transmission_line"]["ground_via_fence"]["enabled"] = False
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # Should not have any fence-specific constraint failures
+        fence_failures = [
+            c for c in proof.constraints
+            if "FENCE" in c.constraint_id and not c.passed
+        ]
+        assert len(fence_failures) == 0
+
+
+# ==============================================================================
+# REQ-M1-009: Rounded Outline Feasibility Tests
+# ==============================================================================
+
+
+class TestRoundedOutlineFeasibility:
+    """Tests for rounded outline feasibility (REQ-M1-009).
+
+    If corner_radius_nm > 0 is provided, the board outline MUST be generated as a
+    rounded-rectangle with deterministic integer-nm arcs/segments and validated
+    for feasibility.
+    """
+
+    def test_corner_radius_zero_valid(self) -> None:
+        """corner_radius_nm = 0 should be valid (sharp corners)."""
+        data = _valid_spec_data()
+        data["board"]["outline"]["corner_radius_nm"] = 0
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # Corner radius constraints should pass
+        corner_constraints = [
+            c for c in proof.constraints
+            if "CORNER_RADIUS" in c.constraint_id
+        ]
+        assert all(c.passed for c in corner_constraints)
+
+    def test_corner_radius_positive_valid(self) -> None:
+        """Valid positive corner_radius_nm should pass constraints."""
+        data = _valid_spec_data()
+        # Board is 20mm x 80mm, so max corner radius is 10mm
+        data["board"]["outline"]["corner_radius_nm"] = 2_000_000  # 2mm - valid
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # Corner radius constraints should pass
+        corner_constraints = [
+            c for c in proof.constraints
+            if "CORNER_RADIUS" in c.constraint_id
+        ]
+        assert all(c.passed for c in corner_constraints)
+
+    def test_corner_radius_exceeds_max_fails(self) -> None:
+        """corner_radius_nm > half min(width, length) should fail."""
+        data = _valid_spec_data()
+        # Board is 20mm x 80mm, so max corner radius is 10mm
+        data["board"]["outline"]["corner_radius_nm"] = 15_000_000  # 15mm - too large
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # T0_CORNER_RADIUS_MAX should fail
+        max_constraint = next(
+            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"),
+            None
+        )
+        assert max_constraint is not None
+        assert not max_constraint.passed
+        assert max_constraint.margin < 0
+
+    def test_corner_radius_negative_fails(self) -> None:
+        """Negative corner_radius_nm should fail constraints."""
+        data = _valid_spec_data()
+        data["board"]["outline"]["corner_radius_nm"] = -1_000_000  # negative
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # T0_CORNER_RADIUS_MIN should fail
+        min_constraint = next(
+            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MIN"),
+            None
+        )
+        assert min_constraint is not None
+        assert not min_constraint.passed
+
+    def test_corner_radius_repaired_to_feasible(self) -> None:
+        """REPAIR mode should fix infeasible corner radius to valid range."""
+        data = _valid_spec_data()
+        # Board is 20mm x 80mm, max corner = 10mm
+        data["board"]["outline"]["corner_radius_nm"] = 15_000_000  # Too large
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Should have repaired corner radius
+        assert "board.outline.corner_radius_nm" in repair_result.repair_map
+        repair = repair_result.repair_map["board.outline.corner_radius_nm"]
+        # Repaired value should be <= max allowed (10mm)
+        assert repair["after"] <= 10_000_000
+
+    def test_corner_radius_determinism(self) -> None:
+        """Corner radius constraints should be deterministic across evaluations."""
+        data = _valid_spec_data()
+        data["board"]["outline"]["corner_radius_nm"] = 3_000_000  # 3mm
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        # Evaluate multiple times
+        proofs = [evaluate_tiered_constraints(spec, limits) for _ in range(3)]
+
+        # Extract corner constraints
+        corner_results = []
+        for proof in proofs:
+            corner = [c for c in proof.constraints if "CORNER_RADIUS" in c.constraint_id]
+            corner_results.append(corner)
+
+        # All should be identical
+        first = corner_results[0]
+        for result in corner_results[1:]:
+            assert len(result) == len(first)
+            for c1, c2 in zip(first, result, strict=True):
+                assert c1.value == c2.value
+                assert c1.margin == c2.margin
+                assert c1.passed == c2.passed
+
+    def test_corner_radius_at_boundary(self) -> None:
+        """corner_radius_nm exactly at max should be valid."""
+        data = _valid_spec_data()
+        # Board is 20mm x 80mm, max corner = 10mm
+        data["board"]["outline"]["corner_radius_nm"] = 10_000_000  # Exactly max
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        proof = evaluate_tiered_constraints(spec, limits)
+
+        # Should pass (margin = 0)
+        max_constraint = next(
+            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"),
+            None
+        )
+        assert max_constraint is not None
+        assert max_constraint.passed
+        assert max_constraint.margin >= 0
+
+
+# ==============================================================================
+# REQ-M1-011: REPAIR Reproducibility Tests
+# ==============================================================================
+
+
+class TestRepairReproducibility:
+    """Tests for REPAIR mode reproducibility (REQ-M1-011).
+
+    REPAIR mode MUST emit a serialized repair_map plus a deterministic repaired_spec
+    (or deterministic patch set) such that rebuilding from the repaired spec
+    reproduces the same design_hash and artifacts.
+    """
+
+    def test_repair_emits_spec_hashes(self) -> None:
+        """Repair result should include spec hashes for rebuild verification."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # REQ-M1-011: Must have original and repaired spec hashes
+        assert repair_result.original_spec_hash is not None
+        assert repair_result.repaired_spec_hash is not None
+        assert repair_result.repaired_design_hash is not None
+
+        # Hashes should be different (spec was repaired)
+        assert repair_result.original_spec_hash != repair_result.repaired_spec_hash
+
+    def test_repair_deterministic_hash(self) -> None:
+        """Repair should produce deterministic hashes across runs."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        data["transmission_line"]["gap_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        # Run repair multiple times
+        results = [repair_spec_tiered(spec, limits) for _ in range(3)]
+
+        # All should produce identical repaired_spec_hash and repaired_design_hash
+        first = results[0][1]
+        for _, repair_result in results[1:]:
+            assert repair_result.repaired_spec_hash == first.repaired_spec_hash
+            assert repair_result.repaired_design_hash == first.repaired_design_hash
+
+    def test_rebuild_from_repaired_spec_same_hash(self) -> None:
+        """Rebuilding from repaired_spec should produce same design_hash."""
+        from formula_foundry.coupongen.resolve import design_hash, resolve
+
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Resolve the repaired spec and compute its design hash
+        resolved = resolve(repaired_spec)
+        computed_hash = design_hash(resolved)
+
+        # Should match the hash stored in repair_result
+        assert computed_hash == repair_result.repaired_design_hash
+
+    def test_repair_map_json_serialization(self) -> None:
+        """repair_map should be JSON serializable and roundtrip correctly."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Convert to dict and serialize
+        result_dict = repair_result.to_dict()
+        json_str = json.dumps(result_dict)
+        roundtrip = json.loads(json_str)
+
+        # Verify structure preserved
+        assert roundtrip["repair_map"] == result_dict["repair_map"]
+        assert roundtrip["repair_reason"] == result_dict["repair_reason"]
+        assert roundtrip["projection_policy_order"] == result_dict["projection_policy_order"]
+
+    def test_repair_map_write_canonical_format(self) -> None:
+        """write_repair_map should produce canonical JSON format (REQ-M1-011)."""
+        from formula_foundry.coupongen.constraints import write_repair_map
+
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "repair_map.json"
+            write_repair_map(output_path, repair_result)
+
+            # Read and verify structure
+            content = json.loads(output_path.read_text())
+
+            # REQ-M1-011: Must include repair audit trail
+            assert "repair_map" in content
+            assert "repair_reason" in content
+            assert "repair_actions" in content
+            assert "projection_policy_order" in content
+
+            # CP-3.4: Should include design vectors and distance metrics
+            if repair_result.original_vector is not None:
+                assert "original_vector" in content
+            if repair_result.repaired_vector is not None:
+                assert "repaired_vector" in content
+            if repair_result.distance_metrics is not None:
+                assert "distance_metrics" in content
+
+            # REQ-M1-011: Should include hashes for rebuild verification
+            assert "original_spec_hash" in content
+            assert "repaired_spec_hash" in content
+            assert "repaired_design_hash" in content
+
+    def test_repaired_spec_passes_constraints(self) -> None:
+        """Repaired spec must pass all constraints (REQ-M1-011 validity)."""
+        data = _valid_spec_data()
+        # Multiple violations
+        data["transmission_line"]["w_nm"] = 50_000
+        data["transmission_line"]["gap_nm"] = 50_000
+        data["board"]["outline"]["corner_radius_nm"] = 15_000_000  # Too large
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Repaired proof should pass
+        assert repair_result.repaired_proof.passed
+        assert repair_result.repaired_proof.first_failure_tier is None
+
+        # Re-evaluate to confirm
+        system = TieredConstraintSystem()
+        re_proof = system.evaluate(repaired_spec, limits)
+        assert re_proof.passed
+
+    def test_repair_actions_audit_trail(self) -> None:
+        """Repair actions should provide complete audit trail."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        assert len(repair_result.repair_actions) >= 1
+
+        # Each action should have complete info
+        for action in repair_result.repair_actions:
+            assert action.path  # parameter path
+            assert action.before != action.after  # actual repair
+            assert action.reason  # human-readable
+            assert action.constraint_id  # triggering constraint
+
+    def test_repair_distance_metrics(self) -> None:
+        """Repair should compute L2/Linf distance metrics (CP-3.4)."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Should have distance metrics
+        assert repair_result.distance_metrics is not None
+        assert repair_result.distance_metrics.l2_distance >= 0.0
+        assert repair_result.distance_metrics.linf_distance >= 0.0
+        assert repair_result.distance_metrics.normalized_sum_distance >= 0.0
+
+        # L2 should be non-zero for repaired spec
+        assert repair_result.distance_metrics.l2_distance > 0.0
+
+    def test_repair_projection_policy_order(self) -> None:
+        """Repair should apply policies in documented order (CP-3.4)."""
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Check documented policy order
+        expected_order = ("T0", "T1", "T2", "F1_CONTINUITY")
+        assert repair_result.projection_policy_order == expected_order
+
+    def test_valid_spec_no_repair_same_hashes(self) -> None:
+        """Valid spec should have identical original/repaired hashes."""
+        spec = CouponSpec.model_validate(_valid_spec_data())
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # No repairs needed
+        assert len(repair_result.repair_actions) == 0
+        assert repair_result.repair_distance == 0.0
+
+        # Hashes should be identical
+        assert repair_result.original_spec_hash == repair_result.repaired_spec_hash
