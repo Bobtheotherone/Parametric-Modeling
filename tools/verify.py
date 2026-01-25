@@ -303,8 +303,10 @@ def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResu
         )
 
 
-def _gate_spec_lint(project_root: Path) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.spec_lint", "DESIGN_DOCUMENT.md", "--collect"]
+def _gate_spec_lint(project_root: Path, *, collect: bool = True) -> GateResult:
+    cmd = [sys.executable, "-m", "tools.spec_lint", "DESIGN_DOCUMENT.md"]
+    if collect:
+        cmd.append("--collect")
     res = _run(cmd, project_root)
     res.name = "spec_lint"
     return res
@@ -879,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
     tempfile.tempdir = str(artifacts.tmp_dir)
 
     results: list[GateResult] = []
-    results.append(_gate_spec_lint(project_root))
+    results.append(_gate_spec_lint(project_root, collect=not args.skip_pytest))
 
     milestone_id = _detect_milestone_id(project_root)
     run_m0_gates = milestone_id == "M0" or args.include_m0
