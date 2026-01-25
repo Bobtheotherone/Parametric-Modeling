@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/oracle_case.v1.json",
+  "title": "OracleCase",
+  "description": "Oracle case configuration schema - the authoritative interface for simulation cases. Compiles to gerber2ems-compatible inputs while preserving stricter invariants.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format_version",
+    "case_id",
+    "frequency",
+    "solver_policy",
+    "grid_policy",
+    "ports",
+    "structures",
+    "postprocess",
+    "verification"
+  ],
+  "properties": {
+    "format_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema format version, must be '1.0'"
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_-]+$",
+      "description": "Unique identifier for the case (alphanumeric, dashes, underscores only)"
+    },
+    "frequency": {
+      "$ref": "#/$defs/FrequencyConfig",
+      "description": "Frequency sweep configuration"
+    },
+    "solver_policy": {
+      "$ref": "#/$defs/SolverPolicy",
+      "description": "Solver execution policy and parameters"
+    },
+    "grid_policy": {
+      "$ref": "#/$defs/GridPolicy",
+      "description": "Mesh grid generation policy"
+    },
+    "ports": {
+      "$ref": "#/$defs/PortsConfig",
+      "description": "Port definitions and configuration"
+    },
+    "structures": {
+      "$ref": "#/$defs/StructuresConfig",
+      "description": "Structure type and expected behavior"
+    },
+    "postprocess": {
+      "$ref": "#/$defs/PostprocessConfig",
+      "description": "Post-processing and export configuration"
+    },
+    "verification": {
+      "$ref": "#/$defs/VerificationConfig",
+      "description": "Verification checks and thresholds"
+    },
+    "provenance": {
+      "$ref": "#/$defs/ProvenanceConfig",
+      "description": "Optional provenance tracking for reproducibility"
+    }
+  },
+  "$defs": {
+    "FrequencyConfig": {
+      "title": "FrequencyConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_hz", "stop_hz"],
+      "properties": {
+        "start_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Start frequency in Hz"
+        },
+        "stop_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Stop frequency in Hz (must be > start_hz)"
+        },
+        "npoints": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 201,
+          "description": "Number of frequency points"
+        },
+        "spacing": {
+          "type": "string",
+          "enum": ["linear", "log"],
+          "default": "linear",
+          "description": "Frequency spacing type"
+        }
+      }
+    },
+    "SolverPolicy": {
+      "title": "SolverPolicy",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "type": "string",
+          "enum": ["PML_8", "PML_16", "MUR", "PEC", "PMC"],
+          "default": "PML_8",
+          "description": "Boundary condition type"
+        },
+        "pml_cells": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 32,
+          "default": 8,
+          "description": "Number of PML cells (if PML boundary)"
+        },
+        "end_criteria": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 1e-5,
+          "description": "Energy decay end criteria (relative to peak)"
+        },
+        "max_steps": {
+          "type": "integer",
+          "minimum": 1000,
+          "default": 1000000,
+          "description": "Maximum number of FDTD time steps"
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "description": "Number of CPU threads for solver"
+        },
+        "time_step_factor": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 1.0,
+          "default": 0.95,
+          "description": "Time step factor (fraction of CFL limit)"
+        }
+      }
+    },
+    "GridPolicy": {
+      "title": "GridPolicy",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lambda_divisor_max_cell": {
+          "type": "integer",
+          "minimum": 10,
+          "default": 20,
+          "description": "Maximum cell size as fraction of wavelength (lambda/N)"
+        },
+        "thirds_rule": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable thirds-rule refinement near metal edges"
+        },
+        "max_ratio": {
+          "type": "number",
+          "minimum": 1.0,
+          "maximum": 2.0,
+          "default": 1.5,
+          "description": "Maximum ratio between adjacent cells for smooth grading"
+        },
+        "roi_margins_um": {
+          "$ref": "#/$defs/ROIMargins",
+          "description": "Region of interest margins"
+        },
+        "pml_clearance_policy": {
+          "type": "string",
+          "enum": ["wavelength_based", "fixed_um", "auto"],
+          "default": "wavelength_based",
+          "description": "PML clearance calculation policy"
+        }
+      }
+    },
+    "ROIMargins": {
+      "title": "ROIMargins",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x_min_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 100.0,
+          "description": "Minimum X margin in micrometers"
+        },
+        "x_max_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 100.0,
+          "description": "Maximum X margin in micrometers"
+        },
+        "y_min_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 100.0,
+          "description": "Minimum Y margin in micrometers"
+        },
+        "y_max_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 100.0,
+          "description": "Maximum Y margin in micrometers"
+        },
+        "z_min_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 50.0,
+          "description": "Minimum Z margin in micrometers"
+        },
+        "z_max_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 50.0,
+          "description": "Maximum Z margin in micrometers"
+        }
+      }
+    },
+    "PortsConfig": {
+      "title": "PortsConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port_definitions"],
+      "properties": {
+        "port_definitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PortDefinition"
+          },
+          "description": "List of port definitions"
+        },
+        "reference_impedance_ohm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 50.0,
+          "description": "Reference impedance for S-parameters in Ohms"
+        },
+        "backend": {
+          "type": "string",
+          "enum": ["waveguide", "lumped", "microstrip"],
+          "default": "waveguide",
+          "description": "Port backend type"
+        }
+      }
+    },
+    "PortDefinition": {
+      "title": "PortDefinition",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port_id", "position", "orientation"],
+      "properties": {
+        "port_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Unique port identifier (1-indexed)"
+        },
+        "position": {
+          "$ref": "#/$defs/Position3D",
+          "description": "Port position in micrometers"
+        },
+        "orientation": {
+          "type": "string",
+          "enum": ["+x", "-x", "+y", "-y", "+z", "-z"],
+          "description": "Port orientation (cardinal direction)"
+        },
+        "impedance_ohm": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 50.0,
+          "description": "Port characteristic impedance in Ohms"
+        },
+        "excitation_amplitude": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1.0,
+          "description": "Excitation amplitude (V)"
+        },
+        "deembed_um": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.0,
+          "description": "De-embedding distance in micrometers"
+        }
+      }
+    },
+    "Position3D": {
+      "title": "Position3D",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_um", "y_um", "z_um"],
+      "properties": {
+        "x_um": {
+          "type": "number",
+          "description": "X position in micrometers"
+        },
+        "y_um": {
+          "type": "number",
+          "description": "Y position in micrometers"
+        },
+        "z_um": {
+          "type": "number",
+          "description": "Z position in micrometers"
+        }
+      }
+    },
+    "StructuresConfig": {
+      "title": "StructuresConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "thru",
+            "open",
+            "short",
+            "load",
+            "line",
+            "cpwg",
+            "microstrip",
+            "stripline",
+            "via_transition",
+            "differential_pair",
+            "custom"
+          ],
+          "description": "Structure type identifier"
+        },
+        "expected_behavior_profile": {
+          "type": "string",
+          "enum": [
+            "cal_thru",
+            "cal_open",
+            "cal_short",
+            "cal_load",
+            "transmission_line",
+            "via_discontinuity",
+            "differential",
+            "custom"
+          ],
+          "default": "custom",
+          "description": "Expected behavior profile for verification"
+        },
+        "port_map": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "Mapping from logical port names to port IDs"
+        }
+      }
+    },
+    "PostprocessConfig": {
+      "title": "PostprocessConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "export_touchstone": {
+          "type": "boolean",
+          "default": true,
+          "description": "Export Touchstone file"
+        },
+        "ri_format": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use RI (Real/Imaginary) format (vs MA/DB)"
+        },
+        "renormalize_to_ohms": {
+          "anyOf": [
+            {"type": "number", "exclusiveMinimum": 0},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Optional renormalization impedance in Ohms"
+        },
+        "mixed_mode": {
+          "$ref": "#/$defs/MixedModeConfig",
+          "description": "Mixed-mode (differential) configuration"
+        }
+      }
+    },
+    "MixedModeConfig": {
+      "title": "MixedModeConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable mixed-mode S-parameter computation"
+        },
+        "port_pairs": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1},
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "Port pairs for differential/common mode [[p1+, p1-], [p2+, p2-]]"
+        }
+      }
+    },
+    "VerificationConfig": {
+      "title": "VerificationConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled_checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "passivity",
+              "reciprocity",
+              "causality",
+              "port_power_balance",
+              "energy_decay",
+              "frequency_resolution"
+            ]
+          },
+          "default": ["passivity", "reciprocity", "energy_decay"],
+          "uniqueItems": true,
+          "description": "List of enabled verification checks"
+        },
+        "thresholds": {
+          "$ref": "#/$defs/VerificationThresholds",
+          "description": "Verification thresholds"
+        },
+        "strict": {
+          "type": "boolean",
+          "default": true,
+          "description": "Strict mode - fail on any verification check failure"
+        }
+      }
+    },
+    "VerificationThresholds": {
+      "title": "VerificationThresholds",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "passivity_margin": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.01,
+          "description": "Passivity margin (max allowed eigenvalue > 1)"
+        },
+        "reciprocity_db": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.1,
+          "description": "Reciprocity threshold in dB"
+        },
+        "causality_samples": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Number of samples for causality check"
+        },
+        "energy_decay_db": {
+          "type": "number",
+          "minimum": 0,
+          "default": 50.0,
+          "description": "Required energy decay in dB"
+        }
+      }
+    },
+    "ProvenanceConfig": {
+      "title": "ProvenanceConfig",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "git_commit": {
+          "anyOf": [
+            {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Git commit SHA (40 hex chars)"
+        },
+        "toolchain_digest": {
+          "anyOf": [
+            {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Toolchain container image digest"
+        },
+        "openems_version": {
+          "anyOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "OpenEMS version string"
+        },
+        "gerber2ems_version": {
+          "anyOf": [
+            {"type": "string"},
+            {"type": "null"}
+          ],
+          "default": null,
+          "description": "Gerber2EMS version string"
+        }
+      }
+    }
+  }
+}
