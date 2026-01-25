@@ -457,3 +457,29 @@ def create_equality_constraint_result(
         passed=passed,
         reason=reason,
     )
+
+
+def symmetric_offsets_nm(
+    length_nm: int,
+    pitch_nm: int,
+    *,
+    end_clearance_nm: int = 0,
+) -> tuple[int, ...]:
+    """Compute symmetric offsets along a segment with optional end clearance."""
+    if length_nm <= 0:
+        return ()
+    if pitch_nm <= 0:
+        raise ValueError("pitch_nm must be positive")
+    if end_clearance_nm < 0:
+        raise ValueError("end_clearance_nm must be non-negative")
+
+    available_length = length_nm - 2 * end_clearance_nm
+    if available_length < 0:
+        return ()
+
+    count = max(1, available_length // pitch_nm + 1)
+    span = (count - 1) * pitch_nm
+    margin = (available_length - span) // 2
+    start = end_clearance_nm + margin
+
+    return tuple(start + i * pitch_nm for i in range(count))

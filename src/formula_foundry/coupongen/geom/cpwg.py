@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .primitives import PositionNM, TrackSegment, Via, half_width_nm
+from .via_patterns import scale_component_nm, segment_length_nm, symmetric_offsets_nm
 
 if TYPE_CHECKING:
     pass
@@ -217,50 +218,60 @@ def generate_ground_via_fence(
     # Calculate segment vector and length
     dx = end.x - start.x
     dy = end.y - start.y
-    segment_length = int(math.sqrt(dx * dx + dy * dy))
+    segment_length = segment_length_nm(dx, dy)
 
     if segment_length == 0:
         return ((), ())
 
-    # Number of vias along the segment
-    # Place first via at pitch/2 from start, then every pitch_nm
+    # Validate fence parameters and compute deterministic offsets.
     if fence_spec.pitch_nm <= 0:
         raise ValueError("pitch_nm must be positive")
 
-    # Calculate via positions along the segment
-    # Start at half pitch from start, continue until we would exceed the end
-    num_vias = max(1, (segment_length + fence_spec.pitch_nm // 2) // fence_spec.pitch_nm)
+    if fence_spec.offset_from_gap_nm < 0:
+        raise ValueError("offset_from_gap_nm must be non-negative")
 
-    # Normalize direction vector
-    unit_dx = dx / segment_length if segment_length > 0 else 0
-    unit_dy = dy / segment_length if segment_length > 0 else 0
+    if fence_spec.pitch_nm < fence_spec.diameter_nm:
+        raise ValueError("pitch_nm must be at least the via diameter to avoid overlap")
 
-    # Perpendicular vector (90 degrees counterclockwise for +y offset)
-    perp_dx = -unit_dy
-    perp_dy = unit_dx
+    via_radius_nm = fence_spec.diameter_nm // 2
+    if fence_spec.offset_from_gap_nm < via_radius_nm:
+        raise ValueError("offset_from_gap_nm must be at least the via radius")
+
+    # Use via radius as minimum end clearance to keep pads within segment bounds.
+    offsets = symmetric_offsets_nm(
+        segment_length,
+        fence_spec.pitch_nm,
+        end_clearance_nm=via_radius_nm,
+    )
+    if not offsets:
+        return ((), ())
+
+    # Perpendicular vector derived from segment direction; orient toward +y for consistency.
+    perp_dx = -dy
+    perp_dy = dx
+    if perp_dy < 0 or (perp_dy == 0 and perp_dx < 0):
+        perp_dx = -perp_dx
+        perp_dy = -perp_dy
 
     # Distance from centerline to via center:
     # signal_trace_half_width + gap + offset_from_gap
     via_offset_from_center = cpwg_spec.w_nm // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
+    perp_offset_x = scale_component_nm(perp_dx, via_offset_from_center, segment_length)
+    perp_offset_y = scale_component_nm(perp_dy, via_offset_from_center, segment_length)
 
     positive_y_vias: list[Via] = []
     negative_y_vias: list[Via] = []
 
-    for i in range(num_vias):
-        # Position along the segment (start at half pitch, then every pitch)
-        t = fence_spec.pitch_nm // 2 + i * fence_spec.pitch_nm
-        if t > segment_length:
-            break
-
+    for t in offsets:
         # Base position on the centerline
-        base_x = start.x + int(t * unit_dx)
-        base_y = start.y + int(t * unit_dy)
+        base_x = start.x + scale_component_nm(dx, t, segment_length)
+        base_y = start.y + scale_component_nm(dy, t, segment_length)
 
         # Positive Y side via
         pos_y_via = Via(
             position=PositionNM(
-                base_x + int(via_offset_from_center * perp_dx),
-                base_y + int(via_offset_from_center * perp_dy),
+                base_x + perp_offset_x,
+                base_y + perp_offset_y,
             ),
             diameter_nm=fence_spec.diameter_nm,
             drill_nm=fence_spec.drill_nm,
@@ -272,8 +283,8 @@ def generate_ground_via_fence(
         # Negative Y side via
         neg_y_via = Via(
             position=PositionNM(
-                base_x - int(via_offset_from_center * perp_dx),
-                base_y - int(via_offset_from_center * perp_dy),
+                base_x - perp_offset_x,
+                base_y - perp_offset_y,
             ),
             diameter_nm=fence_spec.diameter_nm,
             drill_nm=fence_spec.drill_nm,
