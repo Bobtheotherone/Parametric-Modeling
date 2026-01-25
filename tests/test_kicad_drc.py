@@ -36,6 +36,7 @@ from formula_foundry.coupongen import (
     KicadCliRunner,
     build_drc_args,
     load_spec,
+    resolve_spec,
 )
 from formula_foundry.coupongen.geom.footprint_meta import (
     load_footprint_meta,
@@ -48,6 +49,10 @@ from formula_foundry.coupongen.geom.cpwg import (
 )
 from formula_foundry.coupongen.geom.launch import build_launch_plan
 from formula_foundry.coupongen.geom.primitives import PositionNM
+from formula_foundry.coupongen.kicad import (
+    deterministic_uuid_indexed,
+    parse,
+)
 from formula_foundry.coupongen.kicad.runners.protocol import DEFAULT_ZONE_POLICY
 from formula_foundry.coupongen.paths import (
     FOOTPRINT_LIB_DIR,
@@ -111,6 +116,87 @@ class _FakeDrcRunner:
         return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
 
+class _SpyKicadCliRunner(KicadCliRunner):
+    """KiCad CLI runner that records calls and writes stub outputs."""
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        docker_image: str | None,
+        returncode: int = 0,
+        violations: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(mode=mode, docker_image=docker_image)
+        object.__setattr__(self, "_calls", [])
+        object.__setattr__(self, "_returncode", returncode)
+        object.__setattr__(self, "_violations", violations or [])
+
+    @property
+    def calls(self) -> list[list[str]]:
+        return self._calls  # type: ignore[return-value]
+
+    def run(
+        self,
+        args: list[str],
+        *,
+        workdir: Path,
+        timeout: float | None = None,
+        variables: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        args_list = list(args)
+        self._calls.append(args_list)
+        self._write_stub_outputs(args_list, workdir)
+        return subprocess.CompletedProcess(
+            args=args_list,
+            returncode=self._returncode,
+            stdout="",
+            stderr="" if self._returncode == 0 else "DRC violations found",
+        )
+
+    def _write_stub_outputs(self, args: list[str], workdir: Path) -> None:
+        if args[:2] == ["pcb", "drc"]:
+            report_path = self._resolve_output_path(args, workdir)
+            if report_path is not None:
+                report = {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "source": str(args[-1]),
+                    "violations": list(self._violations),
+                    "unconnected_items": [],
+                    "schematic_parity": [],
+                    "coordinate_units": "mm",
+                }
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            return
+
+        if args[:3] == ["pcb", "export", "gerbers"]:
+            out_dir = self._resolve_output_path(args, workdir)
+            if out_dir is not None:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "F.Cu.gbr").write_text("G04 Fake Gerber*\nX0Y0D02*\n", encoding="utf-8")
+            return
+
+        if args[:3] == ["pcb", "export", "drill"]:
+            out_dir = self._resolve_output_path(args, workdir)
+            if out_dir is not None:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                (out_dir / "drill.drl").write_text("M48\n", encoding="utf-8")
+            return
+
+    @staticmethod
+    def _resolve_output_path(args: list[str], workdir: Path) -> Path | None:
+        if "--output" not in args:
+            return None
+        output_idx = args.index("--output") + 1
+        if output_idx >= len(args):
+            return None
+        output = Path(str(args[output_idx]))
+        if output.is_absolute():
+            return output
+        return workdir / output
+
+
 def _golden_specs() -> list[Path]:
     """Collect all golden spec files."""
     patterns = ("*.json", "*.yaml", "*.yml")
@@ -120,6 +206,56 @@ def _golden_specs() -> list[Path]:
     # Filter out __init__.py and any non-spec files
     specs = [s for s in specs if s.name != "__init__.py"]
     return sorted(specs)
+
+
+def _segments_from_board(board: list[Any]) -> list[list[Any]]:
+    return [node for node in board if isinstance(node, list) and node and node[0] == "segment"]
+
+
+def _footprints_from_board(board: list[Any]) -> list[list[Any]]:
+    return [node for node in board if isinstance(node, list) and node and node[0] == "footprint"]
+
+
+def _nets_from_board(board: list[Any]) -> list[list[Any]]:
+    return [node for node in board if isinstance(node, list) and node and node[0] == "net"]
+
+
+def _segment_attr(segment: list[Any], key: str) -> Any | None:
+    for node in segment:
+        if isinstance(node, list) and node and node[0] == key and len(node) > 1:
+            return node[1]
+    return None
+
+
+def _segment_net_id(segment: list[Any]) -> int | None:
+    value = _segment_attr(segment, "net")
+    return int(value) if isinstance(value, int) else None
+
+
+def _segment_layer(segment: list[Any]) -> str | None:
+    value = _segment_attr(segment, "layer")
+    return str(value) if value is not None else None
+
+
+def _segment_tstamp(segment: list[Any]) -> str | None:
+    value = _segment_attr(segment, "tstamp")
+    return str(value) if value is not None else None
+
+
+def _net_name_map(board: list[Any]) -> dict[int, str]:
+    net_map: dict[int, str] = {}
+    for node in _nets_from_board(board):
+        if len(node) >= 3 and isinstance(node[1], int) and isinstance(node[2], str):
+            net_map[node[1]] = node[2]
+    return net_map
+
+
+def _footprint_names(board: list[Any]) -> list[str]:
+    names: list[str] = []
+    for node in _footprints_from_board(board):
+        if len(node) >= 2 and isinstance(node[1], str):
+            names.append(node[1])
+    return names
 
 
 # ============================================================================
@@ -667,31 +803,86 @@ class TestGoldenSpecsDrcCompatibility:
     def test_golden_spec_drc_clean_with_fake_runner(self, spec_path: Path, tmp_path: Path) -> None:
         """REQ-M1-016: Each golden spec should be DRC-clean.
 
-        This test uses a fake runner to verify the DRC pipeline works correctly.
-        Real KiCad DRC is tested separately with Docker.
+        This test uses a spy runner to validate DRC/export flags and board geometry
+        without invoking the real KiCad CLI.
         """
         from formula_foundry.coupongen import build_coupon
 
         spec = load_spec(spec_path)
-        runner = _FakeDrcRunner(returncode=0)
+        runner = _SpyKicadCliRunner(
+            mode="docker",
+            docker_image=spec.toolchain.kicad.docker_image,
+            returncode=0,
+        )
 
         result = build_coupon(
             spec,
             out_root=tmp_path,
             mode="docker",
             runner=runner,
-            kicad_cli_version="9.0.7",
+            kicad_cli_version=spec.toolchain.kicad.version,
         )
 
-        # Verify DRC was called
-        assert len(runner.calls) == 1
-        board_path, report_path = runner.calls[0]
-        assert board_path.suffix == ".kicad_pcb"
-        assert report_path.suffix == ".json"
+        drc_calls = [call for call in runner.calls if call[:2] == ["pcb", "drc"]]
+        gerber_calls = [call for call in runner.calls if call[:3] == ["pcb", "export", "gerbers"]]
+        drill_calls = [call for call in runner.calls if call[:3] == ["pcb", "export", "drill"]]
+
+        assert len(drc_calls) == 1
+        assert DEFAULT_ZONE_POLICY.drc_refill_flag in drc_calls[0]
+        assert len(gerber_calls) == 1
+        assert DEFAULT_ZONE_POLICY.export_check_flag in gerber_calls[0]
+        assert len(drill_calls) == 1
+        assert DEFAULT_ZONE_POLICY.export_check_flag in drill_calls[0]
 
         # Verify manifest records DRC success
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
         assert manifest["verification"]["drc"]["returncode"] == 0
+
+        board_path = result.output_dir / "coupon.kicad_pcb"
+        board = parse(board_path.read_text(encoding="utf-8"))
+
+        # Verify connector footprints are embedded
+        footprint_names = _footprint_names(board)
+        left_fp = spec.connectors.left.footprint
+        right_fp = spec.connectors.right.footprint
+        if left_fp == right_fp:
+            assert footprint_names.count(left_fp) >= 2
+        else:
+            assert left_fp in footprint_names
+            assert right_fp in footprint_names
+
+        # Verify CPWG nets exist
+        net_map = _net_name_map(board)
+        assert net_map.get(1) == "SIG"
+        assert net_map.get(2) == "GND"
+
+        segments = _segments_from_board(board)
+        signal_segments = [seg for seg in segments if _segment_net_id(seg) == 1]
+        ground_segments = [seg for seg in segments if _segment_net_id(seg) == 2]
+
+        assert signal_segments, "Signal net segments missing from board"
+        assert ground_segments, "Ground net segments missing from board"
+
+        cpwg_layer = spec.transmission_line.layer
+        assert any(_segment_layer(seg) == cpwg_layer for seg in signal_segments)
+        assert sum(1 for seg in ground_segments if _segment_layer(seg) == cpwg_layer) >= 2
+
+        resolved = resolve_spec(spec)
+        assert resolved.layout_plan is not None
+        segment_tstamps = {
+            tstamp for seg in segments if (tstamp := _segment_tstamp(seg)) is not None
+        }
+        for side in ("left", "right"):
+            launch_plan = resolved.layout_plan.get_launch_plan(side)
+            assert launch_plan is not None
+            assert launch_plan.segments, f"Launch plan missing segments for {side}"
+            for idx, _segment in enumerate(launch_plan.segments):
+                expected = deterministic_uuid_indexed(
+                    spec.schema_version,
+                    f"track.launch.{side}",
+                    idx,
+                )
+                assert expected in segment_tstamps
 
 
 class TestDrcFailureHandling:
