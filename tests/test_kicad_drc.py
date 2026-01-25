@@ -1,13 +1,22 @@
 """KiCad DRC tests for golden specs.
 
-REQ-M1-025: CI must prove DRC-clean boards and export completeness for all
-golden specs using the pinned KiCad toolchain.
+REQ-M1-003: Connector footprints MUST be sourced from vendored in-repo `.kicad_mod` files.
+REQ-M1-004: Footprint-to-net and anchor-pad mapping MUST be deterministic and explicit.
+REQ-M1-005: CPWG generation MUST produce net-aware copper geometry.
+REQ-M1-006: DRC MUST be run with zone refill enabled and exports with zone checks enabled.
+REQ-M1-008: A launch feature MUST exist for F0/F1 that connects connector pads to CPWG.
+REQ-M1-016: For golden specs, KiCad DRC MUST pass in CI on the pinned toolchain.
 
 This module tests that:
 - All golden specs can run DRC with the pinned KiCad Docker image
 - DRC invocation uses correct flags (severity-all, exit-code-violations, JSON output)
 - Docker mode correctly mounts workdirs and uses digest-pinned images
 - DRC reports are generated in the expected format
+- Connector footprints are sourced from vendored in-repo files
+- Pad maps are deterministic and correct
+- CPWG copper geometry includes signal trace and gap enforcement
+- Launch features connect connector pads to CPWG properly
+- Zone policy flags are enforced in DRC and exports
 
 IMPORTANT: These tests use fake runners to avoid actually invoking KiCad
 during CI. The real KiCad DRC is tested via integration tests that require
@@ -27,6 +36,23 @@ from formula_foundry.coupongen import (
     KicadCliRunner,
     build_drc_args,
     load_spec,
+)
+from formula_foundry.coupongen.geom.footprint_meta import (
+    load_footprint_meta,
+    list_available_footprint_meta,
+)
+from formula_foundry.coupongen.geom.cpwg import (
+    CPWGSpec,
+    generate_cpwg_segment,
+    generate_cpwg_ground_tracks,
+)
+from formula_foundry.coupongen.geom.launch import build_launch_plan
+from formula_foundry.coupongen.geom.primitives import PositionNM
+from formula_foundry.coupongen.kicad.runners.protocol import DEFAULT_ZONE_POLICY
+from formula_foundry.coupongen.paths import (
+    FOOTPRINT_LIB_DIR,
+    FOOTPRINT_META_DIR,
+    get_footprint_module_path,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,13 +117,420 @@ def _golden_specs() -> list[Path]:
     specs: list[Path] = []
     for pattern in patterns:
         specs.extend(sorted(GOLDEN_SPECS_DIR.glob(pattern)))
+    # Filter out __init__.py and any non-spec files
+    specs = [s for s in specs if s.name != "__init__.py"]
     return sorted(specs)
+
+
+# ============================================================================
+# REQ-M1-003: Vendored Connector Footprints
+# ============================================================================
+
+
+class TestVendoredConnectorFootprints:
+    """Tests for REQ-M1-003: Connector footprints must be sourced from vendored files.
+
+    REQ-M1-003: Connector footprints MUST be sourced from vendored in-repo
+    `.kicad_mod` files and embedded into the generated `.kicad_pcb`;
+    placeholder "single pad connector" generation is disallowed for M1 compliance.
+    """
+
+    def test_footprint_library_directory_exists(self) -> None:
+        """Verify vendored footprint library directory exists."""
+        assert FOOTPRINT_LIB_DIR.exists(), (
+            f"Vendored footprint library directory not found: {FOOTPRINT_LIB_DIR}"
+        )
+        assert FOOTPRINT_LIB_DIR.is_dir()
+
+    def test_connectors_pretty_directory_exists(self) -> None:
+        """Verify Coupongen_Connectors.pretty directory exists."""
+        connectors_dir = FOOTPRINT_LIB_DIR / "Coupongen_Connectors.pretty"
+        assert connectors_dir.exists(), (
+            f"Connectors footprint library not found: {connectors_dir}"
+        )
+        assert connectors_dir.is_dir()
+
+    def test_sma_endlaunch_footprint_exists(self) -> None:
+        """Verify SMA_EndLaunch_Generic.kicad_mod exists in vendored library."""
+        footprint_path = get_footprint_module_path(
+            "Coupongen_Connectors", "SMA_EndLaunch_Generic"
+        )
+        assert footprint_path.exists(), (
+            f"SMA_EndLaunch_Generic footprint not found: {footprint_path}"
+        )
+
+    def test_footprint_metadata_directory_exists(self) -> None:
+        """Verify footprint metadata directory exists."""
+        assert FOOTPRINT_META_DIR.exists(), (
+            f"Footprint metadata directory not found: {FOOTPRINT_META_DIR}"
+        )
+
+    def test_sma_endlaunch_metadata_exists(self) -> None:
+        """Verify SMA_EndLaunch_Generic metadata JSON exists."""
+        meta_path = FOOTPRINT_META_DIR / "SMA_EndLaunch_Generic.json"
+        assert meta_path.exists(), (
+            f"SMA_EndLaunch_Generic metadata not found: {meta_path}"
+        )
+
+    def test_footprint_file_has_valid_sexpr(self) -> None:
+        """Verify vendored footprint file contains valid KiCad S-expression."""
+        footprint_path = get_footprint_module_path(
+            "Coupongen_Connectors", "SMA_EndLaunch_Generic"
+        )
+        content = footprint_path.read_text(encoding="utf-8")
+        # Basic S-expression validation: starts with (footprint or (module
+        assert content.strip().startswith("("), "Footprint must start with S-expression"
+        assert "footprint" in content or "module" in content, (
+            "Footprint file must contain 'footprint' or 'module' keyword"
+        )
+
+    @pytest.mark.parametrize("spec_path", _golden_specs(), ids=lambda p: p.name)
+    def test_golden_spec_uses_vendored_footprint(self, spec_path: Path) -> None:
+        """REQ-M1-003: Each golden spec must reference a vendored footprint."""
+        spec = load_spec(spec_path)
+
+        # Check left connector
+        left_fp = spec.connectors.left.footprint
+        lib, name = left_fp.split(":", 1)
+        fp_path = get_footprint_module_path(lib, name)
+        assert fp_path.exists(), (
+            f"Golden spec {spec_path.name} uses non-vendored left footprint: {left_fp}"
+        )
+
+        # Check right connector
+        right_fp = spec.connectors.right.footprint
+        lib, name = right_fp.split(":", 1)
+        fp_path = get_footprint_module_path(lib, name)
+        assert fp_path.exists(), (
+            f"Golden spec {spec_path.name} uses non-vendored right footprint: {right_fp}"
+        )
+
+
+# ============================================================================
+# REQ-M1-004: Pad-Map Correctness
+# ============================================================================
+
+
+class TestPadMapCorrectness:
+    """Tests for REQ-M1-004: Footprint-to-net and anchor-pad mapping.
+
+    REQ-M1-004: Footprint-to-net and anchor-pad mapping MUST be deterministic
+    and explicit (via `pad_map` or documented conventions) so the launch connects
+    to the true signal pad and GND pads/nets are correctly assigned.
+    """
+
+    def test_sma_footprint_has_signal_pad(self) -> None:
+        """Verify SMA footprint metadata has a signal pad defined."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        assert meta.signal_pad is not None
+        assert meta.signal_pad.pad_number
+
+    def test_sma_footprint_has_ground_pads(self) -> None:
+        """Verify SMA footprint metadata has ground pads defined."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        assert len(meta.ground_pads) > 0, "At least one ground pad required"
+
+    def test_pad_net_map_is_deterministic(self) -> None:
+        """Verify pad_net_map returns consistent mapping."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        pad_map_1 = meta.pad_net_map()
+        pad_map_2 = meta.pad_net_map()
+        assert pad_map_1 == pad_map_2, "Pad map must be deterministic"
+
+    def test_signal_pad_maps_to_sig_net(self) -> None:
+        """Verify signal pad maps to SIG net."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        pad_map = meta.pad_net_map()
+        signal_pad_num = meta.signal_pad.pad_number
+        assert signal_pad_num in pad_map
+        assert pad_map[signal_pad_num] == "SIG", (
+            f"Signal pad {signal_pad_num} should map to SIG net"
+        )
+
+    def test_ground_pads_map_to_gnd_net(self) -> None:
+        """Verify ground pads map to GND net."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        pad_map = meta.pad_net_map()
+        for ground_pad in meta.ground_pads:
+            pad_num = ground_pad.pad_number
+            assert pad_num in pad_map
+            assert pad_map[pad_num] == "GND", (
+                f"Ground pad {pad_num} should map to GND net"
+            )
+
+    def test_all_footprint_meta_have_valid_pad_maps(self) -> None:
+        """Verify all available footprint metadata have valid pad maps."""
+        meta_ids = list_available_footprint_meta()
+        assert len(meta_ids) > 0, "No footprint metadata available"
+
+        for meta_id in meta_ids:
+            meta = load_footprint_meta(meta_id)
+            pad_map = meta.pad_net_map()
+            # Should have at least signal and one ground
+            assert len(pad_map) >= 2, f"Footprint {meta_id} must have signal + ground pads"
+
+
+# ============================================================================
+# REQ-M1-005: CPWG Copper with Gap
+# ============================================================================
+
+
+class TestCPWGCopperWithGap:
+    """Tests for REQ-M1-005: CPWG generation with net-aware copper geometry.
+
+    REQ-M1-005: CPWG generation MUST produce net-aware copper geometry: a signal
+    conductor on the declared layer plus a GND reference conductor on that layer
+    with an enforced `gap_nm` (no "CPWG in schema only").
+    """
+
+    def test_cpwg_segment_has_width(self) -> None:
+        """Verify CPWG signal segment has the specified width."""
+        spec = CPWGSpec(w_nm=250_000, gap_nm=180_000, length_nm=24_000_000)
+        start = PositionNM(0, 0)
+        end = PositionNM(24_000_000, 0)
+        segment = generate_cpwg_segment(start, end, spec)
+
+        assert segment.width_nm == 250_000
+
+    def test_cpwg_segment_has_net_id(self) -> None:
+        """Verify CPWG signal segment has net ID assigned."""
+        spec = CPWGSpec(w_nm=250_000, gap_nm=180_000, length_nm=24_000_000, net_id=1)
+        start = PositionNM(0, 0)
+        end = PositionNM(24_000_000, 0)
+        segment = generate_cpwg_segment(start, end, spec)
+
+        assert segment.net_id == 1
+
+    def test_cpwg_ground_tracks_enforce_gap(self) -> None:
+        """Verify ground tracks are offset to enforce gap_nm."""
+        w_nm = 250_000
+        gap_nm = 180_000
+        spec = CPWGSpec(w_nm=w_nm, gap_nm=gap_nm, length_nm=24_000_000)
+        start = PositionNM(0, 0)
+        end = PositionNM(24_000_000, 0)
+
+        pos_track, neg_track = generate_cpwg_ground_tracks(start, end, spec)
+
+        # Ground tracks should be offset from center by:
+        # (signal_width/2) + gap + (ground_width/2)
+        expected_offset = w_nm // 2 + gap_nm + w_nm // 2
+
+        # For horizontal segment, offset is in Y direction
+        assert pos_track.start.y == expected_offset
+        assert neg_track.start.y == -expected_offset
+
+    def test_cpwg_ground_tracks_have_ground_net_id(self) -> None:
+        """Verify ground tracks have ground net ID assigned."""
+        spec = CPWGSpec(
+            w_nm=250_000, gap_nm=180_000, length_nm=24_000_000,
+            net_id=1, ground_net_id=2
+        )
+        start = PositionNM(0, 0)
+        end = PositionNM(24_000_000, 0)
+
+        pos_track, neg_track = generate_cpwg_ground_tracks(start, end, spec)
+
+        assert pos_track.net_id == 2
+        assert neg_track.net_id == 2
+
+    @pytest.mark.parametrize("spec_path", _golden_specs(), ids=lambda p: p.name)
+    def test_golden_spec_has_cpwg_parameters(self, spec_path: Path) -> None:
+        """REQ-M1-005: Each golden spec must define CPWG with gap_nm."""
+        spec = load_spec(spec_path)
+
+        assert spec.transmission_line.type == "CPWG", (
+            f"Golden spec {spec_path.name} must use CPWG transmission line"
+        )
+        assert spec.transmission_line.w_nm > 0, (
+            f"Golden spec {spec_path.name} must have positive trace width"
+        )
+        assert spec.transmission_line.gap_nm > 0, (
+            f"Golden spec {spec_path.name} must have positive gap"
+        )
+
+
+# ============================================================================
+# REQ-M1-006: Zone-Policy DRC Flags
+# ============================================================================
+
+
+class TestZonePolicyDrcFlags:
+    """Tests for REQ-M1-006: DRC with zone refill and export with zone checks.
+
+    REQ-M1-006: If CPWG uses zones, DRC MUST be run with zone refill enabled
+    and exports MUST be run with zone checks enabled (KiCad CLI flags/policy
+    pinned in code and recorded in manifest).
+    """
+
+    def test_default_zone_policy_refill_zones(self) -> None:
+        """Verify default zone policy enables refill for DRC."""
+        assert DEFAULT_ZONE_POLICY.drc_refill_zones is True
+
+    def test_default_zone_policy_drc_flag(self) -> None:
+        """Verify default zone policy uses --refill-zones flag."""
+        assert DEFAULT_ZONE_POLICY.drc_refill_flag == "--refill-zones"
+
+    def test_default_zone_policy_export_check_zones(self) -> None:
+        """Verify default zone policy enables zone checks for export."""
+        assert DEFAULT_ZONE_POLICY.export_check_zones is True
+
+    def test_default_zone_policy_export_flag(self) -> None:
+        """Verify default zone policy uses --check-zones flag."""
+        assert DEFAULT_ZONE_POLICY.export_check_flag == "--check-zones"
+
+    def test_build_drc_args_includes_refill_zones(self, tmp_path: Path) -> None:
+        """Verify build_drc_args includes --refill-zones flag."""
+        board = tmp_path / "coupon.kicad_pcb"
+        report = tmp_path / "drc.json"
+        args = build_drc_args(board, report)
+
+        assert "--refill-zones" in args
+
+    def test_build_drc_args_refill_can_be_disabled(self, tmp_path: Path) -> None:
+        """Verify refill_zones=False disables --refill-zones flag."""
+        board = tmp_path / "coupon.kicad_pcb"
+        report = tmp_path / "drc.json"
+        args = build_drc_args(board, report, refill_zones=False)
+
+        assert "--refill-zones" not in args
+
+    def test_zone_policy_has_policy_id(self) -> None:
+        """Verify zone policy has a stable policy ID for manifesting."""
+        assert DEFAULT_ZONE_POLICY.policy_id == "kicad-cli-zones-v1"
+
+    def test_zone_policy_to_dict_structure(self) -> None:
+        """Verify zone policy serializes with expected structure."""
+        policy_dict = DEFAULT_ZONE_POLICY.to_dict()
+
+        assert "policy_id" in policy_dict
+        assert "drc" in policy_dict
+        assert "export" in policy_dict
+        assert policy_dict["drc"]["refill_zones"] is True
+        assert policy_dict["export"]["check_zones"] is True
+
+    def test_zone_policy_with_version(self) -> None:
+        """Verify zone policy can include kicad_cli_version."""
+        policy = DEFAULT_ZONE_POLICY.with_kicad_cli_version("9.0.7")
+        assert policy.kicad_cli_version == "9.0.7"
+
+        policy_dict = policy.to_dict()
+        assert policy_dict["kicad_cli_version"] == "9.0.7"
+
+
+# ============================================================================
+# REQ-M1-008: Launch Feature Presence
+# ============================================================================
+
+
+class TestLaunchFeaturePresence:
+    """Tests for REQ-M1-008: Launch feature connecting connector pads to CPWG.
+
+    REQ-M1-008: A launch feature MUST exist for F0/F1 that deterministically
+    connects connector pads to CPWG (taper or stepped transition) with correct
+    nets, optional stitching, and manufacturable DFM constraints.
+    """
+
+    def test_build_launch_plan_creates_segments(self) -> None:
+        """Verify build_launch_plan creates transition segments."""
+        pad_center = PositionNM(5_000_000, 0)
+        launch_point = PositionNM(10_000_000, 0)
+
+        plan = build_launch_plan(
+            side="left",
+            pad_center=pad_center,
+            launch_point=launch_point,
+            launch_direction_deg=0,
+            rotation_deg=0,
+            pad_size_x_nm=500_000,
+            pad_size_y_nm=1_500_000,
+            trace_width_nm=250_000,
+            trace_layer="F.Cu",
+            gap_nm=180_000,
+            min_trace_width_nm=100_000,
+            min_gap_nm=100_000,
+        )
+
+        assert plan.side == "left"
+        assert plan.pad_center == pad_center
+        assert plan.launch_point == launch_point
+
+    def test_launch_plan_has_sig_net(self) -> None:
+        """Verify launch plan uses SIG net name."""
+        plan = build_launch_plan(
+            side="right",
+            pad_center=PositionNM(75_000_000, 0),
+            launch_point=PositionNM(70_000_000, 0),
+            launch_direction_deg=180,
+            rotation_deg=0,
+            pad_size_x_nm=500_000,
+            pad_size_y_nm=1_500_000,
+            trace_width_nm=250_000,
+            trace_layer="F.Cu",
+            gap_nm=180_000,
+            min_trace_width_nm=100_000,
+            min_gap_nm=100_000,
+        )
+
+        assert plan.net_name == "SIG"
+
+    def test_launch_plan_transition_length(self) -> None:
+        """Verify launch plan calculates correct transition length."""
+        pad_center = PositionNM(5_000_000, 0)
+        launch_point = PositionNM(10_000_000, 0)
+
+        plan = build_launch_plan(
+            side="left",
+            pad_center=pad_center,
+            launch_point=launch_point,
+            launch_direction_deg=0,
+            rotation_deg=0,
+            pad_size_x_nm=500_000,
+            pad_size_y_nm=1_500_000,
+            trace_width_nm=250_000,
+            trace_layer="F.Cu",
+            gap_nm=180_000,
+            min_trace_width_nm=100_000,
+            min_gap_nm=100_000,
+        )
+
+        expected_length = abs(launch_point.x - pad_center.x)
+        assert plan.transition_length_nm == expected_length
+
+    def test_launch_plan_side_validation(self) -> None:
+        """Verify launch plan validates side parameter."""
+        with pytest.raises(ValueError, match="side must be"):
+            build_launch_plan(
+                side="invalid",
+                pad_center=PositionNM(0, 0),
+                launch_point=PositionNM(1_000_000, 0),
+                launch_direction_deg=0,
+                rotation_deg=0,
+                pad_size_x_nm=500_000,
+                pad_size_y_nm=1_500_000,
+                trace_width_nm=250_000,
+                trace_layer="F.Cu",
+                gap_nm=180_000,
+                min_trace_width_nm=100_000,
+                min_gap_nm=100_000,
+            )
+
+    def test_footprint_meta_has_launch_reference(self) -> None:
+        """Verify footprint metadata includes launch reference point."""
+        meta = load_footprint_meta("SMA_EndLaunch_Generic")
+        assert meta.launch_reference is not None
+        assert meta.launch_reference.direction_deg >= 0
+        assert meta.launch_reference.direction_deg < 360
+
+
+# ============================================================================
+# REQ-M1-016: Golden Specs DRC Pass
+# ============================================================================
 
 
 class TestKicadCliRunnerModes:
     """Tests for KiCad CLI runner mode configuration.
 
-    REQ-M1-025: CI must prove DRC-clean boards using the pinned KiCad toolchain.
+    REQ-M1-016: CI must prove DRC-clean boards using the pinned KiCad toolchain.
     """
 
     def test_local_mode_command_structure(self, tmp_path: Path) -> None:
@@ -111,7 +544,7 @@ class TestKicadCliRunnerModes:
         assert "board.kicad_pcb" in cmd
 
     def test_docker_mode_command_structure(self, tmp_path: Path) -> None:
-        """REQ-M1-025: Docker mode should use pinned digest image."""
+        """REQ-M1-016: Docker mode should use pinned digest image."""
         docker_image = "kicad/kicad:9.0.7@sha256:abc123def456"
         runner = KicadCliRunner(mode="docker", docker_image=docker_image)
         cmd = runner.build_command(["pcb", "drc", "board.kicad_pcb"], workdir=tmp_path)
@@ -137,7 +570,7 @@ class TestKicadCliRunnerModes:
 class TestBuildDrcArgs:
     """Tests for DRC argument construction.
 
-    REQ-M1-025: CI must prove DRC-clean boards using correct invocation flags.
+    REQ-M1-016: CI must prove DRC-clean boards using correct invocation flags.
     """
 
     def test_drc_args_default_severity_all(self, tmp_path: Path) -> None:
@@ -200,7 +633,7 @@ class TestBuildDrcArgs:
 class TestGoldenSpecsDrcCompatibility:
     """Tests verifying golden specs are compatible with DRC toolchain.
 
-    REQ-M1-025: CI must prove DRC-clean boards and export completeness for all
+    REQ-M1-016: CI must prove DRC-clean boards and export completeness for all
     golden specs using the pinned KiCad toolchain.
     """
 
@@ -210,7 +643,7 @@ class TestGoldenSpecsDrcCompatibility:
         assert len(specs) >= 20, f"Expected at least 20 golden specs, found {len(specs)}"
 
     def test_golden_specs_specify_pinned_docker_image(self) -> None:
-        """REQ-M1-025: All golden specs must use digest-pinned Docker images."""
+        """REQ-M1-016: All golden specs must use digest-pinned Docker images."""
         specs = _golden_specs()
         for spec_path in specs:
             spec = load_spec(spec_path)
@@ -220,7 +653,7 @@ class TestGoldenSpecsDrcCompatibility:
             )
 
     def test_golden_specs_kicad_version_pinned(self) -> None:
-        """REQ-M1-025: All golden specs must pin KiCad version."""
+        """REQ-M1-016: All golden specs must pin KiCad version."""
         specs = _golden_specs()
         for spec_path in specs:
             spec = load_spec(spec_path)
@@ -232,7 +665,7 @@ class TestGoldenSpecsDrcCompatibility:
 
     @pytest.mark.parametrize("spec_path", _golden_specs(), ids=lambda p: p.name)
     def test_golden_spec_drc_clean_with_fake_runner(self, spec_path: Path, tmp_path: Path) -> None:
-        """REQ-M1-025: Each golden spec should be DRC-clean.
+        """REQ-M1-016: Each golden spec should be DRC-clean.
 
         This test uses a fake runner to verify the DRC pipeline works correctly.
         Real KiCad DRC is tested separately with Docker.
