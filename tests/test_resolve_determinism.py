@@ -212,11 +212,95 @@ class TestResolvedDesignProperties:
         _golden_spec_files(),
         ids=lambda p: p.name,
     )
+    def test_derived_features_are_deterministic(self, spec_path: Path) -> None:
+        """REQ-M1-014: derived_features must be deterministic across multiple resolves.
+
+        Verifies that derived features (CPWG/via/fence/launch-relevant) are emitted
+        deterministically, with identical keys and values on each resolve.
+        """
+        spec = load_spec(spec_path)
+
+        resolved_a = resolve(spec)
+        resolved_b = resolve(spec)
+        resolved_c = resolve(spec)
+
+        # Keys must be identical and sorted
+        assert list(resolved_a.derived_features.keys()) == list(resolved_b.derived_features.keys())
+        assert list(resolved_b.derived_features.keys()) == list(resolved_c.derived_features.keys())
+
+        # Keys should be sorted (deterministic ordering)
+        assert list(resolved_a.derived_features.keys()) == sorted(resolved_a.derived_features.keys())
+
+        # Values must be identical
+        assert resolved_a.derived_features == resolved_b.derived_features == resolved_c.derived_features
+
+    @pytest.mark.parametrize(
+        "spec_path",
+        _golden_spec_files(),
+        ids=lambda p: p.name,
+    )
+    def test_dimensionless_groups_are_deterministic(self, spec_path: Path) -> None:
+        """REQ-M1-014: dimensionless_groups must be deterministic across multiple resolves.
+
+        Verifies that dimensionless groups (CPWG/via/fence/launch-relevant ratios) are
+        emitted deterministically, with identical keys and values on each resolve.
+        """
+        spec = load_spec(spec_path)
+
+        resolved_a = resolve(spec)
+        resolved_b = resolve(spec)
+        resolved_c = resolve(spec)
+
+        # Keys must be identical and sorted
+        assert list(resolved_a.dimensionless_groups.keys()) == list(resolved_b.dimensionless_groups.keys())
+        assert list(resolved_b.dimensionless_groups.keys()) == list(resolved_c.dimensionless_groups.keys())
+
+        # Keys should be sorted (deterministic ordering)
+        assert list(resolved_a.dimensionless_groups.keys()) == sorted(resolved_a.dimensionless_groups.keys())
+
+        # Values must be identical
+        assert resolved_a.dimensionless_groups == resolved_b.dimensionless_groups == resolved_c.dimensionless_groups
+
+    @pytest.mark.parametrize(
+        "spec_path",
+        _golden_spec_files(),
+        ids=lambda p: p.name,
+    )
     def test_resolved_schema_version_preserved(self, spec_path: Path) -> None:
         """ResolvedDesign.schema_version must match input spec."""
         spec = load_spec(spec_path)
         resolved = resolve(spec)
         assert resolved.schema_version == spec.schema_version
+
+    @pytest.mark.parametrize(
+        "spec_path",
+        _golden_spec_files(),
+        ids=lambda p: p.name,
+    )
+    def test_connector_footprints_are_deterministic(self, spec_path: Path) -> None:
+        """REQ-M1-015: connector_footprints provenance must be deterministic.
+
+        Verifies that connector footprint provenance (footprint_id and metadata_hash)
+        is deterministic across multiple resolves, ensuring footprint changes affect
+        the design hash.
+        """
+        spec = load_spec(spec_path)
+
+        resolved_a = resolve(spec)
+        resolved_b = resolve(spec)
+        resolved_c = resolve(spec)
+
+        # connector_footprints must be identical across resolves
+        assert resolved_a.connector_footprints == resolved_b.connector_footprints
+        assert resolved_b.connector_footprints == resolved_c.connector_footprints
+
+        # Verify structure: each connector should have footprint_id and metadata_hash
+        for position, provenance in resolved_a.connector_footprints.items():
+            assert "footprint_id" in provenance, f"{position}: missing footprint_id"
+            assert "metadata_hash" in provenance, f"{position}: missing metadata_hash"
+            assert isinstance(provenance["metadata_hash"], str), f"{position}: metadata_hash not a string"
+            # metadata_hash should be a valid SHA256 (64 hex chars)
+            assert len(provenance["metadata_hash"]) == 64, f"{position}: metadata_hash length != 64"
 
 
 class TestF0FamilyDeterminism:
