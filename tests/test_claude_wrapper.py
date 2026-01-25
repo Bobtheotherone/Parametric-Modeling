@@ -133,6 +133,31 @@ exit 1
     assert "ERROR" in result.stderr
 
 
+def test_claude_wrapper_missing_binary_emits_error_turn(tmp_path: Path) -> None:
+    """Test that missing Claude CLI still yields a schema-valid error turn."""
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = os.environ.copy()
+    env["CLAUDE_BIN"] = str(tmp_path / "missing-claude")
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("CLAUDE_API_KEY", None)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "wrapper_status=error" in payload["summary"].lower()
+
+
 def test_claude_wrapper_fallback_when_help_lacks_flags(tmp_path: Path) -> None:
     claude_stub = tmp_path / "claude"
     _write_executable(

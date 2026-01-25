@@ -238,14 +238,25 @@ rc = 0
 stdout_lines = []
 stderr_lines = []
 
-proc = subprocess.Popen(
-    cmd,
-    text=True,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    start_new_session=True,
-    bufsize=1,
-)
+try:
+    proc = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+        bufsize=1,
+    )
+except Exception as exc:
+    rc = 127
+    err = f"Failed to start Claude CLI: {exc}\n"
+    with open(wrap_path, "w", encoding="utf-8") as handle:
+        handle.write("")
+    with open(err_path, "a", encoding="utf-8") as handle:
+        handle.write(err)
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump({"cmd": cmd, "rc": rc, "error": str(exc)}, handle)
+    sys.exit(0)
 
 def reader(stream, sink, dest):
     for line in iter(stream.readline, ""):
