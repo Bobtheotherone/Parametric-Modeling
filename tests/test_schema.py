@@ -706,3 +706,198 @@ class TestCouponSpecUnitNormalization:
         spec = load_couponspec(valid_spec_data)
         assert spec.board.outline.width_nm == 20_000_000
         assert spec.board.outline.length_nm == 80_000_000
+
+
+# =============================================================================
+# Strict Validation Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestStrictValidation:
+    """Tests for strict mode validation per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST enforce family-specific correctness
+    (e.g., F0 cannot include F1-only blocks) and MUST reject unknown/extra
+    fields (no silent accept) under strict mode.
+    """
+
+    def test_strict_validation_accepts_valid_f1_spec(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """Strict mode accepts valid F1 spec with all required fields."""
+        from formula_foundry.coupongen.spec import validate_strict
+
+        spec = validate_strict(valid_spec_data)
+        assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
+        assert spec.discontinuity is not None
+
+    def test_strict_validation_rejects_extra_fields(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Strict mode rejects unknown/extra fields."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["unknown_field"] = "should_fail"
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("unknown_field" in str(e).lower() or "additional" in str(e).lower()
+                   for e in exc_info.value.errors)
+
+    def test_strict_validation_rejects_nested_extra_fields(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Strict mode rejects nested unknown fields."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["toolchain"]["extra_nested"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_validation_f0_cannot_have_discontinuity(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 cannot include F1-only blocks (discontinuity)."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Set to F0 family (which should not have discontinuity)
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Add a discontinuity block (F1-only feature)
+        minimal_spec_data["discontinuity"] = {
+            "type": "VIA_TRANSITION",
+            "signal_via": {
+                "drill_nm": 300000,
+                "diameter_nm": 650000,
+                "pad_diameter_nm": 900000,
+            },
+        }
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(minimal_spec_data)
+        assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f1_requires_discontinuity(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 requires discontinuity block."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Remove discontinuity from F1 spec
+        del valid_spec_data["discontinuity"]
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f1_requires_via_transition_type(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 discontinuity must have type VIA_TRANSITION."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Change discontinuity type to invalid value
+        valid_spec_data["discontinuity"]["type"] = "INVALID_TYPE"
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("via_transition" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f0_requires_length_right_nm(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 requires transmission_line.length_right_nm."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Remove length_right_nm (required for F0)
+        del minimal_spec_data["transmission_line"]["length_right_nm"]
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(minimal_spec_data)
+        assert any("length_right_nm" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_skip_family_constraints(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """Schema-only validation can skip family constraints."""
+        from formula_foundry.coupongen.spec import validate_strict
+
+        # Remove discontinuity (would fail F1 family validation)
+        del valid_spec_data["discontinuity"]
+
+        # With check_family_constraints=False, should not raise for family issues
+        # But will still fail if there are actual schema violations
+        # Since the schema allows null discontinuity, this should pass
+        spec = validate_strict(valid_spec_data, check_family_constraints=False)
+        assert spec.discontinuity is None
+
+
+class TestFamilyValidation:
+    """Tests for family-specific validation."""
+
+    def test_validate_family_f0_valid(self, minimal_spec_data: dict[str, Any]) -> None:
+        """F0 family validation passes for valid spec."""
+        from formula_foundry.coupongen.families import validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        spec = load_couponspec(minimal_spec_data)
+        # Should not raise
+        validate_family(spec)
+
+    def test_validate_family_f1_valid(self, valid_spec_data: dict[str, Any]) -> None:
+        """F1 family validation passes for valid spec."""
+        from formula_foundry.coupongen.families import validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        spec = load_couponspec(valid_spec_data)
+        # Should not raise
+        validate_family(spec)
+
+    def test_validate_family_unsupported(self, valid_spec_data: dict[str, Any]) -> None:
+        """Unsupported family raises FamilyValidationError."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        valid_spec_data["coupon_family"] = "F99_UNSUPPORTED"
+        spec = load_couponspec(valid_spec_data)
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "unsupported" in str(exc_info.value).lower()
+
+    def test_family_validation_error_has_attributes(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """FamilyValidationError provides detailed attributes."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        # Remove discontinuity for F1 spec
+        del valid_spec_data["discontinuity"]
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert exc_info.value.family == "F1_SINGLE_ENDED_VIA"
+        assert exc_info.value.field == "discontinuity"
+        assert "requires" in exc_info.value.reason.lower()
+
+    def test_get_family_forbidden_fields_f0(self) -> None:
+        """F0 forbids F1-only fields."""
+        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F0
+
+        forbidden = get_family_forbidden_fields(FAMILY_F0)
+        assert "discontinuity" in forbidden
+
+    def test_get_family_forbidden_fields_f1(self) -> None:
+        """F1 has no forbidden fields."""
+        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F1
+
+        forbidden = get_family_forbidden_fields(FAMILY_F1)
+        assert len(forbidden) == 0
+
+    def test_get_family_required_fields_f0(self) -> None:
+        """F0 requires specific fields."""
+        from formula_foundry.coupongen.families import get_family_required_fields, FAMILY_F0
+
+        required = get_family_required_fields(FAMILY_F0)
+        assert "transmission_line.length_right_nm" in required

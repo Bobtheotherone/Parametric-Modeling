@@ -64,7 +64,15 @@ from .fab_profiles import (
     load_fab_profile,
     load_fab_profile_from_dict,
 )
-from .families import FAMILY_F0, FAMILY_F1, SUPPORTED_FAMILIES, validate_family
+from .families import (
+    FAMILY_F0,
+    FAMILY_F1,
+    SUPPORTED_FAMILIES,
+    FamilyValidationError,
+    get_family_forbidden_fields,
+    get_family_required_fields,
+    validate_family,
+)
 from .hashing import (
     canonical_drc_json,
     canonical_hash_export_text,
@@ -95,9 +103,11 @@ from .spec import (
     COUPONSPEC_SCHEMA,
     COUPONSPEC_SCHEMA_PATH,
     CouponSpec,
+    StrictValidationError,
     get_json_schema,
     load_couponspec,
     validate_against_json_schema,
+    validate_strict,
 )
 from .stackups import (
     STACKUP_SCHEMA,
@@ -193,6 +203,10 @@ __all__ = [
     "FAMILY_F1",
     "LengthNM",
     "SUPPORTED_FAMILIES",
+    # Family validation types
+    "FamilyValidationError",
+    # Strict validation types
+    "StrictValidationError",
     # API functions
     "build_coupon",
     "build_drc_args",
@@ -225,6 +239,10 @@ __all__ = [
     "validate_against_json_schema",
     "validate_family",
     "validate_spec",
+    "validate_strict",
+    # Family helper functions
+    "get_family_forbidden_fields",
+    "get_family_required_fields",
     "write_manifest",
     # Fab profile functions
     "clear_profile_cache",
