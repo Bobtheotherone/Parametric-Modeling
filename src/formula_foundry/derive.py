@@ -5,9 +5,10 @@ and derived features for RF/microwave transmission line analysis. These groups
 are essential for symbolic regression and equation discovery in M1.
 
 Satisfies:
-    - REQ-M1-015: Derived groups include CPWG/via/fence/launch-relevant
-                  dimensionless groups and emit deterministically in manifest.json.
-    - REQ-M1-014: Feature coverage for equation discovery.
+    - REQ-M1-014: Derived features and dimensionless groups MUST be expanded to
+                  include CPWG/via/fence/launch-relevant groups and MUST be emitted
+                  deterministically in manifest.json.
+    - REQ-M1-015: Key dimensional groups drive design hash sensitivity.
 
 The dimensionless groups are designed to capture the physical relationships
 in coplanar waveguide with ground (CPWG) structures, including:
