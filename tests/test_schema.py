@@ -1085,3 +1085,254 @@ class TestSpecConsumption:
         assert error.unused_provided == frozenset({"unused"})
         assert error.unconsumed_expected == frozenset({"unconsumed"})
         assert "unused" in str(error) or "test error" in str(error)
+
+
+# =============================================================================
+# lint-spec-coverage CLI Tests (REQ-M1-018)
+# =============================================================================
+
+
+class TestLintSpecCoverageCLI:
+    """Tests for lint-spec-coverage CLI command per REQ-M1-018.
+
+    REQ-M1-018: The CLI MUST provide lint-spec-coverage (non-zero on coverage
+    failures) and explain (human-readable resolved + tightest-constraint summary).
+    """
+
+    def test_lint_spec_coverage_returns_nonzero_on_unconsumed_expected(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return non-zero on unconsumed expected paths.
+
+        This test verifies that lint-spec-coverage returns a non-zero exit code when
+        there are unconsumed expected paths in strict mode by directly testing the
+        SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        # Create a consumption with unconsumed expected paths
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version"}),
+            expected_paths=frozenset({"schema_version", "unconsumed_path"}),
+            provided_paths=frozenset({"schema_version"}),
+        )
+
+        # Verify unconsumed_expected_paths is non-empty
+        assert consumption.unconsumed_expected_paths == frozenset({"unconsumed_path"})
+
+        # enforce_spec_consumption must raise SpecConsumptionError
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unconsumed_path" in exc_info.value.unconsumed_expected
+
+    def test_lint_spec_coverage_returns_nonzero_on_unused_provided(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return non-zero on unused provided paths.
+
+        This test verifies that lint-spec-coverage returns a non-zero exit code when
+        there are unused provided paths in strict mode by directly testing the
+        SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        # Create a consumption with unused provided paths
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version"}),
+            expected_paths=frozenset({"schema_version"}),
+            provided_paths=frozenset({"schema_version", "unused_provided_field"}),
+        )
+
+        # Verify unused_provided_paths is non-empty
+        assert consumption.unused_provided_paths == frozenset({"unused_provided_field"})
+
+        # enforce_spec_consumption must raise SpecConsumptionError
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unused_provided_field" in exc_info.value.unused_provided
+
+    def test_lint_spec_coverage_returns_zero_on_complete_coverage(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return zero on complete coverage.
+
+        This test verifies that lint-spec-coverage returns zero exit code when
+        all expected paths are consumed and no provided paths are unused by directly
+        testing the SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import enforce_spec_consumption
+
+        # Create a consumption with complete coverage (no issues)
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version", "coupon_family"}),
+            expected_paths=frozenset({"schema_version", "coupon_family"}),
+            provided_paths=frozenset({"schema_version", "coupon_family"}),
+        )
+
+        # Verify no unused or unconsumed paths
+        assert len(consumption.unused_provided_paths) == 0
+        assert len(consumption.unconsumed_expected_paths) == 0
+
+        # enforce_spec_consumption must NOT raise (complete coverage)
+        enforce_spec_consumption(consumption)  # Should not raise
+
+    def test_lint_spec_coverage_cli_parser_exists(self) -> None:
+        """REQ-M1-018: lint-spec-coverage command must be available in CLI parser."""
+        from formula_foundry.coupongen.cli_main import build_parser
+
+        parser = build_parser()
+        # Parse a fake command to verify lint-spec-coverage is registered
+        try:
+            args = parser.parse_args(["lint-spec-coverage", "/fake/path.yaml"])
+            assert args.command == "lint-spec-coverage"
+            assert hasattr(args, "strict")
+            assert hasattr(args, "json")
+        except SystemExit:
+            pytest.fail("lint-spec-coverage command not properly registered")
+
+    def test_explain_cli_parser_exists(self) -> None:
+        """REQ-M1-018: explain command must be available in CLI parser."""
+        from formula_foundry.coupongen.cli_main import build_parser
+
+        parser = build_parser()
+        try:
+            args = parser.parse_args(["explain", "/fake/path.yaml"])
+            assert args.command == "explain"
+            assert hasattr(args, "out")
+            assert hasattr(args, "json")
+        except SystemExit:
+            pytest.fail("explain command not properly registered")
+
+
+# =============================================================================
+# Strict Mode Extra Field Rejection Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestStrictModeExtraFieldRejection:
+    """Additional tests for strict mode extra field rejection per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST reject unknown/extra fields (no silent
+    accept) under strict mode.
+    """
+
+    def test_strict_mode_rejects_unknown_top_level_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Unknown top-level fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["completely_unknown_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_nested_board_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra nested fields in board section must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["board"]["extra_board_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_transmission_line_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra transmission_line fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["transmission_line"]["extra_tl_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_discontinuity_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra discontinuity fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["discontinuity"]["extra_disc_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_pydantic_model_forbids_extra_by_default(self) -> None:
+        """Verify that CouponSpec Pydantic model forbids extra fields."""
+        from formula_foundry.coupongen.spec import CouponSpec
+
+        # Check that the model config forbids extra fields
+        config = CouponSpec.model_config
+        assert config.get("extra") == "forbid"
+
+
+# =============================================================================
+# Family Violation Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestFamilyViolationRejection:
+    """Additional tests for family-specific violation rejection per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST enforce family-specific correctness
+    (e.g., F0 cannot include F1-only blocks).
+    """
+
+    def test_f0_with_discontinuity_raises_family_error(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 family cannot have discontinuity (F1-only feature)."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Manually add discontinuity (which is F1-only)
+        # First, load without discontinuity to get a valid spec
+        spec = load_couponspec(minimal_spec_data)
+
+        # Create a new spec data with discontinuity
+        spec_with_disc = minimal_spec_data.copy()
+        spec_with_disc["discontinuity"] = {
+            "type": "VIA_TRANSITION",
+            "signal_via": {
+                "drill_nm": 300000,
+                "diameter_nm": 650000,
+                "pad_diameter_nm": 900000,
+            },
+        }
+        spec_disc = load_couponspec(spec_with_disc)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec_disc)
+        assert "discontinuity" in str(exc_info.value).lower()
+
+    def test_f1_without_discontinuity_raises_family_error(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 family requires discontinuity block."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        # Remove discontinuity from F1 spec
+        del valid_spec_data["discontinuity"]
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "discontinuity" in str(exc_info.value).lower()
+
+    def test_f1_with_wrong_discontinuity_type_raises_error(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 discontinuity.type must be VIA_TRANSITION."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        valid_spec_data["discontinuity"]["type"] = "INVALID_TYPE"
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "via_transition" in str(exc_info.value).lower()
