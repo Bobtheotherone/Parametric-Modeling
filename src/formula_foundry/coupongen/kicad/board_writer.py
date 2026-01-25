@@ -27,10 +27,10 @@ from typing import TYPE_CHECKING
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
 from ..constraints.core import resolve_fab_limits
 from ..families import FAMILY_F1
-from ..geom.cpwg import CPWGSpec, generate_cpwg_ground_tracks
+from ..geom.cpwg import CPWGSpec, GroundViaFenceSpec, generate_cpwg_ground_tracks, generate_ground_via_fence
 from ..geom.footprint_meta import load_footprint_meta
 from ..geom.layout import LayoutPlan
-from ..geom.primitives import PositionNM
+from ..geom.primitives import PositionNM, Via
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
@@ -235,6 +235,38 @@ class BoardWriter:
     def _indexed_uuid(self, base_path: str, index: int) -> str:
         """Generate a deterministic UUID for an indexed element."""
         return deterministic_uuid_indexed(self.spec.schema_version, base_path, index)
+
+    @staticmethod
+    def _build_track_segment(
+        start: PositionNM,
+        end: PositionNM,
+        width_nm: int,
+        layer: str,
+        net_id: int,
+        track_uuid: str,
+    ) -> SExprList:
+        return [
+            "segment",
+            ["start", nm_to_mm(start.x), nm_to_mm(start.y)],
+            ["end", nm_to_mm(end.x), nm_to_mm(end.y)],
+            ["width", nm_to_mm(width_nm)],
+            ["layer", layer],
+            ["net", net_id],
+            ["tstamp", track_uuid],
+        ]
+
+    @staticmethod
+    def _build_via_element(via: Via, via_uuid: str, net_id: int | None = None) -> SExprList:
+        resolved_net = net_id if net_id is not None else (via.net_id if via.net_id > 0 else 0)
+        return [
+            "via",
+            ["at", nm_to_mm(via.position.x), nm_to_mm(via.position.y)],
+            ["size", nm_to_mm(via.diameter_nm)],
+            ["drill", nm_to_mm(via.drill_nm)],
+            ["layers", via.layers[0], via.layers[1]],
+            ["net", resolved_net],
+            ["tstamp", via_uuid],
+        ]
 
     def build_board(self) -> SExprList:
         """Build the complete board S-expression.
@@ -712,23 +744,45 @@ class BoardWriter:
         use_cpwg = tl_spec.type.upper() == "CPWG"
         gap_nm = int(tl_spec.gap_nm)
         net_map = {"SIG": 1, "GND": 2}
+        launch_plan_by_side = {
+            "left": self._layout_plan.get_launch_plan("left"),
+            "right": self._layout_plan.get_launch_plan("right"),
+        }
+
+        def append_launch_tracks(side: str) -> None:
+            plan = launch_plan_by_side.get(side)
+            if plan is None:
+                return
+            for idx, segment in enumerate(plan.segments):
+                track_uuid = self._indexed_uuid(f"track.launch.{side}", idx)
+                net_id = net_map.get(segment.net_name, 0)
+                tracks.append(
+                    self._build_track_segment(
+                        segment.start,
+                        segment.end,
+                        segment.width_nm,
+                        segment.layer,
+                        net_id,
+                        track_uuid,
+                    )
+                )
+
+        append_launch_tracks("left")
 
         # Iterate over all segments in the LayoutPlan
         for segment in lp.segments:
             track_uuid = self._next_uuid(f"track.{segment.label}")
-
             net_id = net_map.get(segment.net_name, 0)
 
             tracks.append(
-                [
-                    "segment",
-                    ["start", nm_to_mm(segment.x_start_nm), nm_to_mm(segment.y_nm)],
-                    ["end", nm_to_mm(segment.x_end_nm), nm_to_mm(segment.y_nm)],
-                    ["width", nm_to_mm(segment.width_nm)],
-                    ["layer", segment.layer],
-                    ["net", net_id],
-                    ["tstamp", track_uuid],
-                ]
+                self._build_track_segment(
+                    PositionNM(segment.x_start_nm, segment.y_nm),
+                    PositionNM(segment.x_end_nm, segment.y_nm),
+                    segment.width_nm,
+                    segment.layer,
+                    net_id,
+                    track_uuid,
+                )
             )
 
             if use_cpwg and segment.net_name == "SIG":
@@ -748,16 +802,17 @@ class BoardWriter:
                     suffix = "gnd_pos" if idx == 0 else "gnd_neg"
                     ground_uuid = self._next_uuid(f"track.{segment.label}.{suffix}")
                     tracks.append(
-                        [
-                            "segment",
-                            ["start", nm_to_mm(ground_track.start.x), nm_to_mm(ground_track.start.y)],
-                            ["end", nm_to_mm(ground_track.end.x), nm_to_mm(ground_track.end.y)],
-                            ["width", nm_to_mm(ground_track.width_nm)],
-                            ["layer", ground_track.layer],
-                            ["net", ground_track.net_id],
-                            ["tstamp", ground_uuid],
-                        ]
+                        self._build_track_segment(
+                            ground_track.start,
+                            ground_track.end,
+                            ground_track.width_nm,
+                            ground_track.layer,
+                            ground_track.net_id,
+                            ground_uuid,
+                        )
                     )
+
+        append_launch_tracks("right")
 
         return tracks
 
@@ -777,6 +832,8 @@ class BoardWriter:
         disc = self.spec.discontinuity
 
         if disc is None or not lp.has_discontinuity:
+            vias.extend(self._build_launch_stitch_vias())
+            vias.extend(self._build_cpwg_via_fence())
             return vias
 
         # Get discontinuity position from LayoutPlan (single source of truth)
@@ -842,7 +899,62 @@ class BoardWriter:
                         ]
                     )
 
+        vias.extend(self._build_launch_stitch_vias())
+        vias.extend(self._build_cpwg_via_fence())
+
         return vias
+
+    def _build_launch_stitch_vias(self) -> list[SExprList]:
+        vias: list[SExprList] = []
+        for side in ("left", "right"):
+            plan = self._layout_plan.get_launch_plan(side)
+            if plan is None:
+                continue
+            for idx, via in enumerate(plan.stitch_vias):
+                via_uuid = self._indexed_uuid(f"via.launch.{side}", idx)
+                vias.append(self._build_via_element(via, via_uuid, net_id=2))
+        return vias
+
+    def _build_cpwg_via_fence(self) -> list[SExprList]:
+        tl_spec = self.spec.transmission_line
+        fence = tl_spec.ground_via_fence
+        if fence is None or not fence.enabled:
+            return []
+        if tl_spec.type.upper() != "CPWG":
+            return []
+
+        fence_spec = GroundViaFenceSpec(
+            pitch_nm=int(fence.pitch_nm),
+            offset_from_gap_nm=int(fence.offset_from_gap_nm),
+            drill_nm=int(fence.via.drill_nm),
+            diameter_nm=int(fence.via.diameter_nm),
+            layers=("F.Cu", "B.Cu"),
+            net_id=2,
+        )
+        gap_nm = int(tl_spec.gap_nm)
+        elements: list[SExprList] = []
+
+        for segment in self._layout_plan.segments:
+            cpwg_spec = CPWGSpec(
+                w_nm=segment.width_nm,
+                gap_nm=gap_nm,
+                length_nm=segment.length_nm,
+                layer=segment.layer,
+                net_id=1,
+                ground_net_id=2,
+            )
+            start = PositionNM(segment.x_start_nm, segment.y_nm)
+            end = PositionNM(segment.x_end_nm, segment.y_nm)
+            pos_vias, neg_vias = generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
+
+            for idx, via in enumerate(pos_vias):
+                via_uuid = self._indexed_uuid(f"via.fence.{segment.label}.pos", idx)
+                elements.append(self._build_via_element(via, via_uuid, net_id=2))
+            for idx, via in enumerate(neg_vias):
+                via_uuid = self._indexed_uuid(f"via.fence.{segment.label}.neg", idx)
+                elements.append(self._build_via_element(via, via_uuid, net_id=2))
+
+        return elements
 
     def _build_antipads(self) -> list[SExprList]:
         """Build antipad polygons for F1 coupons.
