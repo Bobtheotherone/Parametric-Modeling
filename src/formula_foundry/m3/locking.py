@@ -32,6 +32,11 @@ import fcntl
 import os
 import threading
 import time
+<<<<<<< HEAD
+=======
+from collections.abc import Iterator
+from contextlib import AbstractContextManager as ContextManager
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path

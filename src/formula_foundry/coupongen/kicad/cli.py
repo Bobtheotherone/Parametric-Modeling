@@ -263,8 +263,19 @@ def parse_kicad_error(
         KicadErrorCode.FILE_WRITE_ERROR: "file_write_error",
         KicadErrorCode.DRC_VIOLATIONS: "drc_violations",
     }
+<<<<<<< HEAD
 
     error_type = error_type_map.get(returncode, f"unknown_error_{returncode}")
+=======
+    try:
+        error_code_enum = KicadErrorCode(returncode)
+    except ValueError:
+        error_code_enum = None
+        error_type = f"unknown_error_{returncode}"
+    else:
+        assert error_code_enum is not None
+        error_type = error_type_map[error_code_enum]
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     combined_output = f"{stderr}\n{stdout}".strip()
 
     # Extract file path from common error patterns

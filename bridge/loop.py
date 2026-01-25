@@ -25,6 +25,7 @@ import datetime as dt
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -41,6 +42,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+<<<<<<< HEAD
+=======
+# Atomic I/O for robust file operations
+from bridge.atomic_io import atomic_write_json, validate_json_file
+
+# Turn normalization - extracted to submodule for tooling readability
+from bridge.loop_pkg.turn_normalizer import (
+    NormalizationResult,
+    TurnNormalizer,
+    normalize_agent_output,
+)
+from bridge.loop_pkg.turn_normalizer import (
+    validate_turn_lenient as _validate_turn_lenient,
+)
+
+# Patch integration for commit-free worker operation
+from bridge.patch_integration import PatchIntegrator, collect_patch_artifact, save_patch_artifact
+from bridge.scheduler import LaneConfig, TwoLaneScheduler
+from bridge.smoke_route import resolve_smoke_route
+from bridge.streaming import run_cmd_with_streaming
+from bridge.verify_repair import (
+    create_repair_callback,
+    run_verify_repair_loop,
+    write_repair_report,
+)
+
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
 AGENTS: tuple[str, ...] = ("codex", "claude")
 
 
@@ -1020,6 +1048,152 @@ def _validate_turn(
 
 
 # -----------------------------
+<<<<<<< HEAD
+=======
+# Contract hardening for agent outputs
+# -----------------------------
+
+# Patterns that indicate non-compliant agent output requiring strict reprompt
+NONCOMPLIANT_OUTPUT_PATTERNS: list[tuple[str, str]] = [
+    (r"tools?\s+(are\s+)?(disabled|unavailable|not\s+available)", "tools disabled claim"),
+    (r"cannot\s+(use|access|execute)\s+tools?", "tools access claim"),
+    (r"don'?t\s+have\s+(access|permission)\s+to\s+tools?", "tools permission claim"),
+    (r"tool\s+(execution|use|usage)\s+(is\s+)?(blocked|disabled)", "tool execution claim"),
+    (r"```(json|python|bash|)", "markdown code block"),
+    (r"^(Here'?s?|I'?ll|Let me|Sure,)", "prose prefix"),
+    (r"^\s*#", "comment line as output"),
+]
+
+
+def _detect_noncompliant_output(text: str) -> tuple[bool, list[str]]:
+    """Detect patterns in agent output that indicate non-compliance.
+
+    Returns:
+        (is_noncompliant, list_of_violations)
+    """
+    violations: list[str] = []
+    text_lower = text.lower()
+
+    for pattern, description in NONCOMPLIANT_OUTPUT_PATTERNS:
+        if re.search(pattern, text_lower, flags=re.IGNORECASE | re.MULTILINE):
+            violations.append(description)
+
+    return bool(violations), violations
+
+
+def _build_strict_correction_prompt(
+    agent: str,
+    milestone_id: str,
+    validation_error: str,
+    task_title: str,
+    task_description: str,
+    noncompliant_violations: list[str] | None = None,
+    attempt_number: int = 1,
+) -> str:
+    """Build an increasingly strict correction prompt based on attempt number.
+
+    Attempt 1: Standard correction with clear requirements
+    Attempt 2+: Stricter template with explicit prohibitions
+    """
+    stats_ref = "CL-1" if agent == "claude" else "CX-1"
+
+    # Base violations text
+    violations_text = ""
+    if noncompliant_violations:
+        violations_text = f"""
+VIOLATIONS DETECTED: {', '.join(noncompliant_violations)}
+These patterns are STRICTLY FORBIDDEN in your response."""
+
+    if attempt_number == 1:
+        return textwrap.dedent(f"""
+            STRICT JSON CORRECTION REQUIRED
+
+            Your previous response was INVALID: {validation_error}
+            {violations_text}
+
+            You MUST output ONLY a valid JSON object with these EXACT fields:
+            - agent: "{agent}" (EXACTLY this string)
+            - milestone_id: "{milestone_id}" (EXACTLY this string)
+            - phase: "implement"
+            - work_completed: true or false
+            - project_complete: false
+            - summary: "description of work"
+            - gates_passed: []
+            - requirement_progress: {{"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}}
+            - next_agent: "{agent}"
+            - next_prompt: ""
+            - delegate_rationale: ""
+            - stats_refs: ["{stats_ref}"]
+            - needs_write_access: true
+            - artifacts: []
+
+            CRITICAL RULES:
+            - Output ONLY the JSON object, nothing else
+            - NO markdown (no ```)
+            - NO explanatory text before or after
+            - NO comments
+            - agent must be EXACTLY "{agent}"
+            - milestone_id must be EXACTLY "{milestone_id}"
+
+            FORBIDDEN PHRASES (do NOT output these):
+            - "tools disabled" or "tools are disabled"
+            - "cannot use tools" or "cannot access tools"
+            - "don't have access to tools"
+            - Any prose before/after the JSON
+
+            Your task: {task_title}
+            {task_description}
+        """).strip()
+    else:
+        # Stricter template for attempt 2+
+        return textwrap.dedent(f'''
+            FINAL CORRECTION ATTEMPT - STRICT JSON ONLY
+
+            ERROR: {validation_error}
+            {violations_text}
+
+            OUTPUT THIS EXACT JSON (modify values as needed):
+
+            {{"agent": "{agent}", "milestone_id": "{milestone_id}", "phase": "implement", "work_completed": true, "project_complete": false, "summary": "Completed task", "gates_passed": [], "requirement_progress": {{"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}}, "next_agent": "{agent}", "next_prompt": "", "delegate_rationale": "Task completed", "stats_refs": ["{stats_ref}"], "needs_write_access": true, "artifacts": []}}
+
+            ABSOLUTE REQUIREMENTS:
+            1. agent = "{agent}" (exact match required)
+            2. milestone_id = "{milestone_id}" (exact match required)
+            3. Output ONLY the JSON - no markdown, no prose, no explanation
+            4. Do NOT claim tools are disabled - they are enabled
+            5. Do NOT use ``` code blocks
+
+            Task: {task_title}
+        ''').strip()
+
+
+def _is_noncompliant_and_should_use_stricter_prompt(text: str) -> tuple[bool, list[str]]:
+    """Check if output warrants a stricter reprompt.
+
+    Returns (should_use_stricter, violations).
+    """
+    is_noncompliant, violations = _detect_noncompliant_output(text)
+
+    # Also check if it looks like the agent dumped prose instead of JSON
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        violations.append("output does not start with JSON")
+        is_noncompliant = True
+
+    return is_noncompliant, violations
+
+
+# NOTE: TurnNormalizer has been moved to bridge/loop_pkg/turn_normalizer.py
+# for better tooling readability. Import is at the top of this file.
+
+
+# -----------------------------
+# Agent selection + quota (TurnNormalizer moved to loop_pkg/turn_normalizer.py)
+# -----------------------------
+
+
+# -----------------------------
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
 # Agent selection + quota
 # -----------------------------
 
@@ -2172,6 +2346,67 @@ def run_parallel(
     machine_info = _collect_machine_info()
     selftest_mode = getattr(args, "selftest_parallel", False)
 
+<<<<<<< HEAD
+=======
+    # Preflight check: detect dirty repo before spending credits
+    # Skip in selftest mode since we're not doing real work
+    if not selftest_mode:
+        auto_stash = getattr(args, "auto_stash", False)
+        force_dirty = getattr(args, "force_dirty", False)
+        verify_mode = getattr(args, "verify_mode", "strict")
+
+        preflight_ok, preflight_msg, stash_ref = _preflight_check_repo(
+            state.project_root,
+            auto_stash=auto_stash,
+            force_dirty=force_dirty,
+            runs_dir=state.runs_dir,
+        )
+
+        if not preflight_ok:
+            print(f"\n[orchestrator] {preflight_msg}")
+            # Write error to runs_dir for debugging
+            error_path = state.runs_dir / "preflight_error.txt"
+            error_path.write_text(preflight_msg, encoding="utf-8")
+            stderr_path = state.runs_dir / "stderr.log"
+            stderr_path.write_text(f"PREFLIGHT FAILURE\n\n{preflight_msg}\n", encoding="utf-8")
+            # Write minimal run.json
+            run_json_path = state.runs_dir / "run.json"
+            run_json_path.write_text(
+                json.dumps(
+                    {
+                        "status": "preflight_failed",
+                        "error": preflight_msg,
+                        "run_id": state.run_id,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return 2
+
+        if stash_ref:
+            print(f"[orchestrator] {preflight_msg}")
+            print(f"[orchestrator] IMPORTANT: Run 'git stash pop {stash_ref}' to restore your changes after the run")
+        elif "WARNING" in preflight_msg:
+            print(f"[orchestrator] {preflight_msg}")
+
+        # Run bootstrap to ensure environment is consistent before tasks start
+        print("[orchestrator] Running environment bootstrap...")
+        from bridge.verify_repair.bootstrap import run_bootstrap
+        bootstrap_log = state.runs_dir / "bootstrap_start.log"
+        bootstrap_result = run_bootstrap(
+            state.project_root,
+            log_path=bootstrap_log,
+            verbose=True,
+        )
+        if bootstrap_result.success:
+            if not bootstrap_result.skipped:
+                print(f"[orchestrator] Bootstrap completed in {bootstrap_result.elapsed_s:.1f}s")
+        else:
+            print(f"[orchestrator] WARNING: Bootstrap failed: {bootstrap_result.stderr[:200]}")
+            print("[orchestrator] Continuing anyway - verify will catch any missing dependencies")
+
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     # In selftest mode, we use synthetic tasks
     if selftest_mode:
         print("[orchestrator] SELFTEST MODE: using synthetic tasks (no real agents)")
@@ -2667,11 +2902,69 @@ def run_parallel(
                 # Nothing running and nothing started, wait a bit before retrying
                 time.sleep(0.5)
 
+<<<<<<< HEAD
     # Final verification (skip in selftest mode)
+=======
+    # Final verification with auto-repair loop (skip in selftest mode; respect verify_mode)
+    # STALL PREVENTION: The repair callback ensures verify failures trigger automatic
+    # repair actions instead of waiting for manual intervention.
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     if not selftest_mode:
         verify_json = state.runs_dir / "final_verify.json"
+<<<<<<< HEAD
         print("[orchestrator] parallel: running tools.verify (strict)")
         rc_v, _, _ = _run_verify(state.project_root, verify_json, strict_git=True)
+=======
+        repair_report_path = state.runs_dir / "verify_repair_report.json"
+        max_repair_attempts = getattr(args, "max_repair_attempts", 5)
+
+        if verify_mode == "off":
+            print("[orchestrator] parallel: skipping final verification (--verify-mode=off)")
+            rc_v = 0
+        else:
+            strict_git = (verify_mode != "skip-git")
+            mode_label = "strict" if strict_git else "skip-git"
+            print(f"[orchestrator] parallel: running verify auto-repair loop ({mode_label}, max_attempts={max_repair_attempts})")
+
+            # Create repair callback for automatic execution of repair tasks
+            # This prevents the orchestrator from stalling on verify failures
+            repair_callback = create_repair_callback(
+                project_root=state.project_root,
+                runs_dir=state.runs_dir,
+                verbose=True,
+                scheduler_callback=None,  # No external scheduler, use internal executor
+            )
+
+            repair_result = run_verify_repair_loop(
+                project_root=state.project_root,
+                verify_json_path=verify_json,
+                max_attempts=max_repair_attempts,
+                strict_git=strict_git,
+                verbose=True,
+                runs_dir=state.runs_dir,
+                bootstrap_on_start=True,
+                agent_task_callback=repair_callback,  # CRITICAL: enables auto-repair
+            )
+
+            rc_v = repair_result.final_exit_code
+            write_repair_report(repair_result, repair_report_path)
+
+            if repair_result.success:
+                print(f"[orchestrator] parallel: verify PASSED after {repair_result.total_attempts} attempt(s)")
+            else:
+                print(f"[orchestrator] parallel: verify FAILED after {repair_result.total_attempts} attempt(s)")
+                print(f"[orchestrator] parallel: remaining failures: {repair_result.remaining_failures}")
+                print(f"[orchestrator] parallel: repair report: {repair_report_path}")
+                # Write final verify attempt artifact
+                final_verify_artifact = state.runs_dir / f"final_verify_attempt_{repair_result.total_attempts}.json"
+                if verify_json.exists():
+                    shutil.copy(verify_json, final_verify_artifact)
+                    print(f"[orchestrator] parallel: final verify artifact: {final_verify_artifact}")
+                # Check for out-of-scope repairs that need manual intervention
+                out_of_scope_path = state.runs_dir / "out_of_scope_repairs.json"
+                if out_of_scope_path.exists():
+                    print(f"[orchestrator] parallel: out-of-scope repairs (need manual): {out_of_scope_path}")
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     else:
         rc_v = 0
 
@@ -2994,6 +3287,33 @@ def main() -> int:
         "--only-claude", action="store_true", help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)"
     )
 
+<<<<<<< HEAD
+=======
+    # Robustness flags for unattended runs
+    ap.add_argument(
+        "--auto-stash",
+        action="store_true",
+        help="Auto-stash uncommitted changes before starting (prints stash ref, does NOT auto-pop)",
+    )
+    ap.add_argument(
+        "--verify-mode",
+        choices=["strict", "skip-git", "off"],
+        default="strict",
+        help="Verification mode: strict (fail on dirty repo), skip-git (skip git checks during run), off (no verification)",
+    )
+    ap.add_argument(
+        "--force-dirty",
+        action="store_true",
+        help="Allow starting with dirty repo (DANGEROUS: may cause verify stalls, use with --verify-mode=skip-git)",
+    )
+    ap.add_argument(
+        "--max-repair-attempts",
+        type=int,
+        default=3,
+        help="Maximum verify auto-repair attempts before giving up (default: 3)",
+    )
+
+>>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     args = ap.parse_args()
 
     # Validate mutually exclusive agent flags
