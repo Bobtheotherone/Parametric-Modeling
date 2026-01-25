@@ -305,12 +305,30 @@ def create_f0_layout_plan(
     Returns:
         LayoutPlan for the F0 coupon.
     """
+    from .footprint_meta import load_footprint_meta
+
+    meta = load_footprint_meta(footprint)
+    left_pad_x, left_pad_y = _transform_pad_position(
+        anchor_x=left_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=0,
+    )
+    right_pad_x, right_pad_y = _transform_pad_position(
+        anchor_x=right_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=180,
+    )
+
     left_port = PortPlan(
         x_ref_nm=left_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=left_port_x_nm,  # Simplified: pad at ref point
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=left_pad_x,
+        signal_pad_y_nm=left_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=0,
         side="left",
     )
@@ -318,18 +336,18 @@ def create_f0_layout_plan(
     right_port = PortPlan(
         x_ref_nm=right_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=right_port_x_nm,  # Simplified: pad at ref point
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=right_pad_x,
+        signal_pad_y_nm=right_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=180000,
         side="right",
     )
 
     # Single through segment
     through_segment = SegmentPlan(
-        x_start_nm=left_port_x_nm,
-        x_end_nm=right_port_x_nm,
-        y_nm=0,
+        x_start_nm=left_pad_x,
+        x_end_nm=right_pad_x,
+        y_nm=left_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
@@ -388,24 +406,42 @@ def create_f1_layout_plan(
     Raises:
         ValueError: If left_length_nm results in discontinuity outside board.
     """
+    from .footprint_meta import load_footprint_meta
+
+    meta = load_footprint_meta(footprint)
+    left_pad_x, left_pad_y = _transform_pad_position(
+        anchor_x=left_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=0,
+    )
+    right_pad_x, right_pad_y = _transform_pad_position(
+        anchor_x=right_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=180,
+    )
+
     # Derive discontinuity position
-    x_disc_nm = left_port_x_nm + left_length_nm
+    x_disc_nm = left_pad_x + left_length_nm
 
     # Derive right length to ensure continuity
-    right_length_nm = right_port_x_nm - x_disc_nm
+    right_length_nm = right_pad_x - x_disc_nm
 
     if right_length_nm < 0:
         raise ValueError(
             f"Left length ({left_length_nm}) places discontinuity ({x_disc_nm}) "
-            f"beyond right port ({right_port_x_nm})"
+            f"beyond right port ({right_pad_x})"
         )
 
     left_port = PortPlan(
         x_ref_nm=left_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=left_port_x_nm,
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=left_pad_x,
+        signal_pad_y_nm=left_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=0,
         side="left",
     )
@@ -413,18 +449,18 @@ def create_f1_layout_plan(
     right_port = PortPlan(
         x_ref_nm=right_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=right_port_x_nm,
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=right_pad_x,
+        signal_pad_y_nm=right_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=180000,
         side="right",
     )
 
     # Left segment: from left port to discontinuity
     left_segment = SegmentPlan(
-        x_start_nm=left_port_x_nm,
+        x_start_nm=left_pad_x,
         x_end_nm=x_disc_nm,
-        y_nm=0,
+        y_nm=left_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
@@ -434,8 +470,8 @@ def create_f1_layout_plan(
     # Right segment: from discontinuity to right port
     right_segment = SegmentPlan(
         x_start_nm=x_disc_nm,
-        x_end_nm=right_port_x_nm,
-        y_nm=0,
+        x_end_nm=right_pad_x,
+        y_nm=right_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
