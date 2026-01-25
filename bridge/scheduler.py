@@ -358,6 +358,11 @@ class BackfillGenerator:
     - bridge/scheduler.py
     - bridge/loop_pkg/**
     - DESIGN_DOCUMENT.md
+
+    NO-OP STREAK COOLDOWN:
+    If a backfill task type repeatedly produces empty patches ("No changes to commit"),
+    that type is put on cooldown and skipped for N generation cycles. This prevents
+    wasting agent credits on no-op work.
     """
 
     # Allowed directories for backfill tasks (bridge/ excluded by default for safety)
@@ -376,6 +381,10 @@ class BackfillGenerator:
         "bridge/loop_pkg/",
         "DESIGN_DOCUMENT.md",
     ]
+
+    # Cooldown configuration for no-op streak suppression
+    NOOP_STREAK_THRESHOLD = 2  # Put type on cooldown after this many consecutive no-ops
+    COOLDOWN_CYCLES = 5  # Skip this many generation cycles when on cooldown
 
     # Task types with scope-aware descriptions (bridge removed from defaults)
     TASK_TYPES = [
@@ -421,26 +430,151 @@ class BackfillGenerator:
         self.generated_count = 0
         self.allow_bridge = allow_bridge
 
+        # No-op streak tracking for cooldown suppression
+        # Maps task_type -> consecutive no-op count
+        self._noop_streaks: dict[str, int] = {}
+        # Maps task_type -> cycle number when cooldown started
+        self._cooldown_start: dict[str, int] = {}
+        # Total cycles (increments each call to generate_filler_tasks)
+        self._generation_cycle = 0
+
     def should_generate(self, current_queue_depth: int, worker_count: int) -> bool:
         """Check if backfill tasks should be generated."""
         target_depth = worker_count * 2
         return current_queue_depth < min(target_depth, self.min_queue_depth)
 
+    def record_noop_result(self, task_id: str) -> None:
+        """Record that a filler task produced no changes (no-op).
+
+        Call this when a FILLER-* task completes with "No changes to commit".
+        After NOOP_STREAK_THRESHOLD consecutive no-ops for a type, that type
+        goes on cooldown.
+
+        Args:
+            task_id: The task ID (e.g., "FILLER-LINT-001")
+        """
+        # Extract task type from ID: "FILLER-LINT-001" -> "lint"
+        if not task_id.startswith("FILLER-"):
+            return
+        parts = task_id.split("-")
+        if len(parts) < 3:
+            return
+        task_type = parts[1].lower()
+
+        # Increment no-op streak
+        streak = self._noop_streaks.get(task_type, 0) + 1
+        self._noop_streaks[task_type] = streak
+
+        if streak >= self.NOOP_STREAK_THRESHOLD:
+            # Put on cooldown
+            self._cooldown_start[task_type] = self._generation_cycle
+            print(f"[backfill] Task type '{task_type}' on cooldown after {streak} consecutive no-ops")
+
+    def record_successful_result(self, task_id: str) -> None:
+        """Record that a filler task produced actual changes.
+
+        Call this when a FILLER-* task completes with a commit.
+        Resets the no-op streak and removes cooldown.
+
+        Args:
+            task_id: The task ID (e.g., "FILLER-LINT-001")
+        """
+        if not task_id.startswith("FILLER-"):
+            return
+        parts = task_id.split("-")
+        if len(parts) < 3:
+            return
+        task_type = parts[1].lower()
+
+        # Reset streak and remove from cooldown
+        self._noop_streaks[task_type] = 0
+        self._cooldown_start.pop(task_type, None)
+
+    def record_rejection(self, task_id: str) -> None:
+        """Record that a filler task was rejected (SCOPE_REJECTED).
+
+        Similar to no-op, rejections indicate the task type isn't productive.
+
+        Args:
+            task_id: The task ID (e.g., "FILLER-LINT-001")
+        """
+        # Treat rejection same as no-op for cooldown purposes
+        self.record_noop_result(task_id)
+
+    def is_type_on_cooldown(self, task_type: str) -> bool:
+        """Check if a task type is currently on cooldown.
+
+        Args:
+            task_type: The task type (e.g., "lint", "test")
+
+        Returns:
+            True if the type is on cooldown and should be skipped
+        """
+        task_type = task_type.lower()
+        if task_type not in self._cooldown_start:
+            return False
+
+        # Check if cooldown has expired
+        cycles_since = self._generation_cycle - self._cooldown_start[task_type]
+        if cycles_since >= self.COOLDOWN_CYCLES:
+            # Cooldown expired - remove and reset streak
+            del self._cooldown_start[task_type]
+            self._noop_streaks[task_type] = 0
+            print(f"[backfill] Task type '{task_type}' cooldown expired, re-enabling")
+            return False
+
+        return True
+
+    def get_cooldown_status(self) -> dict[str, int]:
+        """Get the current cooldown status for all types.
+
+        Returns:
+            Dict mapping task_type to remaining cooldown cycles
+        """
+        status = {}
+        for task_type, start_cycle in self._cooldown_start.items():
+            remaining = self.COOLDOWN_CYCLES - (self._generation_cycle - start_cycle)
+            if remaining > 0:
+                status[task_type] = remaining
+        return status
+
     def generate_filler_tasks(self, count: int) -> list[FillerTask]:
         """Generate filler tasks.
+
+        Skips task types that are on cooldown due to repeated no-op results.
+        If all types are on cooldown, returns fewer tasks than requested.
 
         Args:
             count: Number of filler tasks to generate
 
         Returns:
-            List of FillerTask objects
+            List of FillerTask objects (may be fewer than count if types are on cooldown)
         """
+        # Increment generation cycle for cooldown tracking
+        self._generation_cycle += 1
+
         # Use appropriate task types based on configuration
         task_types = self.TASK_TYPES_WITH_BRIDGE if self.allow_bridge else self.TASK_TYPES
 
         tasks = []
-        for i in range(count):
-            task_type, title, description = task_types[i % len(task_types)]
+        # Track attempts to avoid infinite loop if all types are on cooldown
+        max_attempts = count + len(task_types)
+        attempts = 0
+
+        while len(tasks) < count and attempts < max_attempts:
+            attempts += 1
+
+            # Use generated_count for task type selection BEFORE incrementing
+            # This ensures task types rotate across calls even when count=1
+            type_index = self.generated_count % len(task_types)
+            task_type, title, description = task_types[type_index]
+
+            # Check if this type is on cooldown
+            if self.is_type_on_cooldown(task_type):
+                # Skip this type and try the next one
+                self.generated_count += 1
+                continue
+
             self.generated_count += 1
             task_id = f"FILLER-{task_type.upper()}-{self.generated_count:03d}"
 
@@ -461,6 +595,11 @@ class BackfillGenerator:
                 task_type=task_type,
                 priority=-10,  # Low priority so real work takes precedence
             ))
+
+        if len(tasks) < count:
+            cooldown_status = self.get_cooldown_status()
+            print(f"[backfill] Generated {len(tasks)}/{count} tasks (types on cooldown: {cooldown_status})")
+
         return tasks
 
 

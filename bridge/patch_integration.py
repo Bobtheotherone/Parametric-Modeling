@@ -670,6 +670,66 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     _atomic_write(path, content)
 
 
+def _run_auto_ruff(
+    project_root: Path,
+    python_files: list[str],
+) -> tuple[bool, str]:
+    """Run ruff format and ruff check --fix on staged Python files.
+
+    This automatically fixes lint/format issues during patch integration,
+    reducing the need for separate lint agent runs.
+
+    Args:
+        project_root: Root of the git repository
+        python_files: List of Python file paths (relative to project_root)
+
+    Returns:
+        Tuple of (success, message)
+    """
+    if not python_files:
+        return True, "No Python files to format"
+
+    # Check if auto-ruff is enabled (default: ON)
+    auto_ruff_enabled = os.environ.get("ORCH_AUTO_RUFF", "1").lower() not in ("0", "false", "no", "off")
+    if not auto_ruff_enabled:
+        return True, "Auto-ruff disabled via ORCH_AUTO_RUFF=0"
+
+    # Filter to only existing files
+    existing_files = [f for f in python_files if (project_root / f).exists()]
+    if not existing_files:
+        return True, "No existing Python files to format"
+
+    # Try running ruff format
+    try:
+        rc, out, err = _run_cmd(
+            ["ruff", "format"] + existing_files,
+            cwd=project_root,
+        )
+        if rc != 0:
+            # Non-fatal: log warning and continue
+            print(f"[patch] Warning: ruff format returned {rc}: {err}")
+    except Exception as e:
+        print(f"[patch] Warning: ruff format failed ({e}), continuing without format")
+
+    # Try running ruff check --fix
+    try:
+        rc, out, err = _run_cmd(
+            ["ruff", "check", "--fix"] + existing_files,
+            cwd=project_root,
+        )
+        if rc != 0 and "error" in err.lower():
+            # Non-fatal: log warning and continue
+            print(f"[patch] Warning: ruff check --fix returned {rc}: {err}")
+    except Exception as e:
+        print(f"[patch] Warning: ruff check --fix failed ({e}), continuing without lint fixes")
+
+    # Re-stage the files that were potentially modified
+    for file_path in existing_files:
+        _run_cmd(["git", "add", file_path], cwd=project_root)
+
+    return True, f"Auto-ruff ran on {len(existing_files)} Python files"
+
+
 def apply_patch_artifact(
     project_root: Path,
     task_dir: Path,
@@ -778,6 +838,14 @@ def apply_patch_artifact(
             elif any(f["path"] == file_path and f["operation"] == "delete" for f in manifest.get("files", [])):
                 # Handle deleted files
                 _run_cmd(["git", "add", file_path], cwd=project_root)
+
+    # Auto-run ruff format and lint fix on staged Python files
+    # This reduces the need for separate lint agent runs
+    python_files = [f for f in files_to_stage if f.endswith(".py")]
+    if python_files:
+        ruff_ok, ruff_msg = _run_auto_ruff(project_root, python_files)
+        if ruff_ok:
+            print(f"[patch] {ruff_msg}")
 
     # Check if there are staged changes
     rc, status, _ = _run_cmd(
