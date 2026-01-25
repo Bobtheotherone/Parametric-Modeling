@@ -25,6 +25,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Iterator, Literal
 
+from .runners.protocol import DEFAULT_ZONE_POLICY, ZonePolicy
 
 def _get_host_uid_gid() -> tuple[int, int]:
     """Get the current host user's UID and GID.
@@ -638,6 +639,10 @@ class KicadCliRunner:
 
         return self.run(args, workdir=workdir, timeout=timeout, variables=variables)
 
+    def zone_policy(self, *, kicad_cli_version: str | None = None) -> ZonePolicy:
+        """Return the zone policy record for manifesting."""
+        return zone_policy_record(kicad_cli_version=kicad_cli_version)
+
     def export_gerbers(
         self,
         board_path: Path,
@@ -666,19 +671,23 @@ class KicadCliRunner:
             # Translate paths to container-relative paths
             board_container = self._to_container_path(board_path, workdir)
             out_container = self._to_container_path(out_dir, workdir)
+            zone_args = _build_zone_check_args()
             args = [
                 "pcb",
                 "export",
                 "gerbers",
+                *zone_args,
                 "--output",
                 out_container,
                 board_container,
             ]
         else:
+            zone_args = _build_zone_check_args()
             args = [
                 "pcb",
                 "export",
                 "gerbers",
+                *zone_args,
                 "--output",
                 str(out_dir),
                 str(board_path),
@@ -714,19 +723,23 @@ class KicadCliRunner:
             # Translate paths to container-relative paths
             board_container = self._to_container_path(board_path, workdir)
             out_container = self._to_container_path(out_dir, workdir)
+            zone_args = _build_zone_check_args()
             args = [
                 "pcb",
                 "export",
                 "drill",
+                *zone_args,
                 "--output",
                 out_container,
                 board_container,
             ]
         else:
+            zone_args = _build_zone_check_args()
             args = [
                 "pcb",
                 "export",
                 "drill",
+                *zone_args,
                 "--output",
                 str(out_dir),
                 str(board_path),
@@ -740,6 +753,7 @@ def build_drc_args(
     report_path: Path,
     *,
     severity: str = "all",
+    refill_zones: bool | None = None,
 ) -> list[str]:
     """Build kicad-cli DRC command arguments.
 
@@ -747,6 +761,7 @@ def build_drc_args(
     - --severity-all: Report all violations including warnings (default for M1)
     - --format json: Output in JSON format for programmatic parsing
     - --exit-code-violations: Return non-zero exit code if violations exist
+    - --refill-zones: Ensure copper zones are filled before DRC (REQ-M1-006)
 
     Note: M1 uses --severity-all to catch all DRC issues including warnings.
     Use severity="error" if you need to ignore warnings.
@@ -756,15 +771,22 @@ def build_drc_args(
         report_path: Path where the JSON DRC report will be written.
         severity: Severity level to check ("error", "warning", "all").
             Default is "all" to check all violations.
+        refill_zones: Whether to force zone refill before DRC. If None,
+            uses the default zone policy (refill enabled).
 
     Returns:
         List of command-line arguments for kicad-cli pcb drc.
     """
     severity_arg = f"--severity-{severity}"
-    return [
+    use_refill = DEFAULT_ZONE_POLICY.drc_refill_zones if refill_zones is None else refill_zones
+    args = [
         "pcb",
         "drc",
         severity_arg,
+    ]
+    if use_refill:
+        args.append(DEFAULT_ZONE_POLICY.drc_refill_flag)
+    args += [
         "--exit-code-violations",
         "--format",
         "json",
@@ -772,6 +794,18 @@ def build_drc_args(
         str(report_path),
         str(board_path),
     ]
+    return args
+
+
+def _build_zone_check_args() -> list[str]:
+    if DEFAULT_ZONE_POLICY.export_check_zones:
+        return [DEFAULT_ZONE_POLICY.export_check_flag]
+    return []
+
+
+def zone_policy_record(*, kicad_cli_version: str | None = None) -> ZonePolicy:
+    """Build a structured zone policy record for manifesting."""
+    return DEFAULT_ZONE_POLICY.with_kicad_cli_version(kicad_cli_version)
 
 
 def get_kicad_cli_version(runner: KicadCliRunner, workdir: Path | None = None) -> str:
@@ -847,4 +881,5 @@ __all__ = [
     "build_drc_args",
     "get_kicad_cli_version",
     "parse_kicad_error",
+    "zone_policy_record",
 ]

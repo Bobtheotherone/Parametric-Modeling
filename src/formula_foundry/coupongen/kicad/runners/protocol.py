@@ -8,12 +8,57 @@ Satisfies CP-1.2 and Section 13.1.2 requirements.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+
+@dataclass(frozen=True)
+class ZonePolicy:
+    """Zone refill/check policy for DRC and export.
+
+    This record is included in manifests to make zone behavior explicit.
+    """
+
+    policy_id: str
+    drc_refill_zones: bool
+    drc_refill_flag: str
+    export_check_zones: bool
+    export_check_flag: str
+    kicad_cli_version: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        record: dict[str, object] = {
+            "policy_id": self.policy_id,
+            "drc": {
+                "refill_zones": self.drc_refill_zones,
+                "flag": self.drc_refill_flag,
+            },
+            "export": {
+                "check_zones": self.export_check_zones,
+                "flag": self.export_check_flag,
+            },
+        }
+        if self.kicad_cli_version:
+            record["kicad_cli_version"] = self.kicad_cli_version
+        return record
+
+    def with_kicad_cli_version(self, version: str | None) -> "ZonePolicy":
+        if version == self.kicad_cli_version:
+            return self
+        return replace(self, kicad_cli_version=version)
+
+
+DEFAULT_ZONE_POLICY = ZonePolicy(
+    policy_id="kicad-cli-zones-v1",
+    drc_refill_zones=True,
+    drc_refill_flag="--refill-zones",
+    export_check_zones=True,
+    export_check_flag="--check-zones",
+)
 
 
 @dataclass(frozen=True)
@@ -93,4 +138,6 @@ class IKicadRunner(Protocol):
 __all__ = [
     "IKicadRunner",
     "KicadRunResult",
+    "ZonePolicy",
+    "DEFAULT_ZONE_POLICY",
 ]

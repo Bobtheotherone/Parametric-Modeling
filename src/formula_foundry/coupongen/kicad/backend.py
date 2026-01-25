@@ -21,6 +21,7 @@ from .board_writer import (
     deterministic_uuid_indexed,
     write_board,
 )
+from .runners.protocol import DEFAULT_ZONE_POLICY, ZonePolicy
 
 
 class IKiCadBackend(abc.ABC):
@@ -45,6 +46,10 @@ class IKiCadBackend(abc.ABC):
             Path to the generated .kicad_pcb file.
         """
         raise NotImplementedError
+
+    def zone_policy(self) -> ZonePolicy:
+        """Return the default zone policy record for manifesting."""
+        return DEFAULT_ZONE_POLICY
 
 
 class BackendA(IKiCadBackend):
