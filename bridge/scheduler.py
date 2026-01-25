@@ -348,35 +348,78 @@ class BackfillGenerator:
     - Schema validation fixes
 
     IMPORTANT: Backfill tasks are scope-constrained to prevent merge conflicts.
-    They may only modify files in: tests/, docs/, bridge/, .github/
+    By default, they may only modify files in: tests/, docs/, .github/
+
+    CRITICAL FILES EXCLUDED (even with allow_bridge=True):
+    - bridge/loop.py
+    - bridge/design_doc.py
+    - bridge/patch_integration.py
+    - bridge/merge_resolver.py
+    - bridge/scheduler.py
+    - bridge/loop_pkg/**
+    - DESIGN_DOCUMENT.md
     """
 
-    # Allowed directories for backfill tasks
-    ALLOWED_DIRS = ["tests/", "docs/", "bridge/", ".github/"]
+    # Allowed directories for backfill tasks (bridge/ excluded by default for safety)
+    ALLOWED_DIRS = ["tests/", "docs/", ".github/"]
 
-    # Task types with scope-aware descriptions
+    # Extended allowed dirs when bridge is explicitly enabled
+    ALLOWED_DIRS_WITH_BRIDGE = ["tests/", "docs/", "bridge/", ".github/"]
+
+    # Files that should NEVER be touched by backfill, even with allow_bridge
+    EXCLUDED_CORE_FILES = [
+        "bridge/loop.py",
+        "bridge/design_doc.py",
+        "bridge/patch_integration.py",
+        "bridge/merge_resolver.py",
+        "bridge/scheduler.py",
+        "bridge/loop_pkg/",
+        "DESIGN_DOCUMENT.md",
+    ]
+
+    # Task types with scope-aware descriptions (bridge removed from defaults)
     TASK_TYPES = [
-        ("lint", "Fix linting issues in tests/bridge",
-         "Run ruff check on tests/ and bridge/ directories and fix any issues. "
-         "MAX 3 files changed. Do NOT touch src/ or any files outside tests/, bridge/, docs/."),
+        ("lint", "Fix linting issues in tests/",
+         "Run ruff check on tests/ directory and fix any issues. "
+         "MAX 3 files changed. Do NOT touch src/, bridge/, or any files outside tests/, docs/."),
         ("test", "Add unit tests",
          "Add missing unit tests for uncovered code in tests/ directory. "
          "MAX 2 new test files. Do NOT touch src/ or any non-test files."),
-        ("type_hints", "Add type hints to bridge/",
-         "Add type annotations to untyped functions in bridge/ directory only. "
-         "MAX 3 files changed. Do NOT touch src/ or tests/."),
+        ("type_hints", "Add type hints to tests/",
+         "Add type annotations to untyped functions in tests/ directory only. "
+         "MAX 3 files changed. Do NOT touch src/, bridge/, or anything outside tests/."),
         ("docs", "Improve documentation",
-         "Add or improve docstrings in bridge/ or docs/ directories. "
-         "MAX 3 files changed. Do NOT touch src/."),
-        ("schema_lint", "Fix schema issues",
-         "Validate and fix JSON schema issues in bridge/ or tests/ directories. "
-         "MAX 2 files changed. Do NOT touch src/."),
+         "Add or improve docstrings in docs/ directory. "
+         "MAX 3 files changed. Do NOT touch src/ or bridge/."),
+        ("schema_lint", "Fix test schema issues",
+         "Validate and fix JSON schema issues in tests/ directory. "
+         "MAX 2 files changed. Do NOT touch src/ or bridge/."),
     ]
 
-    def __init__(self, project_root: str, min_queue_depth: int = 10):
+    # Alternative task types when bridge is allowed
+    TASK_TYPES_WITH_BRIDGE = [
+        ("lint", "Fix linting issues in tests/",
+         "Run ruff check on tests/ directory and fix any issues. "
+         "MAX 3 files changed. Do NOT touch src/, bridge/loop.py, bridge/patch_integration.py, DESIGN_DOCUMENT.md."),
+        ("test", "Add unit tests",
+         "Add missing unit tests for uncovered code in tests/ directory. "
+         "MAX 2 new test files. Do NOT touch src/ or any non-test files."),
+        ("type_hints", "Add type hints",
+         "Add type annotations to untyped functions in tests/ or safe bridge/ modules. "
+         "MAX 3 files. NEVER touch: bridge/loop.py, bridge/patch_integration.py, bridge/scheduler.py."),
+        ("docs", "Improve documentation",
+         "Add or improve docstrings in docs/ or safe bridge/ modules. "
+         "MAX 3 files. NEVER touch: bridge/loop.py, bridge/design_doc.py."),
+        ("schema_lint", "Fix schema issues",
+         "Validate and fix JSON schema issues in tests/ directory. "
+         "MAX 2 files changed. Do NOT touch src/ or orchestrator core files."),
+    ]
+
+    def __init__(self, project_root: str, min_queue_depth: int = 10, allow_bridge: bool = False):
         self.project_root = project_root
         self.min_queue_depth = min_queue_depth
         self.generated_count = 0
+        self.allow_bridge = allow_bridge
 
     def should_generate(self, current_queue_depth: int, worker_count: int) -> bool:
         """Check if backfill tasks should be generated."""
@@ -392,15 +435,29 @@ class BackfillGenerator:
         Returns:
             List of FillerTask objects
         """
+        # Use appropriate task types based on configuration
+        task_types = self.TASK_TYPES_WITH_BRIDGE if self.allow_bridge else self.TASK_TYPES
+
         tasks = []
         for i in range(count):
-            task_type, title, description = self.TASK_TYPES[i % len(self.TASK_TYPES)]
+            task_type, title, description = task_types[i % len(task_types)]
             self.generated_count += 1
             task_id = f"FILLER-{task_type.upper()}-{self.generated_count:03d}"
+
+            # Add explicit exclusion reminder for core files
+            exclusion_note = (
+                "\n\nCRITICAL EXCLUSIONS - NEVER MODIFY THESE FILES:\n"
+                "- DESIGN_DOCUMENT.md (user-owned, read-only)\n"
+                "- bridge/loop.py (orchestrator core)\n"
+                "- bridge/patch_integration.py (orchestrator core)\n"
+                "- bridge/scheduler.py (orchestrator core)\n"
+                "- bridge/design_doc.py (orchestrator core)\n"
+            )
+
             tasks.append(FillerTask(
                 id=task_id,
                 title=title,
-                description=description,
+                description=description + exclusion_note,
                 task_type=task_type,
                 priority=-10,  # Low priority so real work takes precedence
             ))

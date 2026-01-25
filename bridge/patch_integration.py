@@ -58,6 +58,15 @@ ALWAYS_ALLOWED: tuple[str, ...] = (
 )
 
 # =============================================================================
+# User-owned files - NEVER modify these
+# These files are manually controlled by humans and must not be touched by agents
+# =============================================================================
+
+USER_OWNED_FILES: tuple[str, ...] = (
+    "DESIGN_DOCUMENT.md",
+)
+
+# =============================================================================
 # Backfill task scope configuration
 # Backfill tasks (FILLER-*) are limited to safe directories to prevent conflicts
 # =============================================================================
@@ -65,7 +74,8 @@ ALWAYS_ALLOWED: tuple[str, ...] = (
 BACKFILL_ALLOWLIST: tuple[str, ...] = (
     "tests/**",
     "docs/**",
-    "bridge/**",
+    # NOTE: bridge/** removed from default backfill allowlist for safety
+    # Use --backfill-allow-bridge to opt-in
     ".github/**",
 )
 
@@ -82,19 +92,121 @@ BACKFILL_DENYLIST: tuple[str, ...] = (
     "**/pipeline.py",
 )
 
+# =============================================================================
+# Orchestrator core files - excluded from backfill unless explicitly allowed
+# These files are critical for orchestrator stability
+# =============================================================================
+
+ORCHESTRATOR_CORE_FILES: tuple[str, ...] = (
+    "bridge/loop.py",
+    "bridge/design_doc.py",
+    "bridge/patch_integration.py",
+    "bridge/merge_resolver.py",
+    "bridge/scheduler.py",
+    "bridge/loop_pkg/**",
+    "DESIGN_DOCUMENT.md",
+)
+
+# Extended backfill allowlist (when --backfill-allow-bridge is used)
+BACKFILL_ALLOWLIST_WITH_BRIDGE: tuple[str, ...] = (
+    "tests/**",
+    "docs/**",
+    "bridge/**",
+    ".github/**",
+)
+
+# Extended backfill denylist (blocks orchestrator core even when bridge is allowed)
+BACKFILL_DENYLIST_CORE: tuple[str, ...] = BACKFILL_DENYLIST + ORCHESTRATOR_CORE_FILES
+
 
 def is_backfill_task(task_id: str) -> bool:
     """Check if a task ID indicates a backfill (filler) task."""
     return task_id.startswith("FILLER-")
 
 
-def create_backfill_scope_guard(runs_dir: Path | None = None) -> "ScopeGuard":
-    """Create a scope guard for backfill tasks with restricted allowlist."""
-    return ScopeGuard(
-        allowlist=BACKFILL_ALLOWLIST,
-        denylist=BACKFILL_DENYLIST,
-        runs_dir=runs_dir,
+def normalize_diff_path(path: str) -> str:
+    """Normalize a path from git diff output to a clean relative path.
+
+    Git diff paths often include "a/" or "b/" prefixes (e.g., "a/bridge/loop.py").
+    This function safely removes those prefixes without accidentally stripping
+    characters from the actual path.
+
+    IMPORTANT: Uses removeprefix(), NOT lstrip(), to avoid bugs like:
+    - lstrip("a/") on "a/bridge/foo.py" would produce "ridge/foo.py" (WRONG!)
+    - removeprefix("a/") on "a/bridge/foo.py" produces "bridge/foo.py" (CORRECT!)
+
+    Args:
+        path: A file path, potentially with git diff prefixes
+
+    Returns:
+        Clean relative path without leading prefixes
+    """
+    # Normalize path separators first
+    path = path.replace("\\", "/")
+
+    # Remove git diff prefixes using safe removeprefix (Python 3.9+)
+    # Order matters: check "a/" and "b/" prefixes that git adds to diff output
+    if path.startswith("a/"):
+        path = path[2:]  # Equivalent to removeprefix("a/")
+    elif path.startswith("b/"):
+        path = path[2:]  # Equivalent to removeprefix("b/")
+
+    # Also handle leading "./" (current directory prefix)
+    if path.startswith("./"):
+        path = path[2:]
+
+    # Handle edge cases with multiple leading slashes
+    path = path.lstrip("/")
+
+    return path
+
+
+def is_user_owned_file(path: str) -> bool:
+    """Check if a path is a user-owned file that agents must never modify.
+
+    Args:
+        path: File path to check
+
+    Returns:
+        True if this is a user-owned file
+    """
+    normalized = normalize_diff_path(path)
+    return normalized in USER_OWNED_FILES or any(
+        fnmatch.fnmatch(normalized, pattern) for pattern in USER_OWNED_FILES
     )
+
+
+def create_backfill_scope_guard(
+    runs_dir: Path | None = None,
+    allow_bridge: bool = False,
+) -> "ScopeGuard":
+    """Create a scope guard for backfill tasks with restricted allowlist.
+
+    Args:
+        runs_dir: Directory for writing rejected patch artifacts
+        allow_bridge: If True, allows bridge/** files (excluding core files).
+                     Default is False for maximum safety.
+
+    Returns:
+        ScopeGuard configured for backfill task constraints
+    """
+    if allow_bridge:
+        # Allow bridge/** but still block orchestrator core files
+        # Use ignore_always_allowed to enforce denylist over ALWAYS_ALLOWED
+        return ScopeGuard(
+            allowlist=BACKFILL_ALLOWLIST_WITH_BRIDGE,
+            denylist=BACKFILL_DENYLIST_CORE,
+            runs_dir=runs_dir,
+            ignore_always_allowed=True,  # Enforce denylist even for bridge/**
+        )
+    else:
+        # Default: most restrictive - only tests/docs
+        return ScopeGuard(
+            allowlist=BACKFILL_ALLOWLIST,
+            denylist=BACKFILL_DENYLIST,
+            runs_dir=runs_dir,
+            ignore_always_allowed=True,  # Backfill guards need strict constraints
+        )
 
 
 @dataclass
@@ -152,6 +264,7 @@ class ScopeGuard:
         allowlist: tuple[str, ...] | list[str] | None = None,
         denylist: tuple[str, ...] | list[str] | None = None,
         runs_dir: Path | None = None,
+        ignore_always_allowed: bool = False,
     ) -> None:
         """Initialize scope guard.
 
@@ -159,10 +272,13 @@ class ScopeGuard:
             allowlist: Glob patterns for allowed paths. If None, uses DEFAULT_ALLOWLIST.
             denylist: Glob patterns for denied paths. If None, uses DEFAULT_DENYLIST.
             runs_dir: Directory for writing rejected patch artifacts.
+            ignore_always_allowed: If True, don't bypass checks for ALWAYS_ALLOWED paths.
+                                   Used for backfill guards that need stricter constraints.
         """
         self.allowlist: tuple[str, ...] = tuple(allowlist) if allowlist else DEFAULT_ALLOWLIST
         self.denylist: tuple[str, ...] = tuple(denylist) if denylist else DEFAULT_DENYLIST
         self.runs_dir = runs_dir
+        self.ignore_always_allowed = ignore_always_allowed
 
     def _matches_any(self, path: str, patterns: tuple[str, ...]) -> str | None:
         """Check if path matches any of the patterns.
@@ -200,14 +316,22 @@ class ScopeGuard:
         violations: list[ScopeViolation] = []
 
         for path in paths:
-            # Normalize path
-            path = path.replace("\\", "/").lstrip("./")
+            # Normalize path using safe prefix removal (NOT lstrip!)
+            # This prevents bugs like "bridge/foo.py" becoming "ridge/foo.py"
+            path = normalize_diff_path(path)
 
-            # Check if in always-allowed list
-            if self._matches_any(path, ALWAYS_ALLOWED):
+            # CRITICAL: Check if this is a user-owned file FIRST
+            # User-owned files (like DESIGN_DOCUMENT.md) must NEVER be modified
+            if is_user_owned_file(path):
+                violations.append(ScopeViolation(
+                    path=path,
+                    reason="user_owned_file",
+                    matched_pattern="USER_OWNED_FILES",
+                ))
                 continue
 
-            # Check denylist
+            # Check denylist BEFORE ALWAYS_ALLOWED when ignore_always_allowed is set
+            # This is used for backfill guards that need stricter constraints
             denied_pattern = self._matches_any(path, self.denylist)
             if denied_pattern:
                 violations.append(ScopeViolation(
@@ -215,6 +339,10 @@ class ScopeGuard:
                     reason="denylist_match",
                     matched_pattern=denied_pattern,
                 ))
+                continue
+
+            # Check if in always-allowed list (unless ignore_always_allowed is set)
+            if not self.ignore_always_allowed and self._matches_any(path, ALWAYS_ALLOWED):
                 continue
 
             # Check allowlist (if provided)

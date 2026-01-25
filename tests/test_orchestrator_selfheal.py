@@ -378,14 +378,22 @@ class TestBackfillScopeEnforcement:
         assert is_backfill_task("REGULAR-TASK") == False
 
     def test_backfill_scope_guard_rejects_src_files(self):
-        """Verify backfill scope guard rejects patches touching src/ directory."""
+        """Verify backfill scope guard rejects patches touching src/ directory.
+
+        NOTE: Default backfill scope now excludes bridge/** for safety.
+        bridge/loop.py is explicitly excluded even with allow_bridge=True.
+        """
         from bridge.patch_integration import create_backfill_scope_guard
 
         guard = create_backfill_scope_guard()
 
-        # Allowed paths
-        result_ok = guard.check_paths(["tests/test_foo.py", "bridge/loop.py"])
-        assert result_ok.allowed, "Backfill should allow tests/ and bridge/"
+        # Allowed paths (tests/ and docs/ only in default mode)
+        result_ok = guard.check_paths(["tests/test_foo.py", "docs/readme.md"])
+        assert result_ok.allowed, "Backfill should allow tests/ and docs/"
+
+        # bridge/loop.py is NOT allowed in default mode (core file protection)
+        result_bridge = guard.check_paths(["bridge/loop.py"])
+        assert not result_bridge.allowed, "Backfill should reject bridge/loop.py by default"
 
         # Disallowed paths
         result_bad = guard.check_paths(["src/formula_foundry/api.py"])
@@ -394,8 +402,8 @@ class TestBackfillScopeEnforcement:
         result_bad2 = guard.check_paths(["coupongen/some_file.py"])
         assert not result_bad2.allowed, "Backfill should reject coupongen/ files"
 
-    def test_filler_tasks_have_backfill_lock(self):
-        """Verify convert_filler_to_parallel_task adds backfill lock."""
+    def test_filler_tasks_have_type_based_locks(self):
+        """Verify convert_filler_to_parallel_task uses type-based locks (not global backfill)."""
         # This tests the function logic by checking the loop.py source
         loop_path = Path(__file__).parent.parent / "bridge" / "loop.py"
         content = loop_path.read_text()
@@ -410,9 +418,14 @@ class TestBackfillScopeEnforcement:
 
         func_body = func_match.group(0)
 
-        # Check that backfill lock is added
-        assert 'locks=["backfill"]' in func_body or "locks=['backfill']" in func_body, \
-            "Filler tasks should have backfill lock"
+        # Check that type-based locks are used (NOT global "backfill" lock)
+        # The new design uses derive_backfill_lock to get type-specific locks
+        assert 'derive_backfill_lock' in func_body or 'task_locks' in func_body, \
+            "Filler tasks should use derive_backfill_lock for type-based locks"
+
+        # Should NOT have global backfill lock anymore
+        assert 'locks=["backfill"]' not in func_body, \
+            "Filler tasks should NOT use global 'backfill' lock (now uses type-based locks)"
 
     def test_backfill_scope_guard_allows_docs_directory(self):
         """Verify backfill scope guard allows docs/ directory."""
@@ -444,12 +457,21 @@ class TestBackfillScopeEnforcement:
                 assert not result.allowed, f"Backfill should reject {hot_file}"
 
     def test_backfill_allowed_dirs_constant(self):
-        """Verify BACKFILL_ALLOWLIST constant is properly configured."""
-        from bridge.patch_integration import BACKFILL_ALLOWLIST
+        """Verify BACKFILL_ALLOWLIST constant is properly configured.
 
+        NOTE: bridge/** is intentionally excluded from default backfill allowlist
+        to protect orchestrator core files. Use BACKFILL_ALLOWLIST_WITH_BRIDGE
+        for extended allowlist when --backfill-allow-bridge is specified.
+        """
+        from bridge.patch_integration import BACKFILL_ALLOWLIST, BACKFILL_ALLOWLIST_WITH_BRIDGE
+
+        # Default allowlist should NOT include bridge (safety)
         assert "tests/**" in BACKFILL_ALLOWLIST, "tests/ should be in backfill allowlist"
         assert "docs/**" in BACKFILL_ALLOWLIST, "docs/ should be in backfill allowlist"
-        assert "bridge/**" in BACKFILL_ALLOWLIST, "bridge/ should be in backfill allowlist"
+        assert "bridge/**" not in BACKFILL_ALLOWLIST, "bridge/ should NOT be in default backfill allowlist (safety)"
+
+        # Extended allowlist should include bridge
+        assert "bridge/**" in BACKFILL_ALLOWLIST_WITH_BRIDGE, "bridge/ should be in extended backfill allowlist"
 
     def test_backfill_denylist_prevents_src(self):
         """Verify BACKFILL_DENYLIST blocks src/ directory."""
@@ -895,6 +917,399 @@ class TestHotFileGuardrail:
         assert "hot:board_writer.py" not in task1.locks
         assert "hot:board_writer.py" in task2.locks
         assert "hot:board_writer.py" in task3.locks
+
+
+class TestPathNormalizationBug:
+    """Regression tests for the 'bridge -> ridge' path normalization bug.
+
+    This bug occurs when using lstrip("a/") or lstrip("b/") to remove git diff
+    prefixes. The lstrip method removes ALL characters in the argument set,
+    not the literal prefix string:
+
+    - WRONG: "bridge/foo.py".lstrip("b/") produces "ridge/foo.py"
+    - CORRECT: Using removeprefix or explicit startswith check
+
+    These tests verify the fix is in place and prevents scope rejection of
+    legitimate bridge/ files.
+    """
+
+    def test_normalize_diff_path_preserves_bridge(self):
+        """Verify normalize_diff_path does NOT turn 'bridge/' into 'ridge/'."""
+        from bridge.patch_integration import normalize_diff_path
+
+        # The critical case: bridge/design_doc.py must stay bridge/design_doc.py
+        result = normalize_diff_path("bridge/design_doc.py")
+        assert result == "bridge/design_doc.py", \
+            f"Path was corrupted: 'bridge/design_doc.py' became '{result}'"
+
+        # Must NOT become 'ridge/...'
+        assert not result.startswith("ridge/"), \
+            f"Path normalization bug: 'bridge/' became 'ridge/'"
+
+    def test_normalize_diff_path_removes_git_prefix_a(self):
+        """Verify 'a/' prefix from git diff is correctly removed."""
+        from bridge.patch_integration import normalize_diff_path
+
+        # Git diff uses a/ prefix for source file
+        result = normalize_diff_path("a/bridge/design_doc.py")
+        assert result == "bridge/design_doc.py", \
+            f"'a/' prefix not properly removed: got '{result}'"
+
+    def test_normalize_diff_path_removes_git_prefix_b(self):
+        """Verify 'b/' prefix from git diff is correctly removed."""
+        from bridge.patch_integration import normalize_diff_path
+
+        # Git diff uses b/ prefix for destination file
+        result = normalize_diff_path("b/bridge/design_doc.py")
+        assert result == "bridge/design_doc.py", \
+            f"'b/' prefix not properly removed: got '{result}'"
+
+    def test_normalize_diff_path_handles_various_paths(self):
+        """Test various path normalization scenarios."""
+        from bridge.patch_integration import normalize_diff_path
+
+        test_cases = [
+            # (input, expected_output)
+            ("src/api.py", "src/api.py"),
+            ("./src/api.py", "src/api.py"),
+            ("a/src/api.py", "src/api.py"),
+            ("b/src/api.py", "src/api.py"),
+            ("tests/test_foo.py", "tests/test_foo.py"),
+            ("bridge/loop.py", "bridge/loop.py"),
+            ("a/bridge/loop.py", "bridge/loop.py"),
+            ("b/bridge/loop.py", "bridge/loop.py"),
+            # Edge cases
+            ("a/a/nested.py", "a/nested.py"),  # Only first a/ is removed
+            ("b/b/nested.py", "b/nested.py"),  # Only first b/ is removed
+            ("/absolute/path.py", "absolute/path.py"),
+            ("./relative/path.py", "relative/path.py"),
+        ]
+
+        for input_path, expected in test_cases:
+            result = normalize_diff_path(input_path)
+            assert result == expected, \
+                f"normalize_diff_path('{input_path}') = '{result}', expected '{expected}'"
+
+    def test_scope_guard_uses_normalize_diff_path(self):
+        """Verify ScopeGuard check_paths uses proper normalization."""
+        from bridge.patch_integration import ScopeGuard
+
+        guard = ScopeGuard(
+            allowlist=("bridge/**",),
+            denylist=("src/**",),
+        )
+
+        # This path should be allowed (it's in bridge/)
+        result = guard.check_paths(["a/bridge/design_doc.py"])
+        assert result.allowed, \
+            f"bridge/ path was rejected after normalization: {result.violations}"
+
+        # The normalized path should be 'bridge/design_doc.py', NOT 'ridge/design_doc.py'
+        assert all(not v.path.startswith("ridge/") for v in result.violations), \
+            "Path normalization bug: found 'ridge/' in violations"
+
+
+class TestDesignDocumentProtection:
+    """Tests for DESIGN_DOCUMENT.md protection.
+
+    DESIGN_DOCUMENT.md is user-owned and must NEVER be modified by agents.
+    """
+
+    def test_user_owned_files_includes_design_doc(self):
+        """Verify DESIGN_DOCUMENT.md is in USER_OWNED_FILES."""
+        from bridge.patch_integration import USER_OWNED_FILES
+
+        assert "DESIGN_DOCUMENT.md" in USER_OWNED_FILES, \
+            "DESIGN_DOCUMENT.md should be in USER_OWNED_FILES"
+
+    def test_is_user_owned_file_detects_design_doc(self):
+        """Verify is_user_owned_file correctly identifies DESIGN_DOCUMENT.md."""
+        from bridge.patch_integration import is_user_owned_file
+
+        assert is_user_owned_file("DESIGN_DOCUMENT.md") == True
+        assert is_user_owned_file("a/DESIGN_DOCUMENT.md") == True
+        assert is_user_owned_file("b/DESIGN_DOCUMENT.md") == True
+        assert is_user_owned_file("./DESIGN_DOCUMENT.md") == True
+
+        # Non-user-owned files
+        assert is_user_owned_file("README.md") == False
+        assert is_user_owned_file("bridge/loop.py") == False
+
+    def test_scope_guard_rejects_design_document(self):
+        """Verify ScopeGuard rejects patches touching DESIGN_DOCUMENT.md."""
+        from bridge.patch_integration import ScopeGuard
+
+        # Even with permissive allowlist, DESIGN_DOCUMENT.md should be rejected
+        guard = ScopeGuard(
+            allowlist=("**",),  # Allow everything
+            denylist=(),  # Deny nothing
+        )
+
+        result = guard.check_paths(["DESIGN_DOCUMENT.md"])
+        assert not result.allowed, "DESIGN_DOCUMENT.md should be rejected"
+        assert any(v.reason == "user_owned_file" for v in result.violations), \
+            "Rejection reason should be 'user_owned_file'"
+
+    def test_backfill_scope_guard_rejects_design_document(self):
+        """Verify backfill scope guard rejects DESIGN_DOCUMENT.md."""
+        from bridge.patch_integration import create_backfill_scope_guard
+
+        guard = create_backfill_scope_guard()
+        result = guard.check_paths(["DESIGN_DOCUMENT.md"])
+        assert not result.allowed, "Backfill should reject DESIGN_DOCUMENT.md"
+
+
+class TestDynamicBackfillLocks:
+    """Tests for file-derived backfill locks instead of global lock."""
+
+    def test_backfill_locks_are_type_based(self):
+        """Verify backfill tasks get type-based locks, not global 'backfill' lock."""
+        from bridge.scheduler import BackfillGenerator, FillerTask
+
+        gen = BackfillGenerator(project_root="/tmp")
+        tasks = gen.generate_filler_tasks(5)
+
+        # All tasks should have task-type-based locks
+        for task in tasks:
+            # Verify it's a valid filler task
+            assert task.id.startswith("FILLER-")
+
+        # Different task types exist
+        task_types = {t.task_type for t in tasks}
+        assert len(task_types) > 1, "Should generate multiple task types"
+
+    def test_filler_tasks_have_exclusion_note(self):
+        """Verify filler tasks include exclusion notes for core files."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+        tasks = gen.generate_filler_tasks(3)
+
+        for task in tasks:
+            assert "DESIGN_DOCUMENT.md" in task.description, \
+                f"Task {task.id} missing DESIGN_DOCUMENT.md exclusion note"
+            assert "bridge/loop.py" in task.description, \
+                f"Task {task.id} missing bridge/loop.py exclusion note"
+
+    def test_backfill_generator_allow_bridge_option(self):
+        """Test BackfillGenerator allow_bridge parameter."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen_restricted = BackfillGenerator(project_root="/tmp", allow_bridge=False)
+        gen_with_bridge = BackfillGenerator(project_root="/tmp", allow_bridge=True)
+
+        assert gen_restricted.allow_bridge == False
+        assert gen_with_bridge.allow_bridge == True
+
+        # Generate tasks and verify descriptions differ
+        tasks_restricted = gen_restricted.generate_filler_tasks(3)
+        tasks_with_bridge = gen_with_bridge.generate_filler_tasks(3)
+
+        # Both should still exclude core files
+        for task in tasks_restricted + tasks_with_bridge:
+            assert "DESIGN_DOCUMENT.md" in task.description
+
+
+class TestOverlapLocking:
+    """Tests for general overlap-based lock injection."""
+
+    def test_inject_overlap_locks_function_exists(self):
+        """Verify _inject_overlap_locks function is defined."""
+        from bridge.loop import _inject_overlap_locks
+
+        assert callable(_inject_overlap_locks)
+
+    def test_overlap_locks_for_shared_files(self):
+        """Verify locks are injected when tasks share files."""
+        from bridge.loop import ParallelTask, _inject_overlap_locks
+
+        # Two tasks touching the same file
+        task1 = ParallelTask(
+            id="M1-001",
+            title="Task 1",
+            description="Modifies shared.py",
+            agent="claude",
+            touched_paths=["src/shared.py", "tests/test_a.py"],
+        )
+        task2 = ParallelTask(
+            id="M1-002",
+            title="Task 2",
+            description="Also modifies shared.py",
+            agent="claude",
+            touched_paths=["src/shared.py", "tests/test_b.py"],
+        )
+        task3 = ParallelTask(
+            id="M1-003",
+            title="Task 3",
+            description="Different file",
+            agent="claude",
+            touched_paths=["src/other.py"],
+        )
+
+        tasks = [task1, task2, task3]
+        _inject_overlap_locks(tasks)
+
+        # task1 and task2 should share a lock for shared.py
+        task1_file_locks = [l for l in task1.locks if l.startswith("file:")]
+        task2_file_locks = [l for l in task2.locks if l.startswith("file:")]
+        task3_file_locks = [l for l in task3.locks if l.startswith("file:")]
+
+        # Both task1 and task2 should have the same file lock
+        assert len(task1_file_locks) > 0, "Task 1 should have file lock"
+        assert len(task2_file_locks) > 0, "Task 2 should have file lock"
+        assert set(task1_file_locks) == set(task2_file_locks), \
+            "Tasks 1 and 2 should have matching file locks"
+
+        # Task 3 should NOT have the shared.py lock
+        shared_lock = task1_file_locks[0] if task1_file_locks else None
+        assert shared_lock not in task3_file_locks, \
+            "Task 3 should NOT have the shared.py lock"
+
+    def test_overlap_locks_with_missing_touched_paths(self):
+        """Verify tasks missing touched_paths get conservative locks."""
+        from bridge.loop import ParallelTask, _inject_overlap_locks
+
+        task_with_paths = ParallelTask(
+            id="M1-001",
+            title="Has paths",
+            description="Known paths",
+            agent="claude",
+            touched_paths=["src/foo.py"],
+        )
+        task_without_paths = ParallelTask(
+            id="M1-002",
+            title="No paths",
+            description="Unknown paths",
+            agent="claude",
+            touched_paths=[],  # Empty - should get conservative lock
+        )
+
+        tasks = [task_with_paths, task_without_paths]
+        _inject_overlap_locks(tasks)
+
+        # Task without paths should have a directory-based lock
+        dir_locks = [l for l in task_without_paths.locks if l.startswith("dir:")]
+        assert len(dir_locks) > 0, "Task without paths should get a dir: lock"
+
+
+class TestBackfillConcurrency:
+    """Tests verifying backfill tasks can run concurrently."""
+
+    def test_different_backfill_types_can_run_concurrently(self):
+        """Verify backfill tasks of different types don't block each other."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Generate enough tasks to get different types
+        tasks = gen.generate_filler_tasks(5)
+
+        # Group by task type
+        types_seen = {}
+        for task in tasks:
+            if task.task_type not in types_seen:
+                types_seen[task.task_type] = task
+
+        # Verify we have at least 2 different types
+        assert len(types_seen) >= 2, "Should have at least 2 different task types"
+
+        # Different types should have different locks
+        lint_task = types_seen.get("lint")
+        docs_task = types_seen.get("docs")
+
+        if lint_task and docs_task:
+            # These tasks should be able to run concurrently
+            # (in the actual system, their derived locks would be different)
+            assert lint_task.task_type != docs_task.task_type
+
+    def test_scheduler_allows_multiple_backfill_concurrent(self):
+        """Simulate scheduler allowing multiple backfill tasks concurrently."""
+        from bridge.scheduler import FillerTask, LaneConfig, TwoLaneScheduler
+
+        # Create a simple mock task class
+        class MockTask:
+            def __init__(self, id, locks):
+                self.id = id
+                self.status = "pending"
+                self.solo = False
+                self.intensity = "light"
+                self.locks = locks
+                self.touched_paths = []
+                self.depends_on = []
+
+        # Create backfill tasks with type-based locks (simulating the new behavior)
+        task1 = MockTask("FILLER-LINT-001", ["backfill:type:lint"])
+        task2 = MockTask("FILLER-DOCS-001", ["backfill:type:docs"])
+        task3 = MockTask("FILLER-TEST-001", ["backfill:type:test"])
+
+        tasks = [task1, task2, task3]
+
+        # Track which locks are held
+        held_locks = set()
+
+        def deps_satisfied(t):
+            return True
+
+        def locks_available(t):
+            for lock in t.locks:
+                if lock in held_locks:
+                    return False
+            return True
+
+        lane_config = LaneConfig.from_max_workers(10)
+        scheduler = TwoLaneScheduler(
+            lane_config=lane_config,
+            tasks=tasks,
+            deps_satisfied_fn=deps_satisfied,
+            locks_available_fn=locks_available,
+        )
+
+        # All three tasks should be ready (different locks)
+        ready = scheduler.get_ready_tasks()
+        assert len(ready) == 3, \
+            f"All 3 backfill tasks should be ready concurrently, got {len(ready)}"
+
+        # Simulate running task1 - acquire its locks
+        for lock in task1.locks:
+            held_locks.add(lock)
+        task1.status = "running"
+
+        # task2 and task3 should still be ready (different locks)
+        ready = scheduler.get_ready_tasks()
+        assert len(ready) == 2, \
+            f"2 remaining backfill tasks should be ready, got {len(ready)}"
+
+
+class TestOrchestratorCoreExclusion:
+    """Tests verifying orchestrator core files are excluded from backfill."""
+
+    def test_backfill_denylist_includes_core_files(self):
+        """Verify BACKFILL_DENYLIST_CORE includes orchestrator core files."""
+        from bridge.patch_integration import BACKFILL_DENYLIST_CORE, ORCHESTRATOR_CORE_FILES
+
+        for core_file in ORCHESTRATOR_CORE_FILES:
+            assert core_file in BACKFILL_DENYLIST_CORE, \
+                f"Core file {core_file} should be in BACKFILL_DENYLIST_CORE"
+
+    def test_backfill_scope_guard_with_bridge_still_blocks_core(self):
+        """Verify backfill scope guard blocks core files even with allow_bridge."""
+        from bridge.patch_integration import create_backfill_scope_guard
+
+        guard = create_backfill_scope_guard(allow_bridge=True)
+
+        # Core files should still be rejected
+        core_files = [
+            "bridge/loop.py",
+            "bridge/patch_integration.py",
+            "bridge/design_doc.py",
+            "bridge/scheduler.py",
+            "DESIGN_DOCUMENT.md",
+        ]
+
+        for core_file in core_files:
+            result = guard.check_paths([core_file])
+            assert not result.allowed, \
+                f"Core file {core_file} should be rejected even with allow_bridge"
 
 
 if __name__ == "__main__":

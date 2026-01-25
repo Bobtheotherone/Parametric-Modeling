@@ -1190,6 +1190,73 @@ def _inject_hot_file_locks(tasks: list) -> list:
     return tasks
 
 
+def _inject_overlap_locks(tasks: list) -> list:
+    """Inject file-based locks for any files touched by multiple tasks.
+
+    This provides generalized collision prevention beyond just hot files.
+    When multiple tasks declare the same file in their touched_paths,
+    this function adds a file-specific lock to serialize access.
+
+    This is "as narrow as possible, as strong as necessary" locking:
+    - Only files actually touched by >1 task get locks
+    - Tasks with different touched_paths can run in parallel
+    - Tasks missing touched_paths get a conservative directory-based lock
+
+    Args:
+        tasks: List of ParallelTask objects
+
+    Returns:
+        Modified list with locks injected (same list, modified in place)
+    """
+    import hashlib
+
+    # Map file paths to task IDs that touch them
+    file_to_tasks: dict[str, list[str]] = {}
+
+    for task in tasks:
+        if task.status != "pending":
+            continue
+
+        if task.touched_paths:
+            for path in task.touched_paths:
+                path_str = str(path).replace("\\", "/")
+                if path_str not in file_to_tasks:
+                    file_to_tasks[path_str] = []
+                if task.id not in file_to_tasks[path_str]:
+                    file_to_tasks[path_str].append(task.id)
+        else:
+            # For tasks missing touched_paths, derive a conservative lock from task title/description
+            # This ensures tasks without declared paths don't silently collide
+            # Use a hash of title to create a "bucket" lock
+            title_hash = hashlib.md5(task.title.encode()).hexdigest()[:8]
+            # Derive directory from task ID (e.g., M1-IMPLEMENT-FOO -> dir:M1)
+            dir_lock = f"dir:unknown:{title_hash}"
+            if dir_lock not in task.locks:
+                task.locks.append(dir_lock)
+
+    # Inject locks where multiple tasks touch the same file
+    tasks_by_id = {t.id: t for t in tasks}
+    injected_count = 0
+
+    for file_path, task_ids in file_to_tasks.items():
+        if len(task_ids) > 1:
+            # Create a hash-based lock for the file path
+            path_hash = hashlib.md5(file_path.encode()).hexdigest()[:8]
+            base_name = file_path.split("/")[-1] if "/" in file_path else file_path
+            lock_name = f"file:{base_name}:{path_hash}"
+
+            for tid in task_ids:
+                task = tasks_by_id.get(tid)
+                if task and lock_name not in task.locks:
+                    task.locks.append(lock_name)
+                    injected_count += 1
+
+    if injected_count > 0:
+        print(f"[orchestrator] overlap-lock: injected {injected_count} lock(s) for shared file access")
+
+    return tasks
+
+
 def _detect_noncompliant_output(text: str) -> tuple[bool, list[str], bool]:
     """Detect patterns in agent output that indicate non-compliance.
 
@@ -4245,6 +4312,10 @@ def run_parallel(
         # Inject hot-file locks to prevent concurrent edits to critical files
         tasks = _inject_hot_file_locks(tasks)
 
+        # Inject general overlap locks for any files touched by multiple tasks
+        # This provides "as narrow as possible, as strong as necessary" locking
+        tasks = _inject_overlap_locks(tasks)
+
         if not tasks:
             print("[orchestrator] ERROR: no tasks in plan")
             return 2
@@ -4349,20 +4420,47 @@ def run_parallel(
         return two_lane_scheduler.get_ready_tasks()
 
     # Allowed directories for backfill tasks (to prevent merge conflicts)
-    BACKFILL_ALLOWED_DIRS = ["tests/", "docs/", "bridge/", ".github/"]
+    # NOTE: bridge/ removed from default to protect orchestrator core
+    BACKFILL_ALLOWED_DIRS = ["tests/", "docs/", ".github/"]
+
+    # Track recently rejected backfill paths for cooldown (prevents spam loops)
+    # Maps path -> cycle_count when rejected
+    backfill_rejection_cooldown: dict[str, int] = {}
+    BACKFILL_COOLDOWN_CYCLES = 5  # Number of cycles before retry after rejection
+
+    def derive_backfill_lock(filler: FillerTask) -> list[str]:
+        """Derive fine-grained locks for a backfill task based on its target.
+
+        Instead of a global "backfill" lock, we use task-type-specific locks.
+        This allows multiple backfill tasks to run concurrently when they
+        target different areas (e.g., lint and docs can run together).
+
+        Lock strategy:
+        - backfill:type:<task_type> - prevents two lint tasks colliding
+        - Different task types can run in parallel
+        """
+        # Use task type as lock key - allows parallel backfill of different types
+        task_type = filler.task_type
+        return [f"backfill:type:{task_type}"]
 
     def convert_filler_to_parallel_task(filler: FillerTask) -> ParallelTask:
         """Convert a FillerTask to a ParallelTask for execution.
 
         Backfill tasks are scope-constrained to safe directories to prevent
         merge conflicts with primary tasks.
+
+        Uses file-derived locks instead of global "backfill" lock to allow
+        concurrent backfill when tasks target different areas.
         """
         # Add scope constraint to description
         scope_note = (
             f"\n\nSCOPE CONSTRAINT: This is a FILLER task. You MUST only modify files in: "
             f"{', '.join(BACKFILL_ALLOWED_DIRS)}. "
-            f"Do NOT touch files outside these directories (especially src/, api.py, etc.)"
+            f"Do NOT touch files outside these directories (especially src/, api.py, bridge/loop.py, DESIGN_DOCUMENT.md, etc.)"
         )
+
+        # Derive locks based on task type - allows parallel execution of different types
+        task_locks = derive_backfill_lock(filler)
 
         return ParallelTask(
             id=filler.id,
@@ -4370,7 +4468,7 @@ def run_parallel(
             description=filler.description + scope_note,
             agent="claude",  # Use Claude for safe filler tasks
             intensity="light",  # Filler tasks are always light
-            locks=["backfill"],  # Only 1 backfill task runs at a time to prevent conflicts
+            locks=task_locks,  # Type-based locks instead of global "backfill"
             depends_on=[],  # No dependencies
             touched_paths=[],  # Will be filled during execution
             solo=False,
@@ -4425,6 +4523,56 @@ def run_parallel(
             two_lane_scheduler.update_tasks(tasks)
 
         return added
+
+    def record_backfill_rejection(task_id: str, reason: str, rejected_paths: list[str]) -> None:
+        """Record a backfill rejection for cooldown tracking.
+
+        When a backfill patch is scope-rejected, this records the rejection
+        to prevent generating similar tasks for a cooldown period.
+
+        Args:
+            task_id: The FILLER-* task ID that was rejected
+            reason: The rejection reason (e.g., "SCOPE_REJECTED")
+            rejected_paths: List of paths that caused the rejection
+        """
+        nonlocal backfill_rejection_cooldown
+
+        current_cycle = backfill_tasks_generated  # Use as cycle counter
+        for path in rejected_paths:
+            backfill_rejection_cooldown[path] = current_cycle
+            print(f"[orchestrator] BACKFILL-COOLDOWN: {path} on cooldown for {BACKFILL_COOLDOWN_CYCLES} cycles (rejected in {task_id})")
+
+    def is_backfill_task_type_on_cooldown(task_type: str) -> bool:
+        """Check if a backfill task type is on cooldown due to recent rejections.
+
+        Returns True if this task type should not be generated yet.
+        """
+        current_cycle = backfill_tasks_generated
+        # Check if any rejected paths are still on cooldown for this task type
+        for path, rejection_cycle in list(backfill_rejection_cooldown.items()):
+            if current_cycle - rejection_cycle < BACKFILL_COOLDOWN_CYCLES:
+                # This path is still on cooldown
+                # For now, we just check if any rejections are recent
+                # More sophisticated: match task_type to path patterns
+                if task_type in ("lint", "type_hints") and "bridge/" in path:
+                    return True
+                if task_type in ("test",) and "tests/" in path:
+                    return True
+            else:
+                # Cooldown expired, remove from tracking
+                del backfill_rejection_cooldown[path]
+        return False
+
+    def cleanup_expired_cooldowns() -> None:
+        """Clean up expired cooldown entries."""
+        nonlocal backfill_rejection_cooldown
+        current_cycle = backfill_tasks_generated
+        expired = [
+            path for path, cycle in backfill_rejection_cooldown.items()
+            if current_cycle - cycle >= BACKFILL_COOLDOWN_CYCLES
+        ]
+        for path in expired:
+            del backfill_rejection_cooldown[path]
 
     # Integration helper: prefers patch-based integration, falls back to git merge
     def merge_task(t: ParallelTask) -> bool:
