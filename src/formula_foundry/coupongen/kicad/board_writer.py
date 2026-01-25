@@ -33,7 +33,6 @@ from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
 from .annotations import build_annotations_from_spec
-from .footprints import load_footprint_module
 from .sexpr import SExprList, nm_to_mm
 
 
@@ -537,8 +536,9 @@ class BoardWriter:
         footprint_cache: dict[str, SExprList] = {}
 
         for side, port in port_plans.items():
-            footprint = self._load_footprint_template(port.footprint, footprint_cache)
-            self._set_footprint_name(footprint, port.footprint)
+            meta = load_footprint_meta(port.footprint)
+            footprint = self._load_footprint_template(meta, footprint_cache)
+            self._set_footprint_name(footprint, meta.footprint_path)
             self._set_footprint_reference(footprint, f"J_{side.upper()}")
 
             rotation_deg = port.rotation_mdeg // 1000
@@ -551,8 +551,8 @@ class BoardWriter:
             else:
                 self._set_top_level_entry(footprint, ["layer", "F.Cu"], key="layer")
 
-            meta = load_footprint_meta(port.footprint)
             self._apply_pad_nets(footprint, meta)
+            self._add_footprint_provenance(footprint, meta)
             self._remap_footprint_uuids(footprint, f"connector.{side}.footprint")
             self._set_top_level_entry(
                 footprint,
@@ -565,12 +565,21 @@ class BoardWriter:
 
     def _load_footprint_template(
         self,
-        footprint_path: str,
+        meta: FootprintMeta,
         cache: dict[str, SExprList],
     ) -> SExprList:
-        if footprint_path not in cache:
-            cache[footprint_path] = load_footprint_module(footprint_path)
-        return copy.deepcopy(cache[footprint_path])
+        cache_key = str(meta.footprint_file)
+        if cache_key not in cache:
+            cache[cache_key] = self._load_footprint_module(meta.footprint_file)
+        return copy.deepcopy(cache[cache_key])
+
+    @staticmethod
+    def _load_footprint_module(path: Path) -> SExprList:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        parsed = sexpr.parse(text)
+        if not isinstance(parsed, list) or not parsed or parsed[0] != "footprint":
+            raise ValueError(f"Invalid footprint module in {path}")
+        return parsed
 
     @staticmethod
     def _set_footprint_name(footprint: SExprList, footprint_path: str) -> None:
@@ -632,6 +641,27 @@ class BoardWriter:
                 continue
             net_id, net_name = pad_map[pad_number]
             self._set_pad_net(item, net_id, net_name)
+
+    def _add_footprint_provenance(self, footprint: SExprList, meta: FootprintMeta) -> None:
+        entries = (
+            ("coupongen_footprint_hash", meta.footprint_hash),
+            ("coupongen_meta_hash", meta.metadata_hash),
+        )
+        for key, value in entries:
+            footprint.append(self._build_hidden_user_text(f"{key}={value}"))
+
+    @staticmethod
+    def _build_hidden_user_text(text: str) -> SExprList:
+        return [
+            "fp_text",
+            "user",
+            text,
+            ["at", nm_to_mm(0), nm_to_mm(0), 0],
+            ["layer", "F.Fab"],
+            "hide",
+            ["effects", ["font", ["size", 1, 1], ["thickness", 0.15]]],
+            ["uuid", "00000000-0000-0000-0000-000000000000"],
+        ]
 
     def _remap_footprint_uuids(self, footprint: SExprList, base_path: str) -> None:
         index = 0

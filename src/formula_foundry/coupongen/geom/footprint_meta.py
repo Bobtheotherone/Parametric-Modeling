@@ -18,7 +18,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..paths import FOOTPRINT_META_DIR
+from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
+
+from ..paths import FOOTPRINT_META_DIR, get_footprint_module_path
 
 if TYPE_CHECKING:
     pass
@@ -161,6 +163,9 @@ class FootprintMeta:
         description: Optional description.
         footprint_lib: KiCad footprint library name.
         footprint_name: KiCad footprint name within the library.
+        footprint_file: Path to the vendored .kicad_mod file.
+        footprint_hash: SHA256 hash of the normalized footprint file contents.
+        metadata_hash: SHA256 hash of canonicalized metadata JSON.
         connector_type: RF connector type/series (e.g., "SMA").
         anchor: Anchor point (footprint placement origin).
         signal_pad: Signal pad metadata.
@@ -176,6 +181,9 @@ class FootprintMeta:
     name: str
     footprint_lib: str
     footprint_name: str
+    footprint_file: Path
+    footprint_hash: str
+    metadata_hash: str
     anchor: PointMeta
     signal_pad: PadMeta
     ground_pads: tuple[PadMeta, ...]
@@ -232,6 +240,27 @@ def list_available_footprint_meta() -> list[str]:
     )
 
 
+def _normalize_line_endings(text: str) -> str:
+    """Normalize line endings to LF for deterministic hashing."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if normalized and not normalized.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
+def _hash_metadata(data: dict) -> str:
+    """Compute deterministic hash for footprint metadata JSON."""
+    canonical = canonical_json_dumps(data)
+    return sha256_bytes(canonical.encode("utf-8"))
+
+
+def _hash_footprint_file(path: Path) -> str:
+    """Compute deterministic hash for a footprint module file."""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    normalized = _normalize_line_endings(text)
+    return sha256_bytes(normalized.encode("utf-8"))
+
+
 def _parse_pad_meta(data: dict, default_net: str = "") -> PadMeta:
     """Parse pad metadata from JSON dict."""
     layers = data.get("layers", ["F.Cu"])
@@ -279,6 +308,16 @@ def load_footprint_meta(footprint_id: str) -> FootprintMeta:
     with meta_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
+    metadata_hash = _hash_metadata(data)
+
+    footprint_file = get_footprint_module_path(
+        data["footprint_lib"],
+        data["footprint_name"],
+    )
+    if not footprint_file.exists():
+        raise FileNotFoundError(f"Footprint module not found: {footprint_file}")
+    footprint_hash = _hash_footprint_file(footprint_file)
+
     # Parse anchor
     anchor_data = data["anchor"]
     anchor = PointMeta(
@@ -322,6 +361,9 @@ def load_footprint_meta(footprint_id: str) -> FootprintMeta:
         description=data.get("description", ""),
         footprint_lib=data["footprint_lib"],
         footprint_name=data["footprint_name"],
+        footprint_file=footprint_file,
+        footprint_hash=footprint_hash,
+        metadata_hash=metadata_hash,
         connector_type=data.get("connector_type", ""),
         anchor=anchor,
         signal_pad=signal_pad,
