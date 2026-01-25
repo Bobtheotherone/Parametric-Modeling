@@ -12,11 +12,12 @@ Key features:
 - F1 antipads/cutouts and return vias with configurable patterns
 - All geometry consumed from LayoutPlan (single source of truth per CP-2.6)
 
-Satisfies REQ-M1-007, REQ-M1-012, REQ-M1-013 and CP-2.6 (ECO-M1-ALIGN-0001).
+Satisfies REQ-M1-007, REQ-M1-010, REQ-M1-012, REQ-M1-013 and CP-2.6 (ECO-M1-ALIGN-0001).
 """
 
 from __future__ import annotations
 
+import base64
 import math
 import uuid
 from pathlib import Path
@@ -29,7 +30,24 @@ from ..geom.layout import LayoutPlan
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
+from .annotations import build_annotations_from_spec
 from .sexpr import SExprList, nm_to_mm
+
+
+def _coupon_id_from_design_hash(design_hash: str) -> str:
+    """Derive a human-readable coupon ID from a design hash.
+
+    Local implementation to avoid circular imports with hashing module.
+
+    Args:
+        design_hash: SHA256 hex digest of the resolved design.
+
+    Returns:
+        12-character lowercase base32-encoded identifier.
+    """
+    digest = bytes.fromhex(design_hash)
+    encoded = base64.b32encode(digest).decode("ascii").lower().rstrip("=")
+    return encoded[:12]
 
 if TYPE_CHECKING:
     pass
@@ -153,18 +171,26 @@ class BoardWriter:
     generate antipads/cutouts with configurable return via patterns.
     """
 
-    def __init__(self, spec: CouponSpec, resolved: ResolvedDesign) -> None:
+    def __init__(
+        self,
+        spec: CouponSpec,
+        resolved: ResolvedDesign,
+        design_hash: str | None = None,
+    ) -> None:
         """Initialize the board writer.
 
         Args:
             spec: Coupon specification.
             resolved: Resolved design parameters with computed LayoutPlan.
+            design_hash: SHA256 hash of the resolved design for silkscreen annotations.
+                        If None, annotations requiring hash will use a placeholder.
 
         Raises:
             ValueError: If resolved.layout_plan is None.
         """
         self.spec = spec
         self.resolved = resolved
+        self._design_hash = design_hash
         self._uuid_counter = 0
 
         # Get LayoutPlan from ResolvedDesign - this is the single source of
@@ -233,6 +259,9 @@ class BoardWriter:
         # Add ground plane fills for return via connectivity (F1 coupons)
         if self.spec.discontinuity is not None and self.spec.discontinuity.return_vias is not None:
             elements.extend(self._build_ground_planes())
+
+        # Add silkscreen annotations with coupon_id and hash (REQ-M1-010)
+        elements.extend(self._build_silkscreen_annotations())
 
         return elements
 
@@ -796,6 +825,31 @@ class BoardWriter:
 
         return elements
 
+    def _build_silkscreen_annotations(self) -> list[SExprList]:
+        """Build silkscreen text annotations with coupon_id and short hash.
+
+        Satisfies REQ-M1-010: Deterministic silkscreen text includes coupon_id
+        and short hash marker for provenance and visibility.
+
+        Returns:
+            List of gr_text S-expression elements for silkscreen layers.
+        """
+        # If no design_hash provided, use a placeholder for deterministic output
+        design_hash = self._design_hash or ("0" * 64)
+        coupon_id = _coupon_id_from_design_hash(design_hash)
+
+        # Get board.text config from spec
+        board_text = self.spec.board.text
+
+        return build_annotations_from_spec(
+            coupon_id_template=board_text.coupon_id,
+            include_manifest_hash=board_text.include_manifest_hash,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=self._layout_plan,
+            uuid_generator=self._next_uuid,
+        )
+
     def write(self, out_path: Path) -> None:
         """Write the board file to disk.
 
@@ -807,47 +861,63 @@ class BoardWriter:
         out_path.write_text(content, encoding="utf-8")
 
 
-def build_board_sexpr(spec: CouponSpec, resolved: ResolvedDesign) -> SExprList:
+def build_board_sexpr(
+    spec: CouponSpec,
+    resolved: ResolvedDesign,
+    design_hash: str | None = None,
+) -> SExprList:
     """Build board S-expression from spec and resolved design.
 
     Args:
         spec: Coupon specification.
         resolved: Resolved design parameters.
+        design_hash: Optional SHA256 hash for silkscreen annotations.
 
     Returns:
         S-expression list representing the board.
     """
-    writer = BoardWriter(spec, resolved)
+    writer = BoardWriter(spec, resolved, design_hash)
     return writer.build_board()
 
 
-def build_board_text(spec: CouponSpec, resolved: ResolvedDesign) -> str:
+def build_board_text(
+    spec: CouponSpec,
+    resolved: ResolvedDesign,
+    design_hash: str | None = None,
+) -> str:
     """Build board file content from spec and resolved design.
 
     Args:
         spec: Coupon specification.
         resolved: Resolved design parameters.
+        design_hash: Optional SHA256 hash for silkscreen annotations.
 
     Returns:
         Formatted S-expression string for .kicad_pcb file.
     """
-    board = build_board_sexpr(spec, resolved)
+    board = build_board_sexpr(spec, resolved, design_hash)
     return sexpr.dump(board)
 
 
-def write_board(spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
+def write_board(
+    spec: CouponSpec,
+    resolved: ResolvedDesign,
+    out_dir: Path,
+    design_hash: str | None = None,
+) -> Path:
     """Write board file to output directory.
 
     Args:
         spec: Coupon specification.
         resolved: Resolved design parameters.
         out_dir: Output directory path.
+        design_hash: Optional SHA256 hash for silkscreen annotations.
 
     Returns:
         Path to the generated .kicad_pcb file.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     board_path = out_dir / "coupon.kicad_pcb"
-    writer = BoardWriter(spec, resolved)
+    writer = BoardWriter(spec, resolved, design_hash)
     writer.write(board_path)
     return board_path
