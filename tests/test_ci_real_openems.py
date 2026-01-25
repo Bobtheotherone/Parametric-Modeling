@@ -17,19 +17,13 @@ be skipped in environments without Docker access.
 from __future__ import annotations
 
 import json
-import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
-
-# Skip all tests if FF_ENABLE_M2_TESTS is not set
-pytestmark = pytest.mark.skipif(
-    os.environ.get("FF_ENABLE_M2_TESTS", "").strip() != "1",
-    reason="M2 tests require FF_ENABLE_M2_TESTS=1",
-)
 
 
 # =============================================================================
@@ -124,6 +118,35 @@ def mock_toolchain_digest() -> ToolchainDigest:
         image="ghcr.io/thliebig/openems",
         digest="sha256:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
     )
+
+
+# =============================================================================
+# CI Workflow Configuration Tests
+# =============================================================================
+
+
+class TestCIWorkflowConfig:
+    """Tests for CI workflow configuration enforcing real openEMS gate."""
+
+    def test_ci_workflow_runs_minimal_real_openems_case(self) -> None:
+        """REQ-M2-024: CI workflow defines the real openEMS case gate."""
+        workflow_path = Path(".github") / "workflows" / "ci.yml"
+        assert workflow_path.exists(), f"Missing CI workflow: {workflow_path}"
+
+        content = workflow_path.read_text(encoding="utf-8")
+        required_snippets = [
+            "openems-minimal",
+            "tools/m2/docker/Dockerfile",
+            "toolchain/openems.lock.json",
+            "ci_artifacts/openems",
+            "ci_minimal_openems.xml",
+        ]
+        missing = [snippet for snippet in required_snippets if snippet not in content]
+        assert not missing, "CI workflow missing required openEMS gate config:\n" + "\n".join(missing)
+
+        assert "docker build" in content
+        assert "docker run" in content
+        assert re.search(r"openEMS", content), "CI workflow must invoke openEMS in the toolchain container"
 
 
 # =============================================================================

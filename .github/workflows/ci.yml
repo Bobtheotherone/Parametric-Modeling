@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  openems-minimal:
+    name: openems-minimal
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENEMS_IMAGE: formula-foundry-openems:0.0.35
+      OPENEMS_DOCKERFILE: tools/m2/docker/Dockerfile
+      OPENEMS_CONTEXT: tools/m2/docker
+      OPENEMS_CASE_DIR: ci_artifacts/openems
+      OPENEMS_XML: ci_minimal_openems.xml
+      OPENEMS_LOCKFILE: toolchain/openems.lock.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: Validate toolchain lock
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          lock_path = Path("${OPENEMS_LOCKFILE}")
+          payload = json.loads(lock_path.read_text(encoding="utf-8"))
+          digest = payload.get("base_image_digest", "")
+          image = payload.get("base_image", "")
+          if not image:
+              raise SystemExit(f"base_image missing in {lock_path}")
+          if not isinstance(digest, str) or not digest.startswith("sha256:"):
+              raise SystemExit(f"base_image_digest missing sha256 in {lock_path}: {digest!r}")
+          print(f"Toolchain base image pinned: {image}@{digest}")
+          PY
+
+      - name: Build openEMS toolchain image
+        run: |
+          docker build -f "$OPENEMS_DOCKERFILE" -t "$OPENEMS_IMAGE" "$OPENEMS_CONTEXT"
+
+      - name: Write minimal openEMS case
+        run: |
+          mkdir -p "$OPENEMS_CASE_DIR"
+          cat > "$OPENEMS_CASE_DIR/$OPENEMS_XML" <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <openEMS>
+            <FDTD>
+              <BoundaryCond>
+                <Xmin>PML_8</Xmin>
+                <Xmax>PML_8</Xmax>
+                <Ymin>PML_8</Ymin>
+                <Ymax>PML_8</Ymax>
+                <Zmin>PML_8</Zmin>
+                <Zmax>PML_8</Zmax>
+              </BoundaryCond>
+              <Excitation>
+                <Gaussian f0="1e9" fc="5e8" />
+              </Excitation>
+              <EndCriteria>1e-3</EndCriteria>
+            </FDTD>
+            <CSX>
+              <RectilinearGrid DeltaUnit="1e-3">
+                <XLines>-5 0 5</XLines>
+                <YLines>-5 0 5</YLines>
+                <ZLines>-5 0 5</ZLines>
+              </RectilinearGrid>
+            </CSX>
+          </openEMS>
+          XML
+
+      - name: Run minimal openEMS case
+        run: |
+          docker run --rm --entrypoint openEMS -v "$PWD/$OPENEMS_CASE_DIR:/workspace" "$OPENEMS_IMAGE" "/workspace/$OPENEMS_XML"
+
+      - name: List openEMS outputs
+        run: |
+          ls -la "$OPENEMS_CASE_DIR"
