@@ -733,3 +733,195 @@ PY
     assert "FROM RESULT - CORRECT" in payload["summary"]
     assert payload["phase"] == "implement"
     assert payload["work_completed"] is True
+
+
+# =============================================================================
+# Tests using the FakeClaudeCLI fixture
+# =============================================================================
+
+
+def test_fake_claude_fixture_success_scenario(tmp_path: Path) -> None:
+    """Test that FakeClaudeCLI generates working stub for success scenario."""
+    from tests.fixtures.fake_claude import FakeClaudeCLI, create_fake_claude_env
+
+    stub = FakeClaudeCLI(scenario="success")
+    stub.write_to(tmp_path / "claude")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = create_fake_claude_env(stub)
+
+    subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        check=True,
+        env=env,
+        text=True,
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+
+
+def test_fake_claude_fixture_parse_failure_scenario(tmp_path: Path) -> None:
+    """Test that FakeClaudeCLI parse_failure scenario produces error turn."""
+    from tests.fixtures.fake_claude import FakeClaudeCLI, create_fake_claude_env
+
+    stub = FakeClaudeCLI(scenario="parse_failure")
+    stub.write_to(tmp_path / "claude")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = create_fake_claude_env(stub)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "wrapper_status=error" in payload["summary"].lower()
+
+
+def test_fake_claude_fixture_concatenated_json_scenario(tmp_path: Path) -> None:
+    """Test that FakeClaudeCLI concatenated_json scenario parses correctly."""
+    from tests.fixtures.fake_claude import FakeClaudeCLI, create_fake_claude_env
+
+    stub = FakeClaudeCLI(scenario="concatenated_json")
+    stub.write_to(tmp_path / "claude")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = create_fake_claude_env(stub)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, f"Wrapper failed: {result.stderr}"
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+
+
+def test_fake_claude_fixture_with_turn_overrides(tmp_path: Path) -> None:
+    """Test that FakeClaudeCLI turn_overrides work correctly."""
+    from tests.fixtures.fake_claude import FakeClaudeCLI, create_fake_claude_env
+
+    stub = FakeClaudeCLI(
+        scenario="success",
+        turn_overrides={
+            "phase": "implement",
+            "work_completed": True,
+            "summary": "Custom summary from override",
+            "gates_passed": ["ruff", "mypy"],
+        },
+    )
+    stub.write_to(tmp_path / "claude")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = create_fake_claude_env(stub)
+
+    subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        check=True,
+        env=env,
+        text=True,
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["phase"] == "implement"
+    assert payload["work_completed"] is True
+    assert "Custom summary from override" in payload["summary"]
+    assert payload["gates_passed"] == ["ruff", "mypy"]
+
+
+def test_fake_claude_fixture_api_warning_scenario(tmp_path: Path) -> None:
+    """Test that FakeClaudeCLI with API key triggers warning in output."""
+    from tests.fixtures.fake_claude import FakeClaudeCLI, create_fake_claude_env
+
+    stub = FakeClaudeCLI(scenario="api_warning")
+    stub.write_to(tmp_path / "claude")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = create_fake_claude_env(stub, include_api_key=True)
+
+    subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        check=True,
+        env=env,
+        text=True,
+    )
+
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    summary = payload["summary"]
+    assert "WARNING:" in summary
+    assert "api billing" in summary.lower()
+
+
+def test_make_valid_turn_helper() -> None:
+    """Test that make_valid_turn produces schema-valid output."""
+    from tests.fixtures.fake_claude import make_valid_turn
+
+    turn = make_valid_turn()
+
+    # Validate against schema
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.validate(instance=turn, schema=schema)
+
+    # Check defaults
+    assert turn["agent"] == "claude"
+    assert turn["milestone_id"] == "M0"
+    assert turn["phase"] == "plan"
+    assert turn["work_completed"] is False
+    assert turn["stats_refs"] == ["CL-1"]
+
+
+def test_make_valid_turn_with_custom_values() -> None:
+    """Test make_valid_turn with custom parameter values."""
+    from tests.fixtures.fake_claude import make_valid_turn
+
+    turn = make_valid_turn(
+        phase="verify",
+        work_completed=True,
+        project_complete=True,
+        summary="All tests passed",
+        gates_passed=["ruff", "mypy", "pytest"],
+        covered_req_ids=["REQ-001", "REQ-002"],
+        next_agent="claude",
+        stats_refs=["CL-1", "CX-1"],
+    )
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.validate(instance=turn, schema=schema)
+
+    assert turn["phase"] == "verify"
+    assert turn["work_completed"] is True
+    assert turn["project_complete"] is True
+    assert turn["summary"] == "All tests passed"
+    assert turn["gates_passed"] == ["ruff", "mypy", "pytest"]
+    assert turn["requirement_progress"]["covered_req_ids"] == ["REQ-001", "REQ-002"]
+    assert turn["next_agent"] == "claude"
+    assert turn["stats_refs"] == ["CL-1", "CX-1"]
