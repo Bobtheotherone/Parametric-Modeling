@@ -4,6 +4,21 @@ import re
 from pathlib import Path
 
 
+USES_LINE_RE = re.compile(r"^\s*-?\s*uses:\s*(.+)$")
+
+
+def _strip_inline_comment(value: str) -> str:
+    if "#" not in value:
+        return value
+    return value.split("#", 1)[0].rstrip()
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1].strip()
+    return value
+
+
 def test_actions_pinned_by_sha_if_present() -> None:
     workflows_dir = Path(".github") / "workflows"
     if not workflows_dir.exists():
@@ -16,9 +31,13 @@ def test_actions_pinned_by_sha_if_present() -> None:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            if not stripped.startswith("uses:"):
+            match = USES_LINE_RE.match(line)
+            if not match:
                 continue
-            value = stripped.split(":", 1)[1].strip()
+            value = _strip_wrapping_quotes(_strip_inline_comment(match.group(1).strip()))
+            if not value:
+                issues.append(f"{wf}:{idx}: uses missing @<sha>: {value}")
+                continue
             if value.startswith("./") or value.startswith("docker://"):
                 continue
             if "@" not in value:

@@ -28,6 +28,23 @@ def _find_workflow_files() -> list[Path]:
     return yml_files + yaml_files
 
 
+USES_LINE_RE = re.compile(r"^\s*-?\s*uses:\s*(.+)$")
+
+
+def _strip_inline_comment(value: str) -> str:
+    """Strip inline comments from a uses value."""
+    if "#" not in value:
+        return value
+    return value.split("#", 1)[0].rstrip()
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    """Strip matching single/double quotes around a value."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1].strip()
+    return value
+
+
 def _check_sha_pinning(workflow_path: Path) -> list[tuple[int, str, str]]:
     """Check a workflow file for unpinned actions.
 
@@ -43,11 +60,15 @@ def _check_sha_pinning(workflow_path: Path) -> list[tuple[int, str, str]]:
         if not stripped or stripped.startswith("#"):
             continue
 
-        # Only check 'uses:' directives
-        if not stripped.startswith("uses:"):
+        # Only check 'uses:' directives (supports "- uses:" and "uses:")
+        match = USES_LINE_RE.match(line)
+        if not match:
             continue
 
-        value = stripped.split(":", 1)[1].strip()
+        value = _strip_wrapping_quotes(_strip_inline_comment(match.group(1).strip()))
+        if not value:
+            issues.append((idx, "missing_ref", value))
+            continue
 
         # Local actions and docker references are allowed without SHA
         if value.startswith("./") or value.startswith("docker://"):
