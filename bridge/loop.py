@@ -1379,7 +1379,7 @@ def _preflight_check_repo(
         # Stash all changes including untracked files
         stash_msg = f"orchestrator-auto-stash-{dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
         rc_stash, out_stash, err_stash = _run_cmd(
-            ["git", "stash", "push", "-u", "-m", stash_msg],
+            ["git", "stash", "push", "-u", "-m", stash_msg, "--", ":/", ":(exclude):/DESIGN_DOCUMENT.md"],
             cwd=project_root,
             env=env,
         )
