@@ -427,31 +427,91 @@ class BoardWriter:
         ]
 
     def _build_outline(self) -> list[SExprList]:
-        """Build board outline as gr_rect on Edge.Cuts layer.
+        """Build board outline on Edge.Cuts layer.
 
         Uses LayoutPlan as the single source of truth for board dimensions
         (CP-2.6). The board dimensions and edge coordinates are read directly
         from the LayoutPlan.
+
+        When corner_radius_nm > 0, generates a rounded rectangle using
+        gr_line and gr_arc elements. Otherwise generates a simple gr_rect.
+
+        Satisfies REQ-M1-009: Rounded board outline with deterministic
+        integer-nm arcs/segments and feasibility validation.
         """
+        from ..geom.cutouts import (
+            OutlineArc,
+            OutlineFeasibilityError,
+            OutlineLine,
+            generate_rounded_outline,
+        )
+
         # Get board dimensions from LayoutPlan (single source of truth)
         lp = self._layout_plan
         y_top = lp.y_board_top_edge_nm
         y_bottom = lp.y_board_bottom_edge_nm
         x_left = lp.x_board_left_edge_nm
         x_right = lp.x_board_right_edge_nm
+        corner_radius = lp.board_corner_radius_nm
 
-        outline_uuid = self._next_uuid("board.outline")
-
-        return [
-            [
-                "gr_rect",
-                ["start", nm_to_mm(x_left), nm_to_mm(y_bottom)],
-                ["end", nm_to_mm(x_right), nm_to_mm(y_top)],
-                ["layer", "Edge.Cuts"],
-                ["width", 0.1],
-                ["tstamp", outline_uuid],
+        # If no corner radius, use simple gr_rect
+        if corner_radius == 0:
+            outline_uuid = self._next_uuid("board.outline")
+            return [
+                [
+                    "gr_rect",
+                    ["start", nm_to_mm(x_left), nm_to_mm(y_bottom)],
+                    ["end", nm_to_mm(x_right), nm_to_mm(y_top)],
+                    ["layer", "Edge.Cuts"],
+                    ["width", 0.1],
+                    ["tstamp", outline_uuid],
+                ]
             ]
-        ]
+
+        # Generate rounded outline with lines and arcs
+        width_nm = x_right - x_left
+        height_nm = y_top - y_bottom
+
+        # generate_rounded_outline validates feasibility and raises
+        # OutlineFeasibilityError if invalid
+        rounded = generate_rounded_outline(
+            x_left_nm=x_left,
+            y_bottom_nm=y_bottom,
+            width_nm=width_nm,
+            height_nm=height_nm,
+            corner_radius_nm=corner_radius,
+        )
+
+        # Convert to KiCad S-expressions
+        elements: list[SExprList] = []
+        for i, elem in enumerate(rounded.elements):
+            elem_uuid = self._indexed_uuid("board.outline", i)
+
+            if isinstance(elem, OutlineLine):
+                elements.append(
+                    [
+                        "gr_line",
+                        ["start", nm_to_mm(elem.start.x), nm_to_mm(elem.start.y)],
+                        ["end", nm_to_mm(elem.end.x), nm_to_mm(elem.end.y)],
+                        ["layer", "Edge.Cuts"],
+                        ["width", 0.1],
+                        ["tstamp", elem_uuid],
+                    ]
+                )
+            elif isinstance(elem, OutlineArc):
+                elements.append(
+                    [
+                        "gr_arc",
+                        ["start", nm_to_mm(elem.start.x), nm_to_mm(elem.start.y)],
+                        ["mid", nm_to_mm(elem.mid.x), nm_to_mm(elem.mid.y)],
+                        ["end", nm_to_mm(elem.end.x), nm_to_mm(elem.end.y)],
+                        ["layer", "Edge.Cuts"],
+                        ["width", 0.1],
+                        ["tstamp", elem_uuid],
+                    ]
+                )
+
+        return elements
 
     def _build_footprints(self) -> list[SExprList]:
         """Build footprint instances for connectors using vendored .kicad_mod files."""
