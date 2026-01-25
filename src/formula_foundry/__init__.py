@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Core API functions (REQ-M1-022)
-from formula_foundry.coupongen.api import (
+from formula_foundry.api import (
     BuildResult,
     DrcReport,
     KiCadProjectPaths,
