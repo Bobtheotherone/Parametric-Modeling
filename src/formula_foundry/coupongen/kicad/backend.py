@@ -34,13 +34,22 @@ class IKiCadBackend(abc.ABC):
     name: str
 
     @abc.abstractmethod
-    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
+    def write_board(
+        self,
+        spec: CouponSpec,
+        resolved: ResolvedDesign,
+        out_dir: Path,
+        design_hash: str | None = None,
+    ) -> Path:
         """Write a KiCad board file.
 
         Args:
             spec: Coupon specification.
             resolved: Resolved design with concrete parameters.
             out_dir: Output directory for the board file.
+            design_hash: SHA256 hash of the resolved design for silkscreen
+                        annotations (REQ-M1-010). If None, annotations will
+                        use a placeholder.
 
         Returns:
             Path to the generated .kicad_pcb file.
@@ -62,18 +71,27 @@ class BackendA(IKiCadBackend):
 
     name = "sexpr"
 
-    def write_board(self, spec: CouponSpec, resolved: ResolvedDesign, out_dir: Path) -> Path:
+    def write_board(
+        self,
+        spec: CouponSpec,
+        resolved: ResolvedDesign,
+        out_dir: Path,
+        design_hash: str | None = None,
+    ) -> Path:
         """Write a KiCad board file using S-expression generation.
 
         Args:
             spec: Coupon specification.
             resolved: Resolved design with concrete parameters.
             out_dir: Output directory for the board file.
+            design_hash: SHA256 hash of the resolved design for silkscreen
+                        annotations (REQ-M1-010). If None, annotations will
+                        use a placeholder.
 
         Returns:
             Path to the generated .kicad_pcb file.
         """
-        return write_board(spec, resolved, out_dir)
+        return write_board(spec, resolved, out_dir, design_hash=design_hash)
 
 
 __all__ = [
