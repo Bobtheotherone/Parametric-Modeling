@@ -19,6 +19,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from formula_foundry.spec.consumption import SpecConsumption
+from formula_foundry.spec.expectations import (
+    expected_paths_for_family,
+    is_optional_path,
+)
 
 if TYPE_CHECKING:
     from formula_foundry.coupongen.spec import CouponSpec
@@ -38,99 +42,6 @@ class SpecConsumptionError(Exception):
         self.unconsumed_expected = unconsumed_expected
 
 
-# Expected paths for F0 family (simple through-line)
-_EXPECTED_PATHS_F0 = frozenset(
-    {
-        "schema_version",
-        "coupon_family",
-        "units",
-        "toolchain.kicad.version",
-        "toolchain.kicad.docker_image",
-        "fab_profile.id",
-        "stackup.copper_layers",
-        "stackup.materials.er",
-        "stackup.materials.loss_tangent",
-        "board.outline.width_nm",
-        "board.outline.length_nm",
-        "board.outline.corner_radius_nm",
-        "board.origin.mode",
-        "board.text.coupon_id",
-        "board.text.include_manifest_hash",
-        "connectors.left.footprint",
-        "connectors.left.position_nm",
-        "connectors.left.rotation_deg",
-        "connectors.right.footprint",
-        "connectors.right.position_nm",
-        "connectors.right.rotation_deg",
-        "transmission_line.type",
-        "transmission_line.layer",
-        "transmission_line.w_nm",
-        "transmission_line.gap_nm",
-        "transmission_line.length_left_nm",
-        "transmission_line.length_right_nm",
-        "constraints.mode",
-        "constraints.drc.must_pass",
-        "constraints.drc.severity",
-        "constraints.symmetry.enforce",
-        "constraints.allow_unconnected_copper",
-        "export.gerbers.enabled",
-        "export.gerbers.format",
-        "export.drill.enabled",
-        "export.drill.format",
-        "export.outputs_dir",
-    }
-)
-
-# Expected paths for F1 family (via discontinuity)
-# Note: Use explicit parentheses to ensure correct operator precedence
-# (| has higher precedence than - for frozenset)
-_EXPECTED_PATHS_F1 = (
-    _EXPECTED_PATHS_F0
-    | frozenset(
-        {
-            # Discontinuity is required for F1
-            "discontinuity.type",
-            "discontinuity.signal_via.drill_nm",
-            "discontinuity.signal_via.diameter_nm",
-            "discontinuity.signal_via.pad_diameter_nm",
-            # Return vias are optional but if present, these are expected
-            "discontinuity.return_vias.pattern",
-            "discontinuity.return_vias.count",
-            "discontinuity.return_vias.radius_nm",
-            "discontinuity.return_vias.via.drill_nm",
-            "discontinuity.return_vias.via.diameter_nm",
-        }
-    )
-) - frozenset(
-    {
-        # F1 derives length_right_nm, so it's not expected to be provided
-        "transmission_line.length_right_nm",
-    }
-)
-
-# Optional paths that, if provided, are consumed
-_OPTIONAL_PATHS_COMMON = frozenset(
-    {
-        # Ground via fence (optional for both families)
-        "transmission_line.ground_via_fence.enabled",
-        "transmission_line.ground_via_fence.pitch_nm",
-        "transmission_line.ground_via_fence.offset_from_gap_nm",
-        "transmission_line.ground_via_fence.via.drill_nm",
-        "transmission_line.ground_via_fence.via.diameter_nm",
-        # Stackup thicknesses (dynamic keys)
-        "stackup.thicknesses_nm.core",
-        "stackup.thicknesses_nm.prepreg",
-        "stackup.thicknesses_nm.copper",
-        "stackup.thicknesses_nm.soldermask",
-        # Fab profile overrides
-        "fab_profile.overrides",
-        # Antipads and plane cutouts (dynamic keys)
-        "discontinuity.antipads",
-        "discontinuity.plane_cutouts",
-    }
-)
-
-
 def get_expected_paths(coupon_family: str) -> frozenset[str]:
     """Get the expected paths for a given coupon family.
 
@@ -140,16 +51,8 @@ def get_expected_paths(coupon_family: str) -> frozenset[str]:
     Returns:
         Frozenset of expected dot-delimited paths.
 
-    Raises:
-        ValueError: If the coupon family is not recognized.
     """
-    if coupon_family == "F0":
-        return _EXPECTED_PATHS_F0
-    elif coupon_family == "F1":
-        return _EXPECTED_PATHS_F1
-    else:
-        # Unknown family - use F0 as base and log warning
-        return _EXPECTED_PATHS_F0
+    return expected_paths_for_family(coupon_family)
 
 
 def collect_provided_paths(spec: CouponSpec) -> frozenset[str]:
@@ -240,30 +143,16 @@ def get_consumed_paths(spec: CouponSpec) -> frozenset[str]:
 def _is_path_prefix_in(path: str, paths: frozenset[str]) -> bool:
     """Check if a path or any of its descendants exists in paths."""
     prefix = path + "."
+    list_prefix = path + "["
     for p in paths:
-        if p == path or p.startswith(prefix):
+        if p == path or p.startswith(prefix) or p.startswith(list_prefix):
             return True
     return False
 
 
 def _matches_optional_pattern(path: str) -> bool:
     """Check if a path matches any optional pattern."""
-    # Check exact match
-    if path in _OPTIONAL_PATHS_COMMON:
-        return True
-
-    # Check prefix patterns for dynamic keys
-    dynamic_prefixes = [
-        "stackup.thicknesses_nm.",
-        "fab_profile.overrides.",
-        "discontinuity.antipads.",
-        "discontinuity.plane_cutouts.",
-    ]
-    for prefix in dynamic_prefixes:
-        if path.startswith(prefix):
-            return True
-
-    return False
+    return is_optional_path(path)
 
 
 def _collect_dynamic_consumed_paths(
