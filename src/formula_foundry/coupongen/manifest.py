@@ -36,6 +36,7 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
     - spec_consumption: consumed/expected/unused paths (REQ-M1-013)
     - footprint_provenance: paths and hashes of source footprints (REQ-M1-013)
     - zone_policy: refill/check behavior and toolchain versioning (REQ-M1-013)
+    - repair_map_summary: repair_map summary with deterministic ordering (REQ-M1-013)
 
 DRC canonicalization is delegated to kicad/canonicalize.py per Section 13.5.2,
 which is the authoritative source for all artifact canonicalization algorithms.
@@ -53,6 +54,7 @@ from typing import Any, cast
 from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_bytes
 
 from .constraints import ConstraintProof, resolve_fab_limits
+from .constraints.repair import RepairResult
 from .geom.footprint_meta import FootprintMeta, load_footprint_meta
 from .kicad.canonicalize import canonical_hash_drc_json
 from .kicad.policy import ZonePolicy
@@ -116,6 +118,71 @@ def _build_footprint_provenance(spec: CouponSpec) -> dict[str, dict[str, str]]:
     return provenance
 
 
+def _build_repair_map_summary(repair_result: RepairResult) -> dict[str, Any]:
+    """Build a repair_map summary for manifest embedding.
+
+    Creates a concise, deterministically-ordered summary of repairs for
+    inclusion in the manifest. This provides traceability without
+    duplicating the full repair_map.json content.
+
+    REQ-M1-013: The manifest MUST include repair_map summary for reproducibility.
+    REQ-M1-011: REPAIR mode must emit repair_map with deterministic ordering.
+
+    Args:
+        repair_result: The RepairResult from constraint repair.
+
+    Returns:
+        Dictionary with repair summary including:
+        - repair_applied: Boolean indicating if repairs were made
+        - repair_count: Number of parameter repairs
+        - repaired_paths: Sorted list of parameter paths that were repaired
+        - repair_map: The full repair map with deterministic ordering
+        - repair_distance: Normalized total distance of repairs
+        - distance_metrics: L2/Linf metrics if available
+        - projection_policy_order: Order of repair tiers applied
+        - original_spec_hash: Hash of canonical original spec
+        - repaired_spec_hash: Hash of canonical repaired spec
+        - repaired_design_hash: Design hash for rebuild verification
+    """
+    # Check if any repairs were actually applied
+    if not repair_result.repair_actions:
+        return {
+            "repair_applied": False,
+            "repair_count": 0,
+            "repaired_paths": [],
+            "repair_map": {},
+        }
+
+    # Build deterministically ordered repair_map
+    repair_map_ordered = {
+        path: repair_result.repair_map[path]
+        for path in sorted(repair_result.repair_map.keys())
+    }
+
+    summary: dict[str, Any] = {
+        "repair_applied": True,
+        "repair_count": len(repair_result.repair_actions),
+        "repaired_paths": sorted(repair_result.repair_map.keys()),
+        "repair_map": repair_map_ordered,
+        "repair_distance": repair_result.repair_distance,
+        "projection_policy_order": list(repair_result.projection_policy_order),
+    }
+
+    # Include distance metrics if available (CP-3.4)
+    if repair_result.distance_metrics is not None:
+        summary["distance_metrics"] = repair_result.distance_metrics.to_dict()
+
+    # Include spec/design hashes for rebuild verification (REQ-M1-011)
+    if repair_result.original_spec_hash is not None:
+        summary["original_spec_hash"] = repair_result.original_spec_hash
+    if repair_result.repaired_spec_hash is not None:
+        summary["repaired_spec_hash"] = repair_result.repaired_spec_hash
+    if repair_result.repaired_design_hash is not None:
+        summary["repaired_design_hash"] = repair_result.repaired_design_hash
+
+    return summary
+
+
 def build_manifest(
     *,
     spec: CouponSpec,
@@ -133,12 +200,14 @@ def build_manifest(
     timestamp_utc: str | None = None,
     footprint_provenance: Mapping[str, dict[str, str]] | None = None,
     zone_policy: ZonePolicy | None = None,
+    repair_result: RepairResult | None = None,
 ) -> dict[str, Any]:
     """Build a manifest dictionary with all required provenance fields.
 
     Satisfies REQ-M1-013 and REQ-M1-018: The repo must emit a manifest.json for
     every build containing required provenance fields, export hashes,
-    spec-consumption summary, footprint provenance, and zone policy record.
+    spec-consumption summary, footprint provenance, zone policy record,
+    derived feature groups, and repair_map summary with deterministic ordering.
 
     Args:
         spec: The original coupon specification.
@@ -158,6 +227,8 @@ def build_manifest(
             (paths + hashes). If None, computed from spec connectors (REQ-M1-013).
         zone_policy: Optional ZonePolicy record for zone refill/check behavior
             and toolchain versioning (REQ-M1-013). If None, uses default policy.
+        repair_result: Optional RepairResult from constraint repair. If provided,
+            includes repair_map summary in manifest (REQ-M1-013, REQ-M1-011).
 
     Returns:
         Dictionary with all required manifest fields ready for JSON serialization.
@@ -221,6 +292,11 @@ def build_manifest(
     consumption_summary = resolved.get_spec_consumption_summary()
     if consumption_summary is not None:
         manifest["spec_consumption"] = consumption_summary
+
+    # REQ-M1-013, REQ-M1-011: Include repair_map summary with deterministic ordering
+    if repair_result is not None:
+        manifest["repair_map_summary"] = _build_repair_map_summary(repair_result)
+
     return manifest
 
 
