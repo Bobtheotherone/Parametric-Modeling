@@ -4,6 +4,10 @@ This module defines the runner protocol that all KiCad CLI runner
 implementations must follow.
 
 Satisfies CP-1.2 and Section 13.1.2 requirements.
+
+Note: ZonePolicy and DEFAULT_ZONE_POLICY are re-exported from
+kicad.policy for backward compatibility. The authoritative source
+is kicad/policy.py (REQ-M1-006).
 """
 
 from __future__ import annotations
@@ -14,6 +18,9 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+# Re-export from the authoritative policy module for backward compatibility
+from ..policy import DEFAULT_ZONE_POLICY, ZonePolicy
 
 
 @dataclass(frozen=True)
@@ -93,4 +100,6 @@ class IKicadRunner(Protocol):
 __all__ = [
     "IKicadRunner",
     "KicadRunResult",
+    "ZonePolicy",
+    "DEFAULT_ZONE_POLICY",
 ]

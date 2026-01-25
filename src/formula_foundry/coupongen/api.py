@@ -6,7 +6,7 @@ This module provides the public API for coupon generation, including:
 - generate_kicad: Generate KiCad project files
 - run_drc: Run KiCad DRC on a board file
 - export_fab: Export gerbers and drill files
-- build_coupon: Full build pipeline (validate/repair -> generate -> DRC -> export)
+- build_coupon: Full build pipeline (validate/repair -> resolve -> generate -> DRC -> export -> manifest)
 
 CP-3.5: Pipeline Integration
 - All validation uses ConstraintEngine as the single unified path
@@ -20,7 +20,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
 
 import yaml  # type: ignore[import-untyped]
 
@@ -28,6 +28,7 @@ from formula_foundry.substrate import canonical_json_dumps, get_git_sha
 
 from .constraints import (
     ConstraintEvaluation,
+    ConstraintProof,
     TieredConstraintResult,
     constraint_proof_payload,
     enforce_constraints,
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 
 # Constraint mode type alias
 ConstraintMode = Literal["REJECT", "REPAIR"]
+ValidationMode = Literal["legacy", "engine"]
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,14 @@ class ValidationResult:
     was_repaired: bool
 
 
+@dataclass(frozen=True)
+class _PipelineValidation:
+    spec: CouponSpec
+    resolved: ResolvedDesign
+    proof: ConstraintProof
+    write_outputs: Callable[[Path], None]
+
+
 def _ensure_docker_image_meta(toolchain_meta: dict[str, Any], docker_image: str | None) -> None:
     if not docker_image:
         return
@@ -101,6 +111,30 @@ def _ensure_docker_image_meta(toolchain_meta: dict[str, Any], docker_image: str 
         toolchain_meta["docker"] = {"image_ref": docker_image}
         return
     docker_meta.setdefault("image_ref", docker_image)
+
+
+def _resolve_fab_limits_for_engine(spec: CouponSpec) -> dict[str, int]:
+    try:
+        profile = load_fab_profile(spec.fab_profile.id)
+        fab_limits = get_fab_limits(profile)
+    except FileNotFoundError:
+        fab_limits = {
+            "min_trace_width_nm": 100_000,
+            "min_gap_nm": 100_000,
+            "min_drill_nm": 200_000,
+            "min_annular_ring_nm": 100_000,
+            "min_via_diameter_nm": 300_000,
+            "min_edge_clearance_nm": 200_000,
+            "min_via_to_via_nm": 200_000,
+            "min_board_width_nm": 5_000_000,
+        }
+
+    if spec.fab_profile.overrides:
+        for key, value in spec.fab_profile.overrides.items():
+            if key in fab_limits:
+                fab_limits[key] = int(value)
+
+    return fab_limits
 
 
 class KicadRunnerProtocol(Protocol):
@@ -169,28 +203,7 @@ def validate_spec_with_engine(
     # Determine constraint mode
     constraint_mode: ConstraintMode = mode or spec.constraints.mode  # type: ignore[assignment]
 
-    # Get fab limits from profile
-    try:
-        profile = load_fab_profile(spec.fab_profile.id)
-        fab_limits = get_fab_limits(profile)
-    except FileNotFoundError:
-        # Fall back to conservative defaults
-        fab_limits = {
-            "min_trace_width_nm": 100_000,
-            "min_gap_nm": 100_000,
-            "min_drill_nm": 200_000,
-            "min_annular_ring_nm": 100_000,
-            "min_via_diameter_nm": 300_000,
-            "min_edge_clearance_nm": 200_000,
-            "min_via_to_via_nm": 200_000,
-            "min_board_width_nm": 5_000_000,
-        }
-
-    # Apply any overrides from the spec
-    if spec.fab_profile.overrides:
-        for key, value in spec.fab_profile.overrides.items():
-            if key in fab_limits:
-                fab_limits[key] = int(value)
+    fab_limits = _resolve_fab_limits_for_engine(spec)
 
     # Create engine and validate
     engine = create_constraint_engine(fab_limits=fab_limits)
@@ -199,17 +212,8 @@ def validate_spec_with_engine(
     # Write validation outputs
     _write_engine_validation_outputs(result, out_dir)
 
-    # Determine the spec to use (original or repaired)
-    # For REPAIR mode, we need to reconstruct the spec from the result
-    if result.was_repaired and result.repair_result is not None:
-        # Re-resolve to get the spec that was used
-        validated_spec = spec  # The original spec is modified in place during repair
-        # Actually, we need the repaired spec from the repair result
-        # The ConstraintEngine returns the resolved design, but we need the spec
-        # For now, use the original spec (the resolved design reflects the repairs)
-        validated_spec = spec
-    else:
-        validated_spec = spec
+    # Use the spec from the engine result (repaired if REPAIR mode changed anything)
+    validated_spec = result.spec
 
     return ValidationResult(
         spec=validated_spec,
@@ -352,317 +356,10 @@ def _load_spec_payload(path: Path) -> dict[str, Any]:
     return payload
 
 
-def build_coupon(
-    spec: CouponSpec,
-    *,
-    out_root: Path,
-    mode: KicadCliMode = "local",
-    runner: KicadRunnerProtocol | None = None,
-    backend: BackendA | None = None,
-    kicad_cli_version: str | None = None,
-    lock_file: Path | None = None,
-) -> BuildResult:
-    """Build a coupon from a specification.
-
-    For new code, prefer build_coupon_with_engine() which uses the unified
-    ConstraintEngine with full tiered validation (Tier 0-3).
-
-    For docker mode, this function captures complete toolchain provenance
-    by running kicad-cli --version inside the container (per CP-5.3).
-
-    Args:
-        spec: The coupon specification.
-        out_root: Root output directory.
-        mode: KiCad CLI mode ("local" or "docker").
-        runner: Custom KiCad runner (for testing).
-        backend: Custom KiCad backend (for testing).
-        kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
-        lock_file: Path to toolchain lock file (for docker mode).
-
-    Returns:
-        BuildResult with output paths and cache status.
-
-    Raises:
-        ToolchainProvenanceError: If docker mode and provenance cannot be captured.
-    """
-    validate_family(spec)
-    evaluation = enforce_constraints(spec)
-    resolved = evaluation.resolved
-    design_hash_value = design_hash(resolved)
-    coupon_id = coupon_id_from_design_hash(design_hash_value)
-    output_dir = out_root / f"{coupon_id}-{design_hash_value}"
-    manifest_path = output_dir / "manifest.json"
-
-    # Capture toolchain provenance (CP-5.1/5.3: always capture complete provenance including lock file hash)
-    if kicad_cli_version is not None:
-        # Pre-captured version provided (for testing)
-        # Still try to load lock_file_toolchain_hash from lock file (CP-5.1)
-        lock_file_hash: str | None = None
-        if lock_file is not None:
-            try:
-                from .toolchain import load_toolchain_lock
-
-                tc_config = load_toolchain_lock(lock_path=lock_file)
-                lock_file_hash = tc_config.toolchain_hash
-            except Exception:
-                pass  # lock file hash is optional for testing paths
-        toolchain_meta: dict[str, Any] = {
-            "kicad": {
-                "version": evaluation.spec.toolchain.kicad.version,
-                "cli_version_output": kicad_cli_version,
-            },
-            "docker": {
-                "image_ref": evaluation.spec.toolchain.kicad.docker_image,
-            },
-            "mode": mode,
-            "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
-        }
-        if lock_file_hash:
-            toolchain_meta["lock_file_toolchain_hash"] = lock_file_hash
-    else:
-        # Capture provenance dynamically
-        provenance = capture_toolchain_provenance(
-            mode=mode,
-            kicad_version=evaluation.spec.toolchain.kicad.version,
-            docker_image=evaluation.spec.toolchain.kicad.docker_image,
-            workdir=out_root,
-            lock_file=lock_file,
-        )
-        toolchain_meta = provenance.to_metadata()
-        # Ensure docker image_ref is set for compatibility
-        if mode == "docker" and "docker" not in toolchain_meta:
-            toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
-
-    _ensure_docker_image_meta(toolchain_meta, evaluation.spec.toolchain.kicad.docker_image)
-    toolchain_hash_value = toolchain_hash(toolchain_meta)
-
-    if manifest_path.exists():
-        manifest = load_manifest(manifest_path)
-        if manifest.get("design_hash") == design_hash_value and manifest.get("toolchain_hash") == toolchain_hash_value:
-            return BuildResult(
-                output_dir=output_dir,
-                design_hash=design_hash_value,
-                coupon_id=coupon_id,
-                manifest_path=manifest_path,
-                cache_hit=True,
-                toolchain_hash=toolchain_hash_value,
-            )
-
-    _write_validation_outputs(evaluation, output_dir)
-    project = generate_kicad(resolved, evaluation.spec, output_dir, backend=backend)
-    report = run_drc(
-        project.board_path,
-        evaluation.spec.toolchain.kicad,
-        mode=mode,
-        runner=runner,
-        lock_file=lock_file,
-    )
-    if evaluation.spec.constraints.drc.must_pass and report.returncode != 0:
-        raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
-    export_hashes_raw = export_fab(
-        project.board_path,
-        output_dir / "fab",
-        evaluation.spec.toolchain.kicad,
-        mode=mode,
-        runner=runner,
-        lock_file=lock_file,
-    )
-    # Add fab/ prefix to export paths so manifest paths match actual file locations
-    export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
-    manifest = build_manifest(
-        spec=evaluation.spec,
-        resolved=resolved,
-        proof=evaluation.proof,
-        design_hash=design_hash_value,
-        coupon_id=coupon_id,
-        toolchain=toolchain_meta,
-        toolchain_hash_value=toolchain_hash_value,
-        export_hashes=export_hashes,
-        drc_report_path=report.report_path,
-        drc_returncode=report.returncode,
-    )
-    write_manifest(manifest_path, manifest)
-    return BuildResult(
-        output_dir=output_dir,
-        design_hash=design_hash_value,
-        coupon_id=coupon_id,
-        manifest_path=manifest_path,
-        cache_hit=False,
-        toolchain_hash=toolchain_hash_value,
-    )
-
-
-def build_coupon_with_engine(
-    spec: CouponSpec,
-    *,
-    out_root: Path,
-    kicad_mode: KicadCliMode = "local",
-    constraint_mode: ConstraintMode | None = None,
-    runner: KicadRunnerProtocol | None = None,
-    backend: BackendA | None = None,
-    kicad_cli_version: str | None = None,
-    lock_file: Path | None = None,
-) -> BuildResult:
-    """Build coupon using ConstraintEngine (CP-3.5 unified path).
-
-    This is the preferred build method that uses the unified ConstraintEngine
-    with full tiered validation (Tier 0-3) and connectivity oracle integration.
-
-    Build flow: validate/repair (Tier0-3) -> generate -> DRC -> export
-
-    For docker mode, this function captures complete toolchain provenance
-    by running kicad-cli --version inside the container (per CP-5.3).
-    Docker builds must never have 'unknown' values for toolchain fields.
-
-    Args:
-        spec: CouponSpec to build
-        out_root: Root directory for output artifacts
-        kicad_mode: KiCad CLI mode ("local" or "docker")
-        constraint_mode: Override constraint mode ("REJECT" or "REPAIR").
-                        If None, uses spec.constraints.mode.
-        runner: Optional KiCad runner protocol for testing
-        backend: Optional board writer backend
-        kicad_cli_version: Optional KiCad CLI version string (for testing)
-        lock_file: Path to toolchain lock file (for docker mode)
-
-    Returns:
-        BuildResult with output paths and hashes
-
-    Raises:
-        ConstraintViolationError: If constraint_mode is REJECT and constraints fail
-        RuntimeError: If DRC fails and spec.constraints.drc.must_pass is True
-        ToolchainProvenanceError: If docker mode and provenance cannot be captured
-    """
-    validate_family(spec)
-
-    # Determine constraint mode
-    mode: ConstraintMode = constraint_mode or spec.constraints.mode  # type: ignore[assignment]
-
-    # Get fab limits from profile
-    try:
-        profile = load_fab_profile(spec.fab_profile.id)
-        fab_limits = get_fab_limits(profile)
-    except FileNotFoundError:
-        # Fall back to conservative defaults
-        fab_limits = {
-            "min_trace_width_nm": 100_000,
-            "min_gap_nm": 100_000,
-            "min_drill_nm": 200_000,
-            "min_annular_ring_nm": 100_000,
-            "min_via_diameter_nm": 300_000,
-            "min_edge_clearance_nm": 200_000,
-            "min_via_to_via_nm": 200_000,
-            "min_board_width_nm": 5_000_000,
-        }
-
-    # Apply any overrides from the spec
-    if spec.fab_profile.overrides:
-        for key, value in spec.fab_profile.overrides.items():
-            if key in fab_limits:
-                fab_limits[key] = int(value)
-
-    # Create engine and validate/repair
-    engine = create_constraint_engine(fab_limits=fab_limits)
-    engine_result = engine.validate_or_repair(spec, mode=mode)
-
-    resolved = engine_result.resolved
-    design_hash_value = design_hash(resolved)
-    coupon_id = coupon_id_from_design_hash(design_hash_value)
-    output_dir = out_root / f"{coupon_id}-{design_hash_value}"
-    manifest_path = output_dir / "manifest.json"
-
-    # Capture toolchain provenance (CP-5.1/5.3: always capture complete provenance including lock file hash)
-    if kicad_cli_version is not None:
-        # Pre-captured version provided (for testing)
-        # Still try to load lock_file_toolchain_hash from lock file (CP-5.1)
-        lock_file_hash: str | None = None
-        if lock_file is not None:
-            try:
-                from .toolchain import load_toolchain_lock
-
-                tc_config = load_toolchain_lock(lock_path=lock_file)
-                lock_file_hash = tc_config.toolchain_hash
-            except Exception:
-                pass  # lock file hash is optional for testing paths
-        toolchain_meta: dict[str, Any] = {
-            "kicad": {
-                "version": spec.toolchain.kicad.version,
-                "cli_version_output": kicad_cli_version,
-            },
-            "docker": {
-                "image_ref": spec.toolchain.kicad.docker_image,
-            },
-            "mode": kicad_mode,
-            "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
-        }
-        if lock_file_hash:
-            toolchain_meta["lock_file_toolchain_hash"] = lock_file_hash
-    else:
-        # Capture provenance dynamically (CP-5.1/5.3: no 'unknown' values for docker builds)
-        provenance = capture_toolchain_provenance(
-            mode=kicad_mode,
-            kicad_version=spec.toolchain.kicad.version,
-            docker_image=spec.toolchain.kicad.docker_image,
-            workdir=out_root,
-            lock_file=lock_file,
-        )
-        toolchain_meta = provenance.to_metadata()
-        # Ensure docker image_ref is set for compatibility
-        if kicad_mode == "docker" and "docker" not in toolchain_meta:
-            toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
-
-    _ensure_docker_image_meta(toolchain_meta, spec.toolchain.kicad.docker_image)
-    toolchain_hash_value = toolchain_hash(toolchain_meta)
-
-    # Check cache
-    if manifest_path.exists():
-        manifest = load_manifest(manifest_path)
-        if manifest.get("design_hash") == design_hash_value and manifest.get("toolchain_hash") == toolchain_hash_value:
-            return BuildResult(
-                output_dir=output_dir,
-                design_hash=design_hash_value,
-                coupon_id=coupon_id,
-                manifest_path=manifest_path,
-                cache_hit=True,
-                toolchain_hash=toolchain_hash_value,
-            )
-
-    # Write validation outputs
-    _write_engine_validation_outputs(engine_result, output_dir)
-
-    # Generate KiCad project
-    project = generate_kicad(resolved, spec, output_dir, backend=backend)
-
-    # Run DRC
-    report = run_drc(
-        project.board_path,
-        spec.toolchain.kicad,
-        mode=kicad_mode,
-        runner=runner,
-        lock_file=lock_file,
-    )
-    if spec.constraints.drc.must_pass and report.returncode != 0:
-        raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
-
-    # Export fabrication files
-    export_hashes_raw = export_fab(
-        project.board_path,
-        output_dir / "fab",
-        spec.toolchain.kicad,
-        mode=kicad_mode,
-        runner=runner,
-        lock_file=lock_file,
-    )
-    # Add fab/ prefix to export paths so manifest paths match actual file locations
-    export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
-
-    # Build and write manifest
-    # Note: We need to convert the TieredConstraintProof to the legacy ConstraintProof format
-    # for the manifest builder. This is a temporary bridge until the manifest is updated.
+def _legacy_proof_from_engine(engine_result: ConstraintEngineResult) -> ConstraintProof:
     from .constraints.core import ConstraintProof
     from .constraints.core import ConstraintResult as LegacyConstraintResult
 
-    # Convert tiered proof to legacy proof format
     legacy_constraints = tuple(
         LegacyConstraintResult(
             constraint_id=c.constraint_id,
@@ -693,16 +390,160 @@ def build_coupon_with_engine(
         for tier in engine_tiers
     }
     legacy_tiers["T4"] = ()
-    legacy_proof = ConstraintProof(
+    return ConstraintProof(
         constraints=legacy_constraints,
         tiers=legacy_tiers,  # type: ignore[arg-type]
         passed=engine_result.proof.passed,
     )
 
+
+def _build_toolchain_meta(
+    spec: CouponSpec,
+    *,
+    mode: KicadCliMode,
+    kicad_cli_version: str | None,
+    lock_file: Path | None,
+    workdir: Path,
+) -> dict[str, Any]:
+    if kicad_cli_version is not None:
+        lock_file_hash: str | None = None
+        if lock_file is not None:
+            try:
+                from .toolchain import load_toolchain_lock
+
+                tc_config = load_toolchain_lock(lock_path=lock_file)
+                lock_file_hash = tc_config.toolchain_hash
+            except Exception:
+                pass
+        toolchain_meta: dict[str, Any] = {
+            "kicad": {
+                "version": spec.toolchain.kicad.version,
+                "cli_version_output": kicad_cli_version,
+            },
+            "docker": {
+                "image_ref": spec.toolchain.kicad.docker_image,
+            },
+            "mode": mode,
+            "generator_git_sha": get_git_sha(Path.cwd()) if Path.cwd().exists() else "0" * 40,
+        }
+        if lock_file_hash:
+            toolchain_meta["lock_file_toolchain_hash"] = lock_file_hash
+    else:
+        provenance = capture_toolchain_provenance(
+            mode=mode,
+            kicad_version=spec.toolchain.kicad.version,
+            docker_image=spec.toolchain.kicad.docker_image,
+            workdir=workdir,
+            lock_file=lock_file,
+        )
+        toolchain_meta = provenance.to_metadata()
+        if mode == "docker" and "docker" not in toolchain_meta:
+            toolchain_meta["docker"] = {"image_ref": provenance.docker_image_ref}
+
+    _ensure_docker_image_meta(toolchain_meta, spec.toolchain.kicad.docker_image)
+    return toolchain_meta
+
+
+def _prepare_pipeline_validation(
+    spec: CouponSpec,
+    *,
+    validation_mode: ValidationMode,
+    constraint_mode: ConstraintMode | None,
+) -> _PipelineValidation:
+    if validation_mode == "legacy":
+        evaluation = enforce_constraints(spec)
+        return _PipelineValidation(
+            spec=evaluation.spec,
+            resolved=evaluation.resolved,
+            proof=evaluation.proof,
+            write_outputs=lambda out_dir: _write_validation_outputs(evaluation, out_dir),
+        )
+
+    if validation_mode == "engine":
+        mode: ConstraintMode = constraint_mode or spec.constraints.mode  # type: ignore[assignment]
+        fab_limits = _resolve_fab_limits_for_engine(spec)
+        engine = create_constraint_engine(fab_limits=fab_limits)
+        engine_result = engine.validate_or_repair(spec, mode=mode)
+        return _PipelineValidation(
+            spec=engine_result.spec,
+            resolved=engine_result.resolved,
+            proof=_legacy_proof_from_engine(engine_result),
+            write_outputs=lambda out_dir: _write_engine_validation_outputs(engine_result, out_dir),
+        )
+
+    raise ValueError(f"Unknown validation mode: {validation_mode}")
+
+
+def run_build_pipeline(
+    spec: CouponSpec,
+    *,
+    out_root: Path,
+    kicad_mode: KicadCliMode = "local",
+    validation_mode: ValidationMode = "engine",
+    constraint_mode: ConstraintMode | None = None,
+    runner: KicadRunnerProtocol | None = None,
+    backend: BackendA | None = None,
+    kicad_cli_version: str | None = None,
+    lock_file: Path | None = None,
+) -> BuildResult:
+    """Run the canonical build pipeline: validate -> resolve -> generate -> drc -> export -> manifest."""
+    validate_family(spec)
+    validation = _prepare_pipeline_validation(
+        spec,
+        validation_mode=validation_mode,
+        constraint_mode=constraint_mode,
+    )
+    resolved = validation.resolved
+    design_hash_value = design_hash(resolved)
+    coupon_id = coupon_id_from_design_hash(design_hash_value)
+    output_dir = out_root / f"{coupon_id}-{design_hash_value}"
+    manifest_path = output_dir / "manifest.json"
+
+    toolchain_meta = _build_toolchain_meta(
+        validation.spec,
+        mode=kicad_mode,
+        kicad_cli_version=kicad_cli_version,
+        lock_file=lock_file,
+        workdir=out_root,
+    )
+    toolchain_hash_value = toolchain_hash(toolchain_meta)
+
+    if manifest_path.exists():
+        manifest = load_manifest(manifest_path)
+        if manifest.get("design_hash") == design_hash_value and manifest.get("toolchain_hash") == toolchain_hash_value:
+            return BuildResult(
+                output_dir=output_dir,
+                design_hash=design_hash_value,
+                coupon_id=coupon_id,
+                manifest_path=manifest_path,
+                cache_hit=True,
+                toolchain_hash=toolchain_hash_value,
+            )
+
+    validation.write_outputs(output_dir)
+    project = generate_kicad(resolved, validation.spec, output_dir, backend=backend)
+    report = run_drc(
+        project.board_path,
+        validation.spec.toolchain.kicad,
+        mode=kicad_mode,
+        runner=runner,
+        lock_file=lock_file,
+    )
+    if validation.spec.constraints.drc.must_pass and report.returncode != 0:
+        raise RuntimeError(f"KiCad DRC failed with returncode {report.returncode}")
+    export_hashes_raw = export_fab(
+        project.board_path,
+        output_dir / "fab",
+        validation.spec.toolchain.kicad,
+        mode=kicad_mode,
+        runner=runner,
+        lock_file=lock_file,
+    )
+    export_hashes = {f"fab/{path}": h for path, h in export_hashes_raw.items()}
     manifest = build_manifest(
-        spec=spec,
+        spec=validation.spec,
         resolved=resolved,
-        proof=legacy_proof,
+        proof=validation.proof,
         design_hash=design_hash_value,
         coupon_id=coupon_id,
         toolchain=toolchain_meta,
@@ -712,7 +553,6 @@ def build_coupon_with_engine(
         drc_returncode=report.returncode,
     )
     write_manifest(manifest_path, manifest)
-
     return BuildResult(
         output_dir=output_dir,
         design_hash=design_hash_value,
@@ -720,6 +560,108 @@ def build_coupon_with_engine(
         manifest_path=manifest_path,
         cache_hit=False,
         toolchain_hash=toolchain_hash_value,
+    )
+
+
+def build_coupon(
+    spec: CouponSpec,
+    *,
+    out_root: Path,
+    mode: KicadCliMode = "local",
+    constraint_mode: ConstraintMode | None = None,
+    runner: KicadRunnerProtocol | None = None,
+    backend: BackendA | None = None,
+    kicad_cli_version: str | None = None,
+    lock_file: Path | None = None,
+) -> BuildResult:
+    """Build a coupon from a specification.
+
+    This is the canonical build pipeline using ConstraintEngine validation.
+    For compatibility, build_coupon_with_engine() is an alias for this entrypoint.
+
+    For docker mode, this function captures complete toolchain provenance
+    by running kicad-cli --version inside the container (per CP-5.3).
+
+    Args:
+        spec: The coupon specification.
+        out_root: Root output directory.
+        mode: KiCad CLI mode ("local" or "docker").
+        constraint_mode: Override constraint mode ("REJECT" or "REPAIR").
+                        If None, uses spec.constraints.mode.
+        runner: Custom KiCad runner (for testing).
+        backend: Custom KiCad backend (for testing).
+        kicad_cli_version: Optional pre-captured kicad-cli version (for testing).
+        lock_file: Path to toolchain lock file (for docker mode).
+
+    Returns:
+        BuildResult with output paths and cache status.
+
+    Raises:
+        ConstraintViolationError: If constraint_mode is REJECT and constraints fail.
+        RuntimeError: If DRC fails and spec.constraints.drc.must_pass is True.
+        ToolchainProvenanceError: If docker mode and provenance cannot be captured.
+    """
+    return run_build_pipeline(
+        spec,
+        out_root=out_root,
+        kicad_mode=mode,
+        validation_mode="engine",
+        constraint_mode=constraint_mode,
+        runner=runner,
+        backend=backend,
+        kicad_cli_version=kicad_cli_version,
+        lock_file=lock_file,
+    )
+
+
+def build_coupon_with_engine(
+    spec: CouponSpec,
+    *,
+    out_root: Path,
+    kicad_mode: KicadCliMode = "local",
+    constraint_mode: ConstraintMode | None = None,
+    runner: KicadRunnerProtocol | None = None,
+    backend: BackendA | None = None,
+    kicad_cli_version: str | None = None,
+    lock_file: Path | None = None,
+) -> BuildResult:
+    """Build coupon using the canonical ConstraintEngine pipeline.
+
+    This is a compatibility alias for build_coupon() and preserves the
+    CP-3.5 signature for callers that select the engine pipeline explicitly.
+
+    For docker mode, this function captures complete toolchain provenance
+    by running kicad-cli --version inside the container (per CP-5.3).
+    Docker builds must never have 'unknown' values for toolchain fields.
+
+    Args:
+        spec: CouponSpec to build
+        out_root: Root directory for output artifacts
+        kicad_mode: KiCad CLI mode ("local" or "docker")
+        constraint_mode: Override constraint mode ("REJECT" or "REPAIR").
+                        If None, uses spec.constraints.mode.
+        runner: Optional KiCad runner protocol for testing
+        backend: Optional board writer backend
+        kicad_cli_version: Optional KiCad CLI version string (for testing)
+        lock_file: Path to toolchain lock file (for docker mode)
+
+    Returns:
+        BuildResult with output paths and hashes
+
+    Raises:
+        ConstraintViolationError: If constraint_mode is REJECT and constraints fail
+        RuntimeError: If DRC fails and spec.constraints.drc.must_pass is True
+        ToolchainProvenanceError: If docker mode and provenance cannot be captured
+    """
+    return build_coupon(
+        spec,
+        out_root=out_root,
+        mode=kicad_mode,
+        constraint_mode=constraint_mode,
+        runner=runner,
+        backend=backend,
+        kicad_cli_version=kicad_cli_version,
+        lock_file=lock_file,
     )
 
 
@@ -739,6 +681,7 @@ def _write_engine_validation_outputs(result: ConstraintEngineResult, out_dir: Pa
     - resolved_design.json: Resolved design parameters
     - constraint_proof.json: Per-constraint evaluations with signed margins
     - repair_map.json: Repair details if REPAIR mode was used (optional)
+    - repaired_spec.json: Canonical repaired spec if REPAIR mode changed parameters
 
     Args:
         result: The ConstraintEngineResult from validation
@@ -761,3 +704,6 @@ def _write_engine_validation_outputs(result: ConstraintEngineResult, out_dir: Pa
     if result.was_repaired and result.repair_result is not None:
         repair_map_path = out_dir / "repair_map.json"
         write_repair_map(repair_map_path, result.repair_result)
+        repaired_spec_path = out_dir / "repaired_spec.json"
+        repaired_payload = canonical_json_dumps(result.spec.model_dump(mode="json"))
+        repaired_spec_path.write_text(repaired_payload, encoding="utf-8")

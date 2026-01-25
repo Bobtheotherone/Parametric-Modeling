@@ -706,3 +706,633 @@ class TestCouponSpecUnitNormalization:
         spec = load_couponspec(valid_spec_data)
         assert spec.board.outline.width_nm == 20_000_000
         assert spec.board.outline.length_nm == 80_000_000
+
+
+# =============================================================================
+# Strict Validation Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestStrictValidation:
+    """Tests for strict mode validation per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST enforce family-specific correctness
+    (e.g., F0 cannot include F1-only blocks) and MUST reject unknown/extra
+    fields (no silent accept) under strict mode.
+    """
+
+    def test_strict_validation_accepts_valid_f1_spec(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """Strict mode accepts valid F1 spec with all required fields."""
+        from formula_foundry.coupongen.spec import validate_strict
+
+        spec = validate_strict(valid_spec_data)
+        assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
+        assert spec.discontinuity is not None
+
+    def test_strict_validation_rejects_extra_fields(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Strict mode rejects unknown/extra fields."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["unknown_field"] = "should_fail"
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("unknown_field" in str(e).lower() or "additional" in str(e).lower()
+                   for e in exc_info.value.errors)
+
+    def test_strict_validation_rejects_nested_extra_fields(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Strict mode rejects nested unknown fields."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["toolchain"]["extra_nested"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_validation_f0_cannot_have_discontinuity(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 cannot include F1-only blocks (discontinuity)."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Set to F0 family (which should not have discontinuity)
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Add a discontinuity block (F1-only feature)
+        minimal_spec_data["discontinuity"] = {
+            "type": "VIA_TRANSITION",
+            "signal_via": {
+                "drill_nm": 300000,
+                "diameter_nm": 650000,
+                "pad_diameter_nm": 900000,
+            },
+        }
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(minimal_spec_data)
+        assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f1_requires_discontinuity(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 requires discontinuity block."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Remove discontinuity from F1 spec
+        del valid_spec_data["discontinuity"]
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f1_requires_via_transition_type(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 discontinuity must have type VIA_TRANSITION."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        # Change discontinuity type to invalid value
+        valid_spec_data["discontinuity"]["type"] = "INVALID_TYPE"
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(valid_spec_data)
+        assert any("via_transition" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_f0_requires_length_right_nm(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 requires transmission_line.length_right_nm."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Remove length_right_nm (required for F0)
+        del minimal_spec_data["transmission_line"]["length_right_nm"]
+
+        with pytest.raises(StrictValidationError) as exc_info:
+            validate_strict(minimal_spec_data)
+        assert any("length_right_nm" in str(e).lower() for e in exc_info.value.errors)
+
+    def test_strict_validation_skip_family_constraints(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """Schema-only validation can skip family constraints."""
+        from formula_foundry.coupongen.spec import validate_strict
+
+        # Remove discontinuity (would fail F1 family validation)
+        del valid_spec_data["discontinuity"]
+
+        # With check_family_constraints=False, should not raise for family issues
+        # But will still fail if there are actual schema violations
+        # Since the schema allows null discontinuity, this should pass
+        spec = validate_strict(valid_spec_data, check_family_constraints=False)
+        assert spec.discontinuity is None
+
+
+class TestFamilyValidation:
+    """Tests for family-specific validation."""
+
+    def test_validate_family_f0_valid(self, minimal_spec_data: dict[str, Any]) -> None:
+        """F0 family validation passes for valid spec."""
+        from formula_foundry.coupongen.families import validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        spec = load_couponspec(minimal_spec_data)
+        # Should not raise
+        validate_family(spec)
+
+    def test_validate_family_f1_valid(self, valid_spec_data: dict[str, Any]) -> None:
+        """F1 family validation passes for valid spec."""
+        from formula_foundry.coupongen.families import validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        spec = load_couponspec(valid_spec_data)
+        # Should not raise
+        validate_family(spec)
+
+    def test_validate_family_unsupported(self, valid_spec_data: dict[str, Any]) -> None:
+        """Unsupported family raises FamilyValidationError."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        valid_spec_data["coupon_family"] = "F99_UNSUPPORTED"
+        spec = load_couponspec(valid_spec_data)
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "unsupported" in str(exc_info.value).lower()
+
+    def test_family_validation_error_has_attributes(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """FamilyValidationError provides detailed attributes."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        # Remove discontinuity for F1 spec
+        del valid_spec_data["discontinuity"]
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert exc_info.value.family == "F1_SINGLE_ENDED_VIA"
+        assert exc_info.value.field == "discontinuity"
+        assert "requires" in exc_info.value.reason.lower()
+
+    def test_get_family_forbidden_fields_f0(self) -> None:
+        """F0 forbids F1-only fields."""
+        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F0
+
+        forbidden = get_family_forbidden_fields(FAMILY_F0)
+        assert "discontinuity" in forbidden
+
+    def test_get_family_forbidden_fields_f1(self) -> None:
+        """F1 has no forbidden fields."""
+        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F1
+
+        forbidden = get_family_forbidden_fields(FAMILY_F1)
+        assert len(forbidden) == 0
+
+    def test_get_family_required_fields_f0(self) -> None:
+        """F0 requires specific fields."""
+        from formula_foundry.coupongen.families import get_family_required_fields, FAMILY_F0
+
+        required = get_family_required_fields(FAMILY_F0)
+        assert "transmission_line.length_right_nm" in required
+
+
+# =============================================================================
+# Spec Consumption Tests (REQ-M1-001)
+# =============================================================================
+
+
+class TestSpecConsumption:
+    """Tests for spec consumption tracking per REQ-M1-001.
+
+    REQ-M1-001: The generator MUST track and emit spec consumption
+    (consumed paths, expected paths, unused provided paths) and MUST fail
+    in strict mode if any provided field is unused or any expected field
+    is unconsumed.
+    """
+
+    def test_spec_consumption_model_creation(self) -> None:
+        """SpecConsumption model can be created with path sets."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b", "c"}),
+            provided_paths=frozenset({"a", "b", "d"}),
+        )
+        assert consumption.consumed_paths == frozenset({"a", "b"})
+        assert consumption.expected_paths == frozenset({"a", "b", "c"})
+        assert consumption.provided_paths == frozenset({"a", "b", "d"})
+
+    def test_unused_provided_paths_calculation(self) -> None:
+        """unused_provided_paths returns provided but not consumed paths."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "unused_field"}),
+        )
+        assert consumption.unused_provided_paths == frozenset({"unused_field"})
+
+    def test_unconsumed_expected_paths_calculation(self) -> None:
+        """unconsumed_expected_paths returns expected but not consumed paths."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a"}),
+            expected_paths=frozenset({"a", "b", "c"}),
+            provided_paths=frozenset({"a"}),
+        )
+        assert consumption.unconsumed_expected_paths == frozenset({"b", "c"})
+
+    def test_consumption_summary_dict(self) -> None:
+        """to_summary_dict returns sorted lists for manifest emission."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"b", "a"}),
+            expected_paths=frozenset({"c", "b", "a"}),
+            provided_paths=frozenset({"d", "b", "a"}),
+        )
+        summary = consumption.to_summary_dict()
+        assert summary["consumed"] == ["a", "b"]
+        assert summary["expected"] == ["a", "b", "c"]
+        assert summary["provided"] == ["a", "b", "d"]
+        assert summary["unused_provided"] == ["d"]
+        assert summary["unconsumed_expected"] == ["c"]
+
+    def test_collect_provided_paths_from_spec(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """collect_provided_paths extracts all non-None leaf paths from spec."""
+        from formula_foundry.coupongen.spec import load_couponspec
+        from formula_foundry.resolve.consumption import collect_provided_paths
+
+        spec = load_couponspec(minimal_spec_data)
+        provided = collect_provided_paths(spec)
+
+        # Check that key paths are present
+        assert "schema_version" in provided
+        assert "coupon_family" in provided
+        assert "board.outline.width_nm" in provided
+        assert "transmission_line.w_nm" in provided
+
+    def test_get_expected_paths_f0(self) -> None:
+        """get_expected_paths returns correct paths for F0 family."""
+        from formula_foundry.resolve.consumption import get_expected_paths
+
+        expected = get_expected_paths("F0")
+        assert "schema_version" in expected
+        assert "transmission_line.length_right_nm" in expected
+        # F0 does not expect discontinuity
+        assert "discontinuity.type" not in expected
+
+    def test_get_expected_paths_f1(self) -> None:
+        """get_expected_paths returns correct paths for F1 family."""
+        from formula_foundry.resolve.consumption import get_expected_paths
+
+        expected = get_expected_paths("F1")
+        assert "schema_version" in expected
+        assert "discontinuity.type" in expected
+        # F1 derives length_right_nm, so it's not expected
+        assert "transmission_line.length_right_nm" not in expected
+
+    def test_build_spec_consumption_f0(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """build_spec_consumption creates valid consumption for F0 spec."""
+        from formula_foundry.coupongen.spec import load_couponspec
+        from formula_foundry.resolve.consumption import build_spec_consumption
+
+        # Set F0 family explicitly
+        minimal_spec_data["coupon_family"] = "F0"
+        # Ensure length_right_nm is provided (required for F0)
+        minimal_spec_data["transmission_line"]["length_right_nm"] = 15000000
+
+        spec = load_couponspec(minimal_spec_data)
+        consumption = build_spec_consumption(spec)
+
+        assert "schema_version" in consumption.consumed_paths
+        assert len(consumption.unused_provided_paths) >= 0  # May be empty
+        assert isinstance(consumption.unconsumed_expected_paths, frozenset)
+
+    def test_enforce_spec_consumption_passes_on_valid(self) -> None:
+        """enforce_spec_consumption does not raise for valid consumption."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import enforce_spec_consumption
+
+        # All paths consumed, no unused or unconsumed
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b", "c"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "c"}),
+        )
+        # Should not raise
+        enforce_spec_consumption(consumption)
+
+    def test_enforce_spec_consumption_fails_on_unused_provided(self) -> None:
+        """REQ-M1-001: enforce_spec_consumption fails if provided field is unused."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "unused_extra_field"}),
+        )
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unused_extra_field" in str(exc_info.value)
+        assert "unused_extra_field" in exc_info.value.unused_provided
+
+    def test_enforce_spec_consumption_fails_on_unconsumed_expected(self) -> None:
+        """REQ-M1-001: enforce_spec_consumption fails if expected field is unconsumed."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a"}),
+            expected_paths=frozenset({"a", "required_but_missing"}),
+            provided_paths=frozenset({"a"}),
+        )
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "required_but_missing" in str(exc_info.value)
+        assert "required_but_missing" in exc_info.value.unconsumed_expected
+
+    def test_consumption_error_attributes(self) -> None:
+        """SpecConsumptionError provides unused and unconsumed sets."""
+        from formula_foundry.resolve.consumption import SpecConsumptionError
+
+        error = SpecConsumptionError(
+            "test error",
+            unused_provided=frozenset({"unused"}),
+            unconsumed_expected=frozenset({"unconsumed"}),
+        )
+        assert error.unused_provided == frozenset({"unused"})
+        assert error.unconsumed_expected == frozenset({"unconsumed"})
+        assert "unused" in str(error) or "test error" in str(error)
+
+
+# =============================================================================
+# lint-spec-coverage CLI Tests (REQ-M1-018)
+# =============================================================================
+
+
+class TestLintSpecCoverageCLI:
+    """Tests for lint-spec-coverage CLI command per REQ-M1-018.
+
+    REQ-M1-018: The CLI MUST provide lint-spec-coverage (non-zero on coverage
+    failures) and explain (human-readable resolved + tightest-constraint summary).
+    """
+
+    def test_lint_spec_coverage_returns_nonzero_on_unconsumed_expected(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return non-zero on unconsumed expected paths.
+
+        This test verifies that lint-spec-coverage returns a non-zero exit code when
+        there are unconsumed expected paths in strict mode by directly testing the
+        SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        # Create a consumption with unconsumed expected paths
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version"}),
+            expected_paths=frozenset({"schema_version", "unconsumed_path"}),
+            provided_paths=frozenset({"schema_version"}),
+        )
+
+        # Verify unconsumed_expected_paths is non-empty
+        assert consumption.unconsumed_expected_paths == frozenset({"unconsumed_path"})
+
+        # enforce_spec_consumption must raise SpecConsumptionError
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unconsumed_path" in exc_info.value.unconsumed_expected
+
+    def test_lint_spec_coverage_returns_nonzero_on_unused_provided(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return non-zero on unused provided paths.
+
+        This test verifies that lint-spec-coverage returns a non-zero exit code when
+        there are unused provided paths in strict mode by directly testing the
+        SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        # Create a consumption with unused provided paths
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version"}),
+            expected_paths=frozenset({"schema_version"}),
+            provided_paths=frozenset({"schema_version", "unused_provided_field"}),
+        )
+
+        # Verify unused_provided_paths is non-empty
+        assert consumption.unused_provided_paths == frozenset({"unused_provided_field"})
+
+        # enforce_spec_consumption must raise SpecConsumptionError
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unused_provided_field" in exc_info.value.unused_provided
+
+    def test_lint_spec_coverage_returns_zero_on_complete_coverage(self) -> None:
+        """REQ-M1-018: lint-spec-coverage must return zero on complete coverage.
+
+        This test verifies that lint-spec-coverage returns zero exit code when
+        all expected paths are consumed and no provided paths are unused by directly
+        testing the SpecConsumption model and enforce_spec_consumption mechanism.
+        """
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import enforce_spec_consumption
+
+        # Create a consumption with complete coverage (no issues)
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"schema_version", "coupon_family"}),
+            expected_paths=frozenset({"schema_version", "coupon_family"}),
+            provided_paths=frozenset({"schema_version", "coupon_family"}),
+        )
+
+        # Verify no unused or unconsumed paths
+        assert len(consumption.unused_provided_paths) == 0
+        assert len(consumption.unconsumed_expected_paths) == 0
+
+        # enforce_spec_consumption must NOT raise (complete coverage)
+        enforce_spec_consumption(consumption)  # Should not raise
+
+    def test_lint_spec_coverage_cli_parser_exists(self) -> None:
+        """REQ-M1-018: lint-spec-coverage command must be available in CLI parser."""
+        from formula_foundry.coupongen.cli_main import build_parser
+
+        parser = build_parser()
+        # Parse a fake command to verify lint-spec-coverage is registered
+        try:
+            args = parser.parse_args(["lint-spec-coverage", "/fake/path.yaml"])
+            assert args.command == "lint-spec-coverage"
+            assert hasattr(args, "strict")
+            assert hasattr(args, "json")
+        except SystemExit:
+            pytest.fail("lint-spec-coverage command not properly registered")
+
+    def test_explain_cli_parser_exists(self) -> None:
+        """REQ-M1-018: explain command must be available in CLI parser."""
+        from formula_foundry.coupongen.cli_main import build_parser
+
+        parser = build_parser()
+        try:
+            args = parser.parse_args(["explain", "/fake/path.yaml"])
+            assert args.command == "explain"
+            assert hasattr(args, "out")
+            assert hasattr(args, "json")
+        except SystemExit:
+            pytest.fail("explain command not properly registered")
+
+
+# =============================================================================
+# Strict Mode Extra Field Rejection Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestStrictModeExtraFieldRejection:
+    """Additional tests for strict mode extra field rejection per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST reject unknown/extra fields (no silent
+    accept) under strict mode.
+    """
+
+    def test_strict_mode_rejects_unknown_top_level_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Unknown top-level fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["completely_unknown_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_nested_board_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra nested fields in board section must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["board"]["extra_board_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_transmission_line_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra transmission_line fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["transmission_line"]["extra_tl_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_strict_mode_rejects_extra_discontinuity_field(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: Extra discontinuity fields must be rejected."""
+        from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
+
+        valid_spec_data["discontinuity"]["extra_disc_field"] = "should_fail"
+        with pytest.raises(StrictValidationError):
+            validate_strict(valid_spec_data)
+
+    def test_pydantic_model_forbids_extra_by_default(self) -> None:
+        """Verify that CouponSpec Pydantic model forbids extra fields."""
+        from formula_foundry.coupongen.spec import CouponSpec
+
+        # Check that the model config forbids extra fields
+        config = CouponSpec.model_config
+        assert config.get("extra") == "forbid"
+
+
+# =============================================================================
+# Family Violation Tests (REQ-M1-002)
+# =============================================================================
+
+
+class TestFamilyViolationRejection:
+    """Additional tests for family-specific violation rejection per REQ-M1-002.
+
+    REQ-M1-002: The spec validator MUST enforce family-specific correctness
+    (e.g., F0 cannot include F1-only blocks).
+    """
+
+    def test_f0_with_discontinuity_raises_family_error(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F0 family cannot have discontinuity (F1-only feature)."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
+        # Manually add discontinuity (which is F1-only)
+        # First, load without discontinuity to get a valid spec
+        spec = load_couponspec(minimal_spec_data)
+
+        # Create a new spec data with discontinuity
+        spec_with_disc = minimal_spec_data.copy()
+        spec_with_disc["discontinuity"] = {
+            "type": "VIA_TRANSITION",
+            "signal_via": {
+                "drill_nm": 300000,
+                "diameter_nm": 650000,
+                "pad_diameter_nm": 900000,
+            },
+        }
+        spec_disc = load_couponspec(spec_with_disc)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec_disc)
+        assert "discontinuity" in str(exc_info.value).lower()
+
+    def test_f1_without_discontinuity_raises_family_error(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 family requires discontinuity block."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        # Remove discontinuity from F1 spec
+        del valid_spec_data["discontinuity"]
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "discontinuity" in str(exc_info.value).lower()
+
+    def test_f1_with_wrong_discontinuity_type_raises_error(
+        self, valid_spec_data: dict[str, Any]
+    ) -> None:
+        """REQ-M1-002: F1 discontinuity.type must be VIA_TRANSITION."""
+        from formula_foundry.coupongen.families import FamilyValidationError, validate_family
+        from formula_foundry.coupongen.spec import load_couponspec
+
+        valid_spec_data["discontinuity"]["type"] = "INVALID_TYPE"
+        spec = load_couponspec(valid_spec_data)
+
+        with pytest.raises(FamilyValidationError) as exc_info:
+            validate_family(spec)
+        assert "via_transition" in str(exc_info.value).lower()

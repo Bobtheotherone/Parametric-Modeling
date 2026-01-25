@@ -26,6 +26,7 @@
           "preferred_agent",
           "estimated_intensity",
           "locks",
+          "touched_paths",
           "depends_on",
           "solo"
         ],
@@ -35,7 +36,16 @@
           "description": {"type": "string"},
           "preferred_agent": {"type": "string", "enum": ["codex", "claude", "either"]},
           "estimated_intensity": {"type": "string", "enum": ["low", "medium", "high"]},
-          "locks": {"type": "array", "items": {"type": "string"}},
+          "locks": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Named locks for exclusive access (e.g., 'config', 'database')"
+          },
+          "touched_paths": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "File paths this task will modify. Tasks with overlapping paths cannot run concurrently."
+          },
           "depends_on": {"type": "array", "items": {"type": "string"}},
           "solo": {"type": "boolean"}
         }

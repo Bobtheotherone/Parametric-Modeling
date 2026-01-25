@@ -1,13 +1,15 @@
-"""CLI for coupon generation (CP-4.3).
+"""CLI for coupon generation (CP-4.3, REQ-M1-018).
 
 This module provides the command-line interface for coupon generation:
 - validate: Validate spec using ConstraintEngine (Tier 0-3)
 - generate: Generate KiCad project from spec
 - drc: Run KiCad DRC on a board file
 - export: Export gerbers and drill files
-- build: Full build pipeline (validate/repair -> generate -> DRC -> export)
+- build: Full build pipeline (validate/repair -> resolve -> generate -> DRC -> export -> manifest)
 - batch-filter: Filter batch of normalized design vectors using GPU prefilter
 - build-batch: Build multiple coupons from spec template and u vectors
+- lint-spec-coverage: Check spec coverage (REQ-M1-018)
+- explain: Human-readable resolved design + tightest-constraint summary (REQ-M1-018)
 
 CP-3.5: Pipeline Integration
 - The validate command now uses ConstraintEngine by default for full tiered validation
@@ -17,6 +19,10 @@ CP-4.3: GPU Pipeline Integration
 - build-batch integrates GPU Tier0-2 filter on candidates by default
 - Falls back to NumPy if CuPy is unavailable
 - Records CuPy/CUDA versions in manifest when GPU is used
+
+REQ-M1-018: CLI Commands
+- lint-spec-coverage: Non-zero exit on coverage failures (unused provided or unconsumed expected paths)
+- explain: Human-readable resolved + tightest-constraint summary using canonical pipeline outputs
 """
 
 from __future__ import annotations
@@ -105,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--legacy",
         action="store_true",
         default=False,
-        help="Use legacy constraint system instead of ConstraintEngine",
+        help="Deprecated alias for the canonical build pipeline (kept for compatibility)",
     )
     build.add_argument(
         "--constraint-mode",
@@ -198,6 +204,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="GPU filter constraint mode (default: REPAIR)",
     )
 
+    # REQ-M1-018: lint-spec-coverage command
+    lint_spec = subparsers.add_parser(
+        "lint-spec-coverage",
+        help="Check spec coverage: non-zero exit on unused provided or unconsumed expected paths",
+    )
+    lint_spec.add_argument("spec", type=Path, help="Spec file to lint (YAML or JSON)")
+    lint_spec.add_argument(
+        "--strict",
+        action="store_true",
+        default=True,
+        help="Strict mode: fail on any unused provided or unconsumed expected paths (default: True)",
+    )
+    lint_spec.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output in JSON format instead of human-readable",
+    )
+
+    # REQ-M1-018: explain command
+    explain = subparsers.add_parser(
+        "explain",
+        help="Human-readable resolved design + tightest-constraint summary",
+    )
+    explain.add_argument("spec", type=Path, help="Spec file to explain (YAML or JSON)")
+    explain.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output file for explain report (default: stdout)",
+    )
+    explain.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output in JSON format instead of human-readable",
+    )
+    explain.add_argument(
+        "--constraint-mode",
+        choices=["REJECT", "REPAIR"],
+        default=None,
+        help="Override constraint mode (default: use spec.constraints.mode)",
+    )
+
     return parser
 
 
@@ -270,9 +320,14 @@ def main(argv: list[str] | None = None) -> int:
             spec_payload["toolchain"]["kicad"]["docker_image"] = args.toolchain_image
             spec = CouponSpec.model_validate(spec_payload)
 
-        # CP-3.5: Use ConstraintEngine by default unless --legacy is specified
+        # CP-3.5: Canonical build pipeline uses ConstraintEngine; --legacy is a compatibility alias.
         if args.legacy:
-            result = build_coupon(spec, out_root=args.out, mode=args.mode)
+            result = build_coupon(
+                spec,
+                out_root=args.out,
+                mode=args.mode,
+                constraint_mode=args.constraint_mode,  # type: ignore[arg-type]
+            )
         else:
             try:
                 result = build_coupon_with_engine(
@@ -307,6 +362,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build-batch":
         return _run_build_batch(args)
+
+    if args.command == "lint-spec-coverage":
+        return _run_lint_spec_coverage(args)
+
+    if args.command == "explain":
+        return _run_explain(args)
 
     parser.error(f"Unknown command: {args.command}")
     return 2
@@ -722,6 +783,40 @@ def _add_gpu_metadata_to_manifest(
     except Exception:
         # Don't fail the build if we can't update the manifest
         pass
+
+
+def _run_lint_spec_coverage(args: argparse.Namespace) -> int:
+    """Run lint-spec-coverage command: check spec coverage for unused/unconsumed paths.
+
+    Per REQ-M1-018, this command provides a lint check for spec coverage.
+    Delegates to the command module implementation.
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        0 if coverage is complete, 1 if coverage failures
+    """
+    from formula_foundry.cli import run_lint_spec_coverage
+
+    return run_lint_spec_coverage(args)
+
+
+def _run_explain(args: argparse.Namespace) -> int:
+    """Run explain command: human-readable resolved design + tightest-constraint summary.
+
+    Per REQ-M1-018, this command provides a human-readable summary.
+    Delegates to the command module implementation.
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        0 on success, 1 on validation errors
+    """
+    from formula_foundry.cli import run_explain
+
+    return run_explain(args)
 
 
 if __name__ == "__main__":

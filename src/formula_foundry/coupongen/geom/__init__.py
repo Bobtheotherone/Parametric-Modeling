@@ -30,7 +30,11 @@ from .cutouts import (
     AntipadSpec,
     CircleAntipadSpec,
     CutoutShape,
+    OutlineArc,
+    OutlineFeasibilityError,
+    OutlineLine,
     RectangleAntipadSpec,
+    RoundedOutline,
     RoundRectAntipadSpec,
     SlotAntipadSpec,
     generate_antipad,
@@ -38,8 +42,10 @@ from .cutouts import (
     generate_multivia_antipad,
     generate_plane_cutout_for_via,
     generate_rectangle_antipad,
+    generate_rounded_outline,
     generate_roundrect_antipad,
     generate_slot_antipad,
+    validate_rounded_outline_feasibility,
 )
 from .footprint_meta import (
     CourtyardMeta,
@@ -172,4 +178,11 @@ __all__ = [
     "generate_rectangle_antipad",
     "generate_roundrect_antipad",
     "generate_slot_antipad",
+    # Rounded outline generators (REQ-M1-009)
+    "OutlineArc",
+    "OutlineFeasibilityError",
+    "OutlineLine",
+    "RoundedOutline",
+    "generate_rounded_outline",
+    "validate_rounded_outline_feasibility",
 ]

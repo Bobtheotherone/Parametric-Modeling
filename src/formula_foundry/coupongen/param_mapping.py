@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 from .constraints.gpu_filter import FamilyF1ParameterSpace
+from .geom.footprint_meta import load_footprint_meta
 from .spec import CouponSpec
 
 
@@ -161,7 +162,22 @@ def apply_params_to_spec(
                 ret_vias["via"]["diameter_nm"] = params["return_via_diameter_nm"]
 
     # Reconstruct and validate the spec
-    return CouponSpec.model_validate(spec_dict)
+    spec = CouponSpec.model_validate(spec_dict)
+    _validate_connector_pad_maps(spec)
+    return spec
+
+
+def _validate_connector_pad_maps(spec: CouponSpec) -> None:
+    """Validate connector pad-map conventions against footprint metadata."""
+    connectors = (("left", spec.connectors.left), ("right", spec.connectors.right))
+    for side, connector in connectors:
+        meta = load_footprint_meta(connector.footprint)
+        try:
+            meta.pad_net_map()
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid pad mapping for {side} connector {connector.footprint!r}: {exc}"
+            ) from exc
 
 
 def u_to_spec_f1(

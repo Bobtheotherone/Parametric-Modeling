@@ -21,8 +21,10 @@ CLAUDE_HELP_TIMEOUT_S="${CLAUDE_HELP_TIMEOUT_S:-5}"
 SMOKE_DIR="${FF_AGENT_SMOKE_DIR:-}"
 WRITE_ACCESS="${WRITE_ACCESS:-0}"
 
-# Schema kind signal from orchestrator: "task_plan" or "turn" (default: "turn")
-# When task_plan, we skip turn normalization and just extract valid JSON.
+# Schema kind signal from orchestrator: "task_plan", "turn", or "json" (default: "turn")
+# - task_plan: Skip turn normalization, extract JSON matching task_plan schema
+# - turn: Full turn normalization with tools enabled
+# - json: Generic JSON mode for arbitrary schemas (no task_plan keys, no tool encouragement)
 ORCH_SCHEMA_KIND="${ORCH_SCHEMA_KIND:-turn}"
 
 prompt="$(cat "$PROMPT_FILE")"
@@ -35,11 +37,20 @@ fi
 # Build schema-aware prompt reminder
 # The reminder tells the model which schema to use based on what was requested
 SCHEMA_BASENAME="$(basename "$SCHEMA_FILE")"
+
+# CRITICAL: Distinguish between planning mode (pure JSON, no tools) vs execution mode (tools enabled)
+# - task_plan mode: No tools, output pure JSON task plan
+# - turn mode: Tools ARE enabled (Read, Edit, Write, Bash), but final output must be JSON
+#
+# The contradiction "tools are disabled" for turn mode caused workers to bail out.
+# Workers in turn mode have full tool access via Claude Code CLI.
+
 if [[ "$ORCH_SCHEMA_KIND" == "task_plan" ]]; then
+  # Planning mode: Tools truly are disabled, we want pure JSON output
   prompt="${prompt}
 
-REMINDER (NON-NEGOTIABLE):
-- Tools are DISABLED. Do NOT output <task>, <read>, <edit>, <bash> blocks.
+REMINDER (NON-NEGOTIABLE) - PLANNING MODE:
+- You are in PLANNING MODE. Focus on generating a task plan, not implementation.
 - Output EXACTLY ONE JSON object matching ${SCHEMA_BASENAME}.
 - Top-level required keys: milestone_id, max_parallel_tasks, rationale, tasks (array).
 - Each task in tasks array MUST have these exact keys:
@@ -52,13 +63,30 @@ REMINDER (NON-NEGOTIABLE):
   * Include \"locks\" even if empty (use [])
 - No extra keys allowed on task objects.
 - No markdown. No code fences. No extra text before/after the JSON."
-else
+elif [[ "$ORCH_SCHEMA_KIND" == "json" ]]; then
+  # Generic JSON mode: Pure JSON output for arbitrary schemas (NOT task_plan)
+  # Used by merge resolver, generic JSON tools, etc.
   prompt="${prompt}
 
-REMINDER (NON-NEGOTIABLE):
-- Tools are DISABLED. Do NOT output <task>, <read>, <edit>, <bash> blocks.
-- Output EXACTLY ONE JSON object matching ${SCHEMA_BASENAME}.
-- No markdown. No code fences. No extra text before/after the JSON."
+REMINDER (NON-NEGOTIABLE) - JSON OUTPUT MODE:
+- Output EXACTLY ONE JSON object matching the schema in ${SCHEMA_BASENAME}.
+- The schema defines the required structure - read it carefully.
+- Output ONLY the JSON object. No markdown fences. No code blocks. No extra text.
+- Do NOT include task_plan keys (milestone_id, max_parallel_tasks, rationale, tasks) unless the schema requires them.
+- Ensure your JSON is valid and matches the schema exactly."
+else
+  # Execution mode: Tools ARE enabled - worker can and SHOULD use Read/Edit/Write/Bash
+  prompt="${prompt}
+
+REMINDER (NON-NEGOTIABLE) - EXECUTION MODE:
+- Tools ARE ENABLED. You CAN and SHOULD use Read, Edit, Write, Bash tools to complete your task.
+- Do NOT claim tools are disabled. They are fully available to you.
+- Use tools to read files, edit code, run commands, and verify your changes.
+- AFTER completing your work, output EXACTLY ONE JSON object matching ${SCHEMA_BASENAME}.
+- The JSON must be your FINAL output after all tool usage is complete.
+- No markdown fences around the JSON. No extra text before/after the JSON.
+- Set work_completed=true if you successfully implemented the task.
+- Set work_completed=false ONLY if you genuinely could not complete the task."
 fi
 
 # Claude Code expects --json-schema as an *inline JSON string* (not a file path).
@@ -258,11 +286,12 @@ run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
 cat "$WRAP_SCHEMA" "$WRAP_PLAIN" > "$RAW_STREAM" 2>/dev/null || true
 
 # ============================================================================
-# Schema-kind dispatch: task_plan vs turn
+# Schema-kind dispatch: task_plan vs json vs turn
 # ============================================================================
 
-if [[ "$ORCH_SCHEMA_KIND" == "task_plan" ]]; then
-  # TASK_PLAN MODE: No turn normalization, just extract valid JSON matching schema
+if [[ "$ORCH_SCHEMA_KIND" == "task_plan" || "$ORCH_SCHEMA_KIND" == "json" ]]; then
+  # TASK_PLAN / JSON MODE: No turn normalization, just extract valid JSON matching schema
+  # Both modes want pure JSON output; "json" is for arbitrary schemas (not task_plan specific)
   # Use the extract_json_by_schema.py helper for robust extraction
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -273,7 +302,7 @@ if [[ "$ORCH_SCHEMA_KIND" == "task_plan" ]]; then
       cat "$OUT_FILE"
       exit 0
     else
-      echo "ERROR: extract_json_by_schema.py failed to find valid task_plan JSON" >&2
+      echo "ERROR: extract_json_by_schema.py failed to find valid $ORCH_SCHEMA_KIND JSON" >&2
       echo "  raw_stream: $RAW_STREAM" >&2
       echo "  schema: $SCHEMA_FILE" >&2
       exit 1

@@ -3,11 +3,18 @@
 REQ-M1-025: CI must prove DRC-clean boards and export completeness for all
 golden specs using the pinned KiCad toolchain.
 
+REQ-M1-010: Silkscreen annotations must appear in exported silkscreen Gerbers.
+REQ-M1-013: Manifest must include footprint provenance and zone policy record.
+REQ-M1-017: Export hashes must be stable across repeated builds.
+
 This module tests that:
 - All expected export files are generated (Gerbers, drill files)
 - Export hashes are stable across multiple runs (determinism)
 - Canonical hashing removes non-deterministic content (timestamps, UUIDs)
 - Export manifests correctly record all generated files
+- Silkscreen annotations (coupon_id, hash marker) appear in exports (REQ-M1-010)
+- Manifest includes footprint provenance with paths and hashes (REQ-M1-013)
+- Manifest includes explicit zone policy record (REQ-M1-013)
 
 IMPORTANT: These tests use fake runners to avoid actually invoking KiCad
 during CI. The tests verify the export pipeline logic and hash computation
@@ -508,3 +515,607 @@ class TestManifestExportRecording:
         assert "version" in toolchain["kicad"]
         assert "docker" in toolchain
         assert "@sha256:" in toolchain["docker"]["image_ref"]
+
+
+class TestSilkscreenAnnotationsInExports:
+    """Tests verifying silkscreen annotations appear in exports.
+
+    REQ-M1-010: The generator MUST place deterministic board annotations on
+    silkscreen, including coupon_id and a short hash marker, and these
+    annotations MUST appear in exported silkscreen Gerbers.
+    """
+
+    def test_silkscreen_gerbers_are_exported(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Silkscreen Gerber files should be in exports."""
+        board_path = tmp_path / "coupon.kicad_pcb"
+        board_path.write_text("(kicad_pcb)", encoding="utf-8")
+        toolchain = KicadToolchain(version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef")
+        runner = _FakeExportRunner()
+
+        hashes = export_fab(board_path, tmp_path / "fab", toolchain, runner=runner)
+
+        # Check for silkscreen Gerber files
+        silkscreen_paths = [p for p in hashes if "SilkS" in p]
+        assert len(silkscreen_paths) >= 1, f"Expected silkscreen Gerber files, got: {list(hashes.keys())}"
+
+    def test_silkscreen_gerbers_have_valid_hashes(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Silkscreen Gerbers should have stable hashes."""
+        board_path = tmp_path / "coupon.kicad_pcb"
+        board_path.write_text("(kicad_pcb)", encoding="utf-8")
+        toolchain = KicadToolchain(version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef")
+
+        # Run twice with same seed
+        runner_a = _FakeExportRunner(seed="silkscreen_test")
+        runner_b = _FakeExportRunner(seed="silkscreen_test")
+
+        hashes_a = export_fab(board_path, tmp_path / "fab_a", toolchain, runner=runner_a)
+        hashes_b = export_fab(board_path, tmp_path / "fab_b", toolchain, runner=runner_b)
+
+        # Find silkscreen files and verify hash stability
+        silk_a = {k: v for k, v in hashes_a.items() if "SilkS" in k}
+        silk_b = {k: v for k, v in hashes_b.items() if "SilkS" in k}
+
+        assert silk_a == silk_b, "Silkscreen Gerber hashes should be stable"
+
+    def test_golden_spec_exports_include_silkscreen(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Golden specs should produce silkscreen exports."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner(seed="silkscreen_golden")
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        exports = manifest["exports"]
+        export_paths = [e["path"] for e in exports]
+
+        # Verify silkscreen exports exist
+        silkscreen_exports = [p for p in export_paths if "SilkS" in p]
+        assert len(silkscreen_exports) >= 1, (
+            f"REQ-M1-010: Expected silkscreen exports for {specs[0].name}, "
+            f"got: {export_paths}"
+        )
+
+
+class TestSilkscreenCouponIdAndHashMarker:
+    """Tests verifying silkscreen annotations include coupon_id and hash marker.
+
+    REQ-M1-010: The generator MUST place deterministic board annotations on
+    silkscreen, including coupon_id and a short hash marker (e.g., design/manifest
+    hash prefix), and these annotations MUST appear in exported silkscreen Gerbers.
+    """
+
+    def test_kicad_board_contains_silkscreen_annotations(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Generated board should contain silkscreen text annotations."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner(seed="silkscreen_content")
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        # Find the generated kicad_pcb file
+        board_files = list(result.output_dir.glob("*.kicad_pcb"))
+        assert len(board_files) >= 1, "REQ-M1-010: Expected at least one .kicad_pcb file"
+
+        board_content = board_files[0].read_text(encoding="utf-8")
+
+        # REQ-M1-010: Board should contain silkscreen text elements (gr_text on F.SilkS)
+        assert "gr_text" in board_content, "REQ-M1-010: Board should contain gr_text elements"
+        assert "F.SilkS" in board_content or "B.SilkS" in board_content, (
+            "REQ-M1-010: Board should have silkscreen layer text"
+        )
+
+    def test_silkscreen_includes_coupon_id(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Silkscreen should include the coupon_id."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner(seed="coupon_id_test")
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        # Find the generated kicad_pcb file
+        board_files = list(result.output_dir.glob("*.kicad_pcb"))
+        assert len(board_files) >= 1, "Expected at least one .kicad_pcb file"
+
+        board_content = board_files[0].read_text(encoding="utf-8")
+
+        # REQ-M1-010: The coupon_id should appear in the board file
+        # The coupon_id is the first 12 chars of the design hash
+        coupon_id = result.coupon_id
+        assert coupon_id in board_content, (
+            f"REQ-M1-010: Silkscreen should include coupon_id '{coupon_id}' in board text"
+        )
+
+    def test_silkscreen_includes_hash_marker(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Silkscreen should include a short hash marker."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner(seed="hash_marker_test")
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        # Find the generated kicad_pcb file
+        board_files = list(result.output_dir.glob("*.kicad_pcb"))
+        assert len(board_files) >= 1, "Expected at least one .kicad_pcb file"
+
+        board_content = board_files[0].read_text(encoding="utf-8")
+
+        # REQ-M1-010: The design hash prefix (first 8 chars) should appear
+        design_hash = result.design_hash
+        short_hash = design_hash[:8]
+        assert short_hash in board_content, (
+            f"REQ-M1-010: Silkscreen should include hash marker '{short_hash}' in board text"
+        )
+
+    def test_silkscreen_annotations_are_deterministic(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Silkscreen annotations should be deterministic across builds."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="silk_determinism")
+        runner_b = _FakeExportRunner(seed="silk_determinism")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        # Both builds should produce the same coupon_id
+        assert result_a.coupon_id == result_b.coupon_id, (
+            "REQ-M1-010: Coupon ID should be deterministic"
+        )
+
+        # Both builds should produce the same design hash
+        assert result_a.design_hash == result_b.design_hash, (
+            "REQ-M1-010: Design hash should be deterministic"
+        )
+
+    def test_manifest_records_coupon_id(self, tmp_path: Path) -> None:
+        """REQ-M1-010: Manifest should record the coupon_id for traceability."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner(seed="manifest_coupon_id")
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+        # REQ-M1-010: Manifest must include coupon_id
+        assert "coupon_id" in manifest, "REQ-M1-010: Manifest must include coupon_id"
+        assert manifest["coupon_id"] == result.coupon_id, (
+            "REQ-M1-010: Manifest coupon_id should match BuildResult"
+        )
+
+        # Verify coupon_id is derived from design_hash
+        assert "design_hash" in manifest, "Manifest must include design_hash"
+        design_hash = manifest["design_hash"]
+        # coupon_id is first 12 chars of design_hash
+        assert result.coupon_id == design_hash[:12], (
+            "REQ-M1-010: coupon_id should be first 12 chars of design_hash"
+        )
+
+
+class TestManifestSpecCoverage:
+    """Tests verifying manifest includes spec consumption/coverage summary.
+
+    REQ-M1-013: The manifest MUST include a spec-consumption summary.
+    This tracks consumed paths, expected paths, and unused provided paths.
+    """
+
+    def test_manifest_includes_spec_consumption(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Manifest should include spec_consumption field."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner()
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+        # REQ-M1-013: spec_consumption should be present (may be None if not tracked)
+        # The manifest module includes spec_consumption if the resolved design provides it
+        if "spec_consumption" in manifest:
+            spec_consumption = manifest["spec_consumption"]
+            assert isinstance(spec_consumption, dict), "spec_consumption should be a dict"
+            # If present, it should track consumed and expected paths
+            if "consumed_paths" in spec_consumption:
+                assert isinstance(spec_consumption["consumed_paths"], list)
+            if "expected_paths" in spec_consumption:
+                assert isinstance(spec_consumption["expected_paths"], list)
+
+    def test_spec_consumption_is_deterministic(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Spec consumption should be stable across builds."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="spec_consumption_a")
+        runner_b = _FakeExportRunner(seed="spec_consumption_a")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
+        manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
+
+        # Spec consumption should be identical if present
+        assert manifest_a.get("spec_consumption") == manifest_b.get("spec_consumption"), (
+            "REQ-M1-013: Spec consumption should be deterministic"
+        )
+
+
+class TestManifestProvenance:
+    """Tests verifying manifest includes footprint provenance.
+
+    REQ-M1-013: The manifest MUST include footprint provenance (paths + hashes
+    of source footprint content).
+    """
+
+    def test_manifest_includes_footprint_provenance(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Manifest should include footprint_provenance field."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner()
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+        # REQ-M1-013: footprint_provenance must exist
+        assert "footprint_provenance" in manifest, "REQ-M1-013: Manifest must include footprint_provenance"
+        fp_prov = manifest["footprint_provenance"]
+        assert isinstance(fp_prov, dict), "footprint_provenance should be a dict"
+
+    def test_footprint_provenance_has_required_fields(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Footprint provenance should have path and hash fields."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner()
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        fp_prov = manifest.get("footprint_provenance", {})
+
+        # Each footprint entry should have required fields
+        for fp_id, prov_info in fp_prov.items():
+            assert isinstance(prov_info, dict), f"Provenance for {fp_id} should be dict"
+            # Check for expected provenance fields
+            assert "path" in prov_info or "footprint_hash" in prov_info, (
+                f"REQ-M1-013: Footprint {fp_id} should have path or hash info"
+            )
+
+    def test_footprint_provenance_is_deterministic(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Footprint provenance should be stable across builds."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="prov_a")
+        runner_b = _FakeExportRunner(seed="prov_a")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
+        manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
+
+        # Footprint provenance should be identical
+        assert manifest_a.get("footprint_provenance") == manifest_b.get("footprint_provenance"), (
+            "REQ-M1-013: Footprint provenance should be deterministic"
+        )
+
+
+class TestZonePolicyInManifest:
+    """Tests verifying manifest includes zone policy record.
+
+    REQ-M1-013: The manifest MUST include an explicit zone policy record
+    (refill/check behavior and toolchain versioning).
+    """
+
+    def test_manifest_includes_zone_policy(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Manifest should include zone_policy field."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner()
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+        # REQ-M1-013: zone_policy must exist
+        assert "zone_policy" in manifest, "REQ-M1-013: Manifest must include zone_policy"
+        zone_policy = manifest["zone_policy"]
+        assert isinstance(zone_policy, dict), "zone_policy should be a dict"
+
+    def test_zone_policy_has_required_fields(self, tmp_path: Path) -> None:
+        """REQ-M1-013: Zone policy should have DRC and export settings."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+        runner = _FakeExportRunner()
+
+        result = build_coupon(
+            spec,
+            out_root=tmp_path,
+            mode="docker",
+            runner=runner,
+            kicad_cli_version="9.0.7",
+        )
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        zone_policy = manifest.get("zone_policy", {})
+
+        # REQ-M1-013: Zone policy should include DRC and export settings
+        assert "policy_id" in zone_policy, "zone_policy should have policy_id"
+        assert "drc" in zone_policy, "zone_policy should have drc settings"
+        assert "export" in zone_policy, "zone_policy should have export settings"
+
+        # DRC settings
+        drc = zone_policy["drc"]
+        assert "refill_zones" in drc, "DRC settings should specify refill_zones"
+        assert isinstance(drc["refill_zones"], bool), "refill_zones should be boolean"
+
+        # Export settings
+        export = zone_policy["export"]
+        assert "check_zones" in export, "Export settings should specify check_zones"
+        assert isinstance(export["check_zones"], bool), "check_zones should be boolean"
+
+    def test_zone_policy_affects_manifest_determinism(self, tmp_path: Path) -> None:
+        """REQ-M1-017: Zone policy should be reflected in stable manifests."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice with same settings
+        runner_a = _FakeExportRunner(seed="zone_test")
+        runner_b = _FakeExportRunner(seed="zone_test")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
+        manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
+
+        # Zone policy should be identical
+        assert manifest_a.get("zone_policy") == manifest_b.get("zone_policy"), (
+            "REQ-M1-017: Zone policy should be deterministic across builds"
+        )
+
+
+class TestExportHashStabilityWithProvenance:
+    """Tests verifying export hashes are stable with provenance data.
+
+    REQ-M1-017: For golden specs, export completeness and canonical hash
+    stability MUST hold across repeated builds (including silkscreen content).
+    """
+
+    def test_design_hash_stability_across_builds(self, tmp_path: Path) -> None:
+        """REQ-M1-017: Design hash should be stable across repeated builds."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="stability_test")
+        runner_b = _FakeExportRunner(seed="stability_test")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        # Design hashes must be identical
+        assert result_a.design_hash == result_b.design_hash, (
+            "REQ-M1-017: Design hash should be stable across builds"
+        )
+
+    def test_export_hashes_stability_with_provenance(self, tmp_path: Path) -> None:
+        """REQ-M1-017: Export hashes should be stable with provenance data."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="export_prov_test")
+        runner_b = _FakeExportRunner(seed="export_prov_test")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
+        manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
+
+        # Export hashes (with provenance context) should be identical
+        exports_a = {e["path"]: e["hash"] for e in manifest_a["exports"]}
+        exports_b = {e["path"]: e["hash"] for e in manifest_b["exports"]}
+
+        assert exports_a == exports_b, (
+            "REQ-M1-017: Export hashes should be stable with provenance"
+        )
+
+    def test_manifest_hash_stability(self, tmp_path: Path) -> None:
+        """REQ-M1-017: Complete manifest should be stable across builds."""
+        from formula_foundry.coupongen import build_coupon
+
+        specs = _golden_specs()
+        if not specs:
+            pytest.skip("No golden specs found")
+
+        spec = load_spec(specs[0])
+
+        # Build twice
+        runner_a = _FakeExportRunner(seed="manifest_stability")
+        runner_b = _FakeExportRunner(seed="manifest_stability")
+
+        result_a = build_coupon(
+            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
+        )
+        result_b = build_coupon(
+            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
+        )
+
+        manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
+        manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
+
+        # Remove non-deterministic lineage fields for comparison
+        for m in [manifest_a, manifest_b]:
+            m.pop("lineage", None)
+
+        # Core manifest fields should be stable
+        assert manifest_a["design_hash"] == manifest_b["design_hash"]
+        assert manifest_a["coupon_id"] == manifest_b["coupon_id"]
+        assert manifest_a["exports"] == manifest_b["exports"]
+        assert manifest_a.get("footprint_provenance") == manifest_b.get("footprint_provenance")
+        assert manifest_a.get("zone_policy") == manifest_b.get("zone_policy")

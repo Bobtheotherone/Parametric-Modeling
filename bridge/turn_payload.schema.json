@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentTurnPayload",
+  "description": "Minimal payload schema for agent output. Orchestrator fills invariants.",
+  "type": "object",
+  "required": [
+    "summary",
+    "work_completed",
+    "project_complete"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Brief description of work done"
+    },
+    "work_completed": {
+      "type": "boolean",
+      "description": "Whether the assigned work was completed"
+    },
+    "project_complete": {
+      "type": "boolean",
+      "description": "Whether the entire project is complete",
+      "default": false
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["plan", "implement", "verify", "finalize"],
+      "description": "Current work phase",
+      "default": "implement"
+    },
+    "next_prompt": {
+      "type": "string",
+      "description": "Prompt for next agent (if delegating)",
+      "default": ""
+    },
+    "delegate_rationale": {
+      "type": "string",
+      "description": "Reason for delegating or completing",
+      "default": ""
+    },
+    "gates_passed": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Verification gates passed",
+      "default": []
+    },
+    "requirement_progress": {
+      "type": "object",
+      "properties": {
+        "covered_req_ids": {"type": "array", "items": {"type": "string"}, "default": []},
+        "tests_added_or_modified": {"type": "array", "items": {"type": "string"}, "default": []},
+        "commands_run": {"type": "array", "items": {"type": "string"}, "default": []}
+      },
+      "default": {}
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "description"],
+        "properties": {
+          "path": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "Files created or modified",
+      "default": []
+    },
+    "next_agent": {
+      "type": "string",
+      "enum": ["codex", "claude"],
+      "description": "Next agent to run (orchestrator may override)"
+    },
+    "needs_write_access": {
+      "type": "boolean",
+      "description": "Whether next phase needs write access",
+      "default": true
+    },
+    "agent": {
+      "type": "string",
+      "description": "Agent identity (orchestrator will override)"
+    },
+    "milestone_id": {
+      "type": "string",
+      "description": "Milestone ID (orchestrator will override)"
+    },
+    "stats_refs": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Stats references (orchestrator will fill if missing)"
+    }
+  },
+  "additionalProperties": true
+}

@@ -37,6 +37,7 @@ venv/
 !/data/
 !/data/**/
 !/data/**/.gitkeep
+!/data/footprints/*.kicad_mod
 # SQLite databases (derived, rebuildable)
 *.sqlite
 *.sqlite-wal

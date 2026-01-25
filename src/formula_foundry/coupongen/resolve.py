@@ -5,6 +5,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from formula_foundry.resolve.consumption import (
+    build_spec_consumption,
+    enforce_spec_consumption,
+)
+from formula_foundry.spec.consumption import SpecConsumption
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .families import FAMILY_F1
@@ -38,9 +43,14 @@ class ResolvedDesign(BaseModel):
     parameters_nm: dict[str, int]
     derived_features: dict[str, int]
     dimensionless_groups: dict[str, float]
+    # Connector footprint provenance - included in design hash per REQ-M1-015
+    # Keys are connector positions (e.g., "left", "right"), values are
+    # dicts with "footprint_id" and "metadata_hash" for deterministic hashing
+    connector_footprints: dict[str, dict[str, str]] = Field(default_factory=dict)
     # Derived length_right_nm for F1 coupons (ensures continuity per CP-2.2)
     # This IS serialized and included in the design hash
     length_right_nm: int | None = Field(default=None)
+    spec_consumption: SpecConsumption | None = Field(default=None, exclude=True)
 
     # LayoutPlan is the single source of truth for geometry (CP-2.1)
     # Stored as a private attribute, excluded from serialization/hashing
@@ -62,8 +72,22 @@ class ResolvedDesign(BaseModel):
         object.__setattr__(new_obj, "_layout_plan", layout_plan)
         return new_obj
 
+    def get_spec_consumption_summary(self) -> dict[str, list[str]] | None:
+        """Get the spec consumption summary for manifest emission.
 
-def resolve(spec: CouponSpec) -> ResolvedDesign:
+        Returns:
+            Dictionary with sorted lists of consumed/expected/unused paths,
+            or None if spec_consumption was not computed.
+
+        Satisfies REQ-M1-001 and REQ-M1-013: Spec consumption summary
+        emitted in resolved outputs and manifest.
+        """
+        if self.spec_consumption is None:
+            return None
+        return self.spec_consumption.to_summary_dict()
+
+
+def resolve(spec: CouponSpec, *, strict: bool = False) -> ResolvedDesign:
     """Resolve a CouponSpec to a ResolvedDesign with computed geometry.
 
     This function resolves all parameters from the spec and computes the
@@ -80,6 +104,7 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
 
     Args:
         spec: The coupon specification with all geometry parameters.
+        strict: If True, raise on any unused provided or unconsumed expected paths.
 
     Returns:
         ResolvedDesign with all parameters resolved and LayoutPlan computed.
@@ -117,6 +142,13 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
     derived_features = _build_derived_features(spec, layout_plan, length_right_nm)
     dimensionless_groups = _build_dimensionless_groups(spec)
 
+    # Build connector footprint provenance for design hash (REQ-M1-015)
+    connector_footprints = _build_connector_footprints(spec)
+
+    spec_consumption = build_spec_consumption(spec)
+    if strict:
+        enforce_spec_consumption(spec_consumption)
+
     # Create the final ResolvedDesign with layout_plan attached
     resolved = ResolvedDesign(
         schema_version=spec.schema_version,
@@ -124,7 +156,9 @@ def resolve(spec: CouponSpec) -> ResolvedDesign:
         parameters_nm=parameters_nm,
         derived_features=derived_features,
         dimensionless_groups=dimensionless_groups,
+        connector_footprints=connector_footprints,
         length_right_nm=length_right_nm,
+        spec_consumption=spec_consumption,
     )
 
     # Attach the layout_plan (excluded from serialization/hashing)
@@ -203,8 +237,14 @@ def _build_derived_features(
 ) -> dict[str, int]:
     """Build derived features using LayoutPlan as the source of truth.
 
+    Combines the comprehensive derived features from formula_foundry.derive
+    with LayoutPlan-derived values to ensure geometry math is not duplicated.
+
     For F1 coupons, uses the derived length_right_nm from the LayoutPlan
     to compute total trace length, ensuring geometry math is not duplicated.
+
+    Satisfies REQ-M1-015: Derived features include CPWG/via/fence/launch-relevant
+    features and emit deterministically in manifest.json.
 
     Args:
         spec: The coupon specification.
@@ -212,48 +252,75 @@ def _build_derived_features(
         derived_length_right_nm: The derived right length for F1 coupons, or None.
 
     Returns:
-        Dictionary of derived features.
+        Dictionary of derived features, sorted by key for deterministic output.
     """
-    width = int(spec.board.outline.width_nm)
-    length = int(spec.board.outline.length_nm)
+    from formula_foundry.derive import compute_derived_features
 
-    # Use LayoutPlan's total_trace_length_nm as the source of truth
+    # Get comprehensive derived features from the derive module
+    derived = compute_derived_features(spec, derived_length_right_nm)
+
+    # Override trace_total_length_nm with LayoutPlan's value (source of truth)
     # This ensures no geometry math is duplicated (CP-2.1)
-    trace_total_length_nm = layout_plan.total_trace_length_nm
+    derived["trace_total_length_nm"] = layout_plan.total_trace_length_nm
 
-    derived: dict[str, int] = {
-        "board_area_nm2": width * length,
-        "trace_total_length_nm": trace_total_length_nm,
-    }
-
-    # For F1 coupons, store the derived length_right_nm as a derived feature
-    if derived_length_right_nm is not None:
-        derived["length_right_nm"] = derived_length_right_nm
-
-    if spec.discontinuity is not None:
-        pad = int(spec.discontinuity.signal_via.pad_diameter_nm)
-        drill = int(spec.discontinuity.signal_via.drill_nm)
-        derived["signal_via_annular_ring_nm"] = pad - drill
-    return derived
+    # Ensure sorted output for deterministic JSON emission
+    return dict(sorted(derived.items()))
 
 
 def _build_dimensionless_groups(spec: CouponSpec) -> dict[str, float]:
-    width = int(spec.board.outline.width_nm)
-    length = int(spec.board.outline.length_nm)
-    w_nm = int(spec.transmission_line.w_nm)
-    gap_nm = int(spec.transmission_line.gap_nm)
-    groups: dict[str, float] = {
-        "board_aspect_ratio": _safe_ratio(length, width),
-        "cpwg_w_over_gap": _safe_ratio(w_nm, gap_nm),
-    }
-    if spec.discontinuity is not None:
-        pad = int(spec.discontinuity.signal_via.pad_diameter_nm)
-        drill = int(spec.discontinuity.signal_via.drill_nm)
-        groups["signal_via_pad_over_drill"] = _safe_ratio(pad, drill)
-    return groups
+    """Build comprehensive dimensionless groups for equation discovery.
+
+    Delegates to formula_foundry.derive.compute_dimensionless_groups which
+    provides CPWG/via/fence/launch-relevant dimensionless groups.
+
+    Satisfies REQ-M1-015: Derived groups include CPWG/via/fence/launch-relevant
+    dimensionless groups and emit deterministically in manifest.json.
+
+    Args:
+        spec: The coupon specification.
+
+    Returns:
+        Dictionary of dimensionless groups, sorted by key for deterministic output.
+    """
+    from formula_foundry.derive import compute_dimensionless_groups
+
+    return compute_dimensionless_groups(spec)
 
 
-def _safe_ratio(numerator: int, denominator: int) -> float:
-    if denominator == 0:
-        return 0.0
-    return numerator / denominator
+def _build_connector_footprints(spec: CouponSpec) -> dict[str, dict[str, str]]:
+    """Build connector footprint provenance for design hash.
+
+    Extracts footprint IDs and their metadata hashes for all connectors
+    in the spec. This ensures that changing the connector footprint
+    produces a different design hash per REQ-M1-015.
+
+    Args:
+        spec: The coupon specification.
+
+    Returns:
+        Dictionary mapping connector positions (e.g., "left", "right") to
+        dicts containing "footprint_id" and "metadata_hash".
+    """
+    from .geom.footprint_meta import load_footprint_meta
+
+    result: dict[str, dict[str, str]] = {}
+
+    # Process left connector
+    if spec.connectors.left is not None:
+        footprint_path = spec.connectors.left.footprint
+        meta = load_footprint_meta(footprint_path)
+        result["left"] = {
+            "footprint_id": footprint_path,
+            "metadata_hash": meta.metadata_hash,
+        }
+
+    # Process right connector
+    if spec.connectors.right is not None:
+        footprint_path = spec.connectors.right.footprint
+        meta = load_footprint_meta(footprint_path)
+        result["right"] = {
+            "footprint_id": footprint_path,
+            "metadata_hash": meta.metadata_hash,
+        }
+
+    return result

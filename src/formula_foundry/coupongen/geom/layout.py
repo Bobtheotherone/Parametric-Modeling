@@ -20,14 +20,15 @@ Satisfies CP-2.1 (ECO-M1-ALIGN-0001).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .primitives import OriginMode
+from .primitives import OriginMode, PositionNM
 
 if TYPE_CHECKING:
     from ..resolve import ResolvedDesign
     from ..spec import CouponSpec
+    from .launch import LaunchPlan
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,9 +43,9 @@ class PortPlan:
                   in nanometers.
         y_ref_nm: Y coordinate of the port reference point (usually 0 for
                   centerline placement) in nanometers.
-        signal_pad_x_nm: X coordinate of the signal pad center in nanometers.
-                         This is where the transmission line connects.
-        signal_pad_y_nm: Y coordinate of the signal pad center in nanometers.
+        signal_pad_x_nm: X coordinate of the signal pad connection point in nm.
+                         This is where the transmission line connects (launch reference).
+        signal_pad_y_nm: Y coordinate of the signal pad connection point in nm.
         footprint: Full footprint path as 'library:name'.
         rotation_mdeg: Rotation in millidegrees (0, 90000, 180000, 270000).
         side: Port side identifier ('left' or 'right').
@@ -139,6 +140,7 @@ class LayoutPlan:
                    None for F0 coupons (no discontinuity).
         y_centerline_nm: Y coordinate of the signal centerline (typically 0).
         coupon_family: Coupon family identifier (e.g., "F0", "F1").
+        launch_plans: Optional launch transition plans for left/right connectors.
     """
 
     origin_mode: OriginMode
@@ -151,6 +153,7 @@ class LayoutPlan:
     x_disc_nm: int | None
     y_centerline_nm: int
     coupon_family: str
+    launch_plans: tuple["LaunchPlan", ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate layout plan invariants."""
@@ -229,6 +232,10 @@ class LayoutPlan:
         """
         return next((s for s in self.segments if s.label == label), None)
 
+    def get_launch_plan(self, side: str) -> "LaunchPlan | None":
+        """Get launch plan by connector side."""
+        return next((lp for lp in self.launch_plans if lp.side == side), None)
+
     def validate_connectivity(self) -> list[str]:
         """Validate that all segments are connected.
 
@@ -298,12 +305,30 @@ def create_f0_layout_plan(
     Returns:
         LayoutPlan for the F0 coupon.
     """
+    from .footprint_meta import load_footprint_meta
+
+    meta = load_footprint_meta(footprint)
+    left_pad_x, left_pad_y = _transform_pad_position(
+        anchor_x=left_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=0,
+    )
+    right_pad_x, right_pad_y = _transform_pad_position(
+        anchor_x=right_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=180,
+    )
+
     left_port = PortPlan(
         x_ref_nm=left_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=left_port_x_nm,  # Simplified: pad at ref point
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=left_pad_x,
+        signal_pad_y_nm=left_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=0,
         side="left",
     )
@@ -311,18 +336,18 @@ def create_f0_layout_plan(
     right_port = PortPlan(
         x_ref_nm=right_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=right_port_x_nm,  # Simplified: pad at ref point
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=right_pad_x,
+        signal_pad_y_nm=right_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=180000,
         side="right",
     )
 
     # Single through segment
     through_segment = SegmentPlan(
-        x_start_nm=left_port_x_nm,
-        x_end_nm=right_port_x_nm,
-        y_nm=0,
+        x_start_nm=left_pad_x,
+        x_end_nm=right_pad_x,
+        y_nm=left_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
@@ -381,24 +406,42 @@ def create_f1_layout_plan(
     Raises:
         ValueError: If left_length_nm results in discontinuity outside board.
     """
+    from .footprint_meta import load_footprint_meta
+
+    meta = load_footprint_meta(footprint)
+    left_pad_x, left_pad_y = _transform_pad_position(
+        anchor_x=left_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=0,
+    )
+    right_pad_x, right_pad_y = _transform_pad_position(
+        anchor_x=right_port_x_nm,
+        anchor_y=0,
+        pad_offset_x=meta.signal_pad.center_x_nm,
+        pad_offset_y=meta.signal_pad.center_y_nm,
+        rotation_deg=180,
+    )
+
     # Derive discontinuity position
-    x_disc_nm = left_port_x_nm + left_length_nm
+    x_disc_nm = left_pad_x + left_length_nm
 
     # Derive right length to ensure continuity
-    right_length_nm = right_port_x_nm - x_disc_nm
+    right_length_nm = right_pad_x - x_disc_nm
 
     if right_length_nm < 0:
         raise ValueError(
             f"Left length ({left_length_nm}) places discontinuity ({x_disc_nm}) "
-            f"beyond right port ({right_port_x_nm})"
+            f"beyond right port ({right_pad_x})"
         )
 
     left_port = PortPlan(
         x_ref_nm=left_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=left_port_x_nm,
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=left_pad_x,
+        signal_pad_y_nm=left_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=0,
         side="left",
     )
@@ -406,18 +449,18 @@ def create_f1_layout_plan(
     right_port = PortPlan(
         x_ref_nm=right_port_x_nm,
         y_ref_nm=0,
-        signal_pad_x_nm=right_port_x_nm,
-        signal_pad_y_nm=0,
-        footprint=footprint,
+        signal_pad_x_nm=right_pad_x,
+        signal_pad_y_nm=right_pad_y,
+        footprint=meta.footprint_path,
         rotation_mdeg=180000,
         side="right",
     )
 
     # Left segment: from left port to discontinuity
     left_segment = SegmentPlan(
-        x_start_nm=left_port_x_nm,
+        x_start_nm=left_pad_x,
         x_end_nm=x_disc_nm,
-        y_nm=0,
+        y_nm=left_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
@@ -427,8 +470,8 @@ def create_f1_layout_plan(
     # Right segment: from discontinuity to right port
     right_segment = SegmentPlan(
         x_start_nm=x_disc_nm,
-        x_end_nm=right_port_x_nm,
-        y_nm=0,
+        x_end_nm=right_pad_x,
+        y_nm=right_pad_y,
         width_nm=trace_width_nm,
         layer=trace_layer,
         net_name="SIG",
@@ -534,10 +577,8 @@ def compute_layout_plan(
     left_rotation_deg = spec.connectors.left.rotation_deg
     right_rotation_deg = spec.connectors.right.rotation_deg
 
-    # Compute signal pad positions in board coordinates
-    # The pad center is relative to the anchor, so we need to transform
-    # based on connector placement and rotation
-    left_signal_pad_x, left_signal_pad_y = _transform_pad_position(
+    # Compute signal pad center positions in board coordinates
+    left_pad_center_x, left_pad_center_y = _transform_pad_position(
         anchor_x=int(left_connector_pos[0]),
         anchor_y=int(left_connector_pos[1]),
         pad_offset_x=left_meta.signal_pad.center_x_nm,
@@ -545,7 +586,7 @@ def compute_layout_plan(
         rotation_deg=left_rotation_deg,
     )
 
-    right_signal_pad_x, right_signal_pad_y = _transform_pad_position(
+    right_pad_center_x, right_pad_center_y = _transform_pad_position(
         anchor_x=int(right_connector_pos[0]),
         anchor_y=int(right_connector_pos[1]),
         pad_offset_x=right_meta.signal_pad.center_x_nm,
@@ -553,17 +594,35 @@ def compute_layout_plan(
         rotation_deg=right_rotation_deg,
     )
 
+    # Compute launch reference positions (connection point to CPWG)
+    left_launch_x, left_launch_y = _transform_pad_position(
+        anchor_x=int(left_connector_pos[0]),
+        anchor_y=int(left_connector_pos[1]),
+        pad_offset_x=left_meta.launch_reference.x_nm,
+        pad_offset_y=left_meta.launch_reference.y_nm,
+        rotation_deg=left_rotation_deg,
+    )
+
+    right_launch_x, right_launch_y = _transform_pad_position(
+        anchor_x=int(right_connector_pos[0]),
+        anchor_y=int(right_connector_pos[1]),
+        pad_offset_x=right_meta.launch_reference.x_nm,
+        pad_offset_y=right_meta.launch_reference.y_nm,
+        rotation_deg=right_rotation_deg,
+    )
+
     # Get trace parameters
     trace_width_nm = int(spec.transmission_line.w_nm)
     trace_layer = spec.transmission_line.layer
+    gap_nm = int(spec.transmission_line.gap_nm)
     length_left_nm = int(spec.transmission_line.length_left_nm)
 
     # Build port plans
     left_port = PortPlan(
         x_ref_nm=int(left_connector_pos[0]),
         y_ref_nm=int(left_connector_pos[1]),
-        signal_pad_x_nm=left_signal_pad_x,
-        signal_pad_y_nm=left_signal_pad_y,
+        signal_pad_x_nm=left_launch_x,
+        signal_pad_y_nm=left_launch_y,
         footprint=left_meta.footprint_path,
         rotation_mdeg=left_rotation_deg * 1000,
         side="left",
@@ -572,12 +631,58 @@ def compute_layout_plan(
     right_port = PortPlan(
         x_ref_nm=int(right_connector_pos[0]),
         y_ref_nm=int(right_connector_pos[1]),
-        signal_pad_x_nm=right_signal_pad_x,
-        signal_pad_y_nm=right_signal_pad_y,
+        signal_pad_x_nm=right_launch_x,
+        signal_pad_y_nm=right_launch_y,
         footprint=right_meta.footprint_path,
         rotation_mdeg=right_rotation_deg * 1000,
         side="right",
     )
+
+    from ..constraints.core import resolve_fab_limits
+    from .launch import build_launch_plan
+
+    fab_limits = resolve_fab_limits(spec)
+    min_trace_width_nm = int(fab_limits.get("min_trace_width_nm", 0))
+    min_gap_nm = int(fab_limits.get("min_gap_nm", 0))
+
+    entry_layer = trace_layer
+    exit_layer = "B.Cu" if trace_layer == "F.Cu" else "F.Cu"
+    left_launch_layer = entry_layer
+    right_launch_layer = exit_layer if spec.coupon_family == FAMILY_F1 else trace_layer
+
+    left_launch = build_launch_plan(
+        side="left",
+        pad_center=PositionNM(left_pad_center_x, left_pad_center_y),
+        launch_point=PositionNM(left_launch_x, left_launch_y),
+        launch_direction_deg=left_meta.launch_reference.direction_deg,
+        rotation_deg=left_rotation_deg,
+        pad_size_x_nm=left_meta.signal_pad.size_x_nm,
+        pad_size_y_nm=left_meta.signal_pad.size_y_nm,
+        trace_width_nm=trace_width_nm,
+        trace_layer=left_launch_layer,
+        gap_nm=gap_nm,
+        min_trace_width_nm=min_trace_width_nm,
+        min_gap_nm=min_gap_nm,
+        ground_via_fence=spec.transmission_line.ground_via_fence,
+    )
+
+    right_launch = build_launch_plan(
+        side="right",
+        pad_center=PositionNM(right_pad_center_x, right_pad_center_y),
+        launch_point=PositionNM(right_launch_x, right_launch_y),
+        launch_direction_deg=right_meta.launch_reference.direction_deg,
+        rotation_deg=right_rotation_deg,
+        pad_size_x_nm=right_meta.signal_pad.size_x_nm,
+        pad_size_y_nm=right_meta.signal_pad.size_y_nm,
+        trace_width_nm=trace_width_nm,
+        trace_layer=right_launch_layer,
+        gap_nm=gap_nm,
+        min_trace_width_nm=min_trace_width_nm,
+        min_gap_nm=min_gap_nm,
+        ground_via_fence=spec.transmission_line.ground_via_fence,
+    )
+
+    launch_plans = (left_launch, right_launch)
 
     # Dispatch based on coupon family
     if spec.coupon_family == FAMILY_F0:
@@ -589,6 +694,7 @@ def compute_layout_plan(
             right_port=right_port,
             trace_width_nm=trace_width_nm,
             trace_layer=trace_layer,
+            launch_plans=launch_plans,
         )
     elif spec.coupon_family == FAMILY_F1:
         return _compute_f1_layout(
@@ -600,6 +706,7 @@ def compute_layout_plan(
             trace_width_nm=trace_width_nm,
             trace_layer=trace_layer,
             length_left_nm=length_left_nm,
+            launch_plans=launch_plans,
         )
     else:
         raise ValueError(f"Unsupported coupon family: {spec.coupon_family}")
@@ -649,6 +756,7 @@ def _compute_f0_layout(
     right_port: PortPlan,
     trace_width_nm: int,
     trace_layer: str,
+    launch_plans: tuple["LaunchPlan", ...] = (),
 ) -> LayoutPlan:
     """Compute layout for F0 (through-line) coupon.
 
@@ -676,6 +784,7 @@ def _compute_f0_layout(
         x_disc_nm=None,
         y_centerline_nm=left_port.signal_pad_y_nm,
         coupon_family="F0_CAL_THRU_LINE",
+        launch_plans=launch_plans,
     )
 
 
@@ -689,6 +798,7 @@ def _compute_f1_layout(
     trace_width_nm: int,
     trace_layer: str,
     length_left_nm: int,
+    launch_plans: tuple["LaunchPlan", ...] = (),
 ) -> LayoutPlan:
     """Compute layout for F1 (via transition) coupon.
 
@@ -755,4 +865,5 @@ def _compute_f1_layout(
         x_disc_nm=x_disc_nm,
         y_centerline_nm=left_port.signal_pad_y_nm,
         coupon_family="F1_SINGLE_ENDED_VIA",
+        launch_plans=launch_plans,
     )

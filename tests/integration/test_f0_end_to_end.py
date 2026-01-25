@@ -51,6 +51,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_SPECS_DIR = REPO_ROOT / "tests" / "golden_specs"
 
 
+def _get_segment_net(seg: list) -> int:
+    for elem in seg:
+        if isinstance(elem, list) and elem[0] == "net":
+            return elem[1]
+    return -1
+
+
+def _get_signal_segments(board: list) -> list:
+    segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+    return [s for s in segments if _get_segment_net(s) == 1]
+
+
+def _get_ground_segments(board: list) -> list:
+    segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+    return [s for s in segments if _get_segment_net(s) == 2]
+
+
 def _minimal_f0_spec_data() -> dict[str, Any]:
     """Create minimal valid F0 spec data."""
     return {
@@ -250,13 +267,15 @@ class TestF0BoardWriter:
         assert board[0] == "kicad_pcb"
 
     def test_f0_board_has_single_track_segment(self, f0_spec: CouponSpec) -> None:
-        """F0 board should have exactly one track segment (through-line)."""
+        """F0 board should have exactly one signal track segment (through-line)."""
         resolved = resolve(f0_spec)
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 1
+        signal_segments = _get_signal_segments(board)
+        ground_segments = _get_ground_segments(board)
+        assert len(signal_segments) == 1
+        assert len(ground_segments) == 2
 
     def test_f0_board_has_two_footprints(self, f0_spec: CouponSpec) -> None:
         """F0 board should have exactly two footprints (left and right connectors)."""
@@ -325,10 +344,9 @@ class TestF0TrackGeometry:
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 1
-
-        segment = segments[0]
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 1
+        segment = signal_segments[0]
         layer_elem = [e for e in segment if isinstance(e, list) and e[0] == "layer"][0]
         assert layer_elem[1] == "F.Cu"
 
@@ -338,8 +356,8 @@ class TestF0TrackGeometry:
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        segment = segments[0]
+        signal_segments = _get_signal_segments(board)
+        segment = signal_segments[0]
 
         width_elem = [e for e in segment if isinstance(e, list) and e[0] == "width"][0]
         # Width in mm = 300000 nm / 1000000 = 0.3 mm
@@ -351,8 +369,8 @@ class TestF0TrackGeometry:
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        segment = segments[0]
+        signal_segments = _get_signal_segments(board)
+        segment = signal_segments[0]
 
         net_elem = [e for e in segment if isinstance(e, list) and e[0] == "net"][0]
         assert net_elem[1] == 1
@@ -445,11 +463,15 @@ class TestF0EndToEndPipeline:
         parsed = parse(content)
 
         # Should have expected elements
-        segments = [e for e in parsed if isinstance(e, list) and e[0] == "segment"]
+        all_segments = [e for e in parsed if isinstance(e, list) and e[0] == "segment"]
         footprints = [e for e in parsed if isinstance(e, list) and e[0] == "footprint"]
         vias = [e for e in parsed if isinstance(e, list) and e[0] == "via"]
 
-        assert len(segments) == 1, "F0 should have exactly 1 track segment"
+        signal_segments = _get_signal_segments(parsed)
+        ground_segments = _get_ground_segments(parsed)
+        assert len(signal_segments) == 1, "F0 should have exactly 1 signal track segment"
+        assert len(ground_segments) == 2, "F0 should have exactly 2 ground CPWG segments"
+        assert len(all_segments) == 3, "F0 should have 3 total segments (1 signal + 2 ground)"
         assert len(footprints) == 2, "F0 should have exactly 2 footprints"
         assert len(vias) == 0, "F0 should have no vias"
 
@@ -505,9 +527,9 @@ class TestF0EndToEndPipeline:
         assert end_x_nm == layout.x_board_right_edge_nm
 
         # Get track segment
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
-        assert len(segments) == 1
-        segment = segments[0]
+        signal_segments = _get_signal_segments(board)
+        assert len(signal_segments) == 1
+        segment = signal_segments[0]
 
         # Get start/end of track
         seg_start = [e for e in segment if isinstance(e, list) and e[0] == "start"][0]

@@ -117,6 +117,7 @@ class SExprWriter:
                 # Coordinate and property elements that KiCad expects inline
                 "at",
                 "start",
+                "mid",
                 "end",
                 "size",
                 "drill",
@@ -587,6 +588,47 @@ def kicad_gr_line(
     return [
         "gr_line",
         ["start", nm_to_mm(start_x_nm), nm_to_mm(start_y_nm)],
+        ["end", nm_to_mm(end_x_nm), nm_to_mm(end_y_nm)],
+        ["layer", layer],
+        ["width", width],
+        ["tstamp", tstamp],
+    ]
+
+
+def kicad_gr_arc(
+    start_x_nm: int,
+    start_y_nm: int,
+    mid_x_nm: int,
+    mid_y_nm: int,
+    end_x_nm: int,
+    end_y_nm: int,
+    layer: str,
+    width: float,
+    tstamp: str,
+) -> SExprList:
+    """Build graphic arc element.
+
+    KiCad 7+ uses start/mid/end format for arcs where 'mid' is a point
+    on the arc (not the center).
+
+    Args:
+        start_x_nm: Start X coordinate in nanometers.
+        start_y_nm: Start Y coordinate in nanometers.
+        mid_x_nm: Midpoint X coordinate on the arc in nanometers.
+        mid_y_nm: Midpoint Y coordinate on the arc in nanometers.
+        end_x_nm: End X coordinate in nanometers.
+        end_y_nm: End Y coordinate in nanometers.
+        layer: Layer name (e.g., "Edge.Cuts").
+        width: Line width in mm.
+        tstamp: UUID string.
+
+    Returns:
+        S-expression list for the arc element.
+    """
+    return [
+        "gr_arc",
+        ["start", nm_to_mm(start_x_nm), nm_to_mm(start_y_nm)],
+        ["mid", nm_to_mm(mid_x_nm), nm_to_mm(mid_y_nm)],
         ["end", nm_to_mm(end_x_nm), nm_to_mm(end_y_nm)],
         ["layer", layer],
         ["width", width],

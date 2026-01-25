@@ -13,7 +13,11 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .primitives import PositionNM, TrackSegment, Via
+from formula_foundry.geometry.via_fence import (
+    generate_ground_via_fence as _generate_ground_via_fence,
+)
+
+from .primitives import PositionNM, TrackSegment, Via, half_width_nm
 
 if TYPE_CHECKING:
     pass
@@ -29,6 +33,8 @@ class CPWGSpec:
         length_nm: Length of the transmission line segment in nanometers.
         layer: Copper layer for the transmission line (e.g., "F.Cu").
         net_id: Net ID for the signal trace.
+        ground_width_nm: Optional ground rail width in nanometers (defaults to w_nm).
+        ground_net_id: Net ID for ground copper.
     """
 
     w_nm: int
@@ -36,6 +42,8 @@ class CPWGSpec:
     length_nm: int
     layer: str = "F.Cu"
     net_id: int = 1
+    ground_width_nm: int | None = None
+    ground_net_id: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +56,7 @@ class GroundViaFenceSpec:
         drill_nm: Via drill diameter in nanometers.
         diameter_nm: Via pad diameter in nanometers.
         layers: Tuple of layer names the vias connect.
-        net_id: Net ID for the ground vias (typically 0 or ground net).
+        net_id: Net ID for the ground vias (defaults to ground net when <= 0).
     """
 
     pitch_nm: int
@@ -65,11 +73,13 @@ class CPWGResult:
 
     Attributes:
         signal_track: The signal trace track segment.
+        ground_tracks: Tuple of ground rail track segments (positive, negative offset).
         fence_vias_positive_y: Vias on the +y side of the signal trace.
         fence_vias_negative_y: Vias on the -y side of the signal trace.
     """
 
     signal_track: TrackSegment
+    ground_tracks: tuple[TrackSegment, TrackSegment]
     fence_vias_positive_y: tuple[Via, ...]
     fence_vias_negative_y: tuple[Via, ...]
 
@@ -99,6 +109,68 @@ def generate_cpwg_segment(
         layer=spec.layer,
         net_id=spec.net_id,
     )
+
+
+def _resolve_ground_width_nm(spec: CPWGSpec) -> int:
+    if spec.ground_width_nm is None:
+        return spec.w_nm
+    if spec.ground_width_nm <= 0:
+        raise ValueError("ground_width_nm must be positive")
+    return spec.ground_width_nm
+
+
+def generate_cpwg_ground_tracks(
+    start: PositionNM,
+    end: PositionNM,
+    spec: CPWGSpec,
+) -> tuple[TrackSegment, TrackSegment]:
+    """Generate ground rail tracks parallel to the signal trace.
+
+    The rails are offset from the centerline such that the gap between the
+    signal edge and ground edge is at least spec.gap_nm.
+    """
+    if spec.gap_nm < 0:
+        raise ValueError("gap_nm must be non-negative")
+
+    dx = end.x - start.x
+    dy = end.y - start.y
+    segment_length = int(math.sqrt(dx * dx + dy * dy))
+
+    if segment_length == 0:
+        # Deterministic fallback: treat zero-length as horizontal for offset.
+        perp_dx, perp_dy = 0.0, 1.0
+    else:
+        unit_dx = dx / segment_length
+        unit_dy = dy / segment_length
+        perp_dx = -unit_dy
+        perp_dy = unit_dx
+
+    ground_width = _resolve_ground_width_nm(spec)
+    offset_from_center = (
+        half_width_nm(spec.w_nm)
+        + spec.gap_nm
+        + half_width_nm(ground_width)
+    )
+
+    offset_dx = int(offset_from_center * perp_dx)
+    offset_dy = int(offset_from_center * perp_dy)
+
+    positive = TrackSegment(
+        start=PositionNM(start.x + offset_dx, start.y + offset_dy),
+        end=PositionNM(end.x + offset_dx, end.y + offset_dy),
+        width_nm=ground_width,
+        layer=spec.layer,
+        net_id=spec.ground_net_id,
+    )
+    negative = TrackSegment(
+        start=PositionNM(start.x - offset_dx, start.y - offset_dy),
+        end=PositionNM(end.x - offset_dx, end.y - offset_dy),
+        width_nm=ground_width,
+        layer=spec.layer,
+        net_id=spec.ground_net_id,
+    )
+
+    return (positive, negative)
 
 
 def generate_cpwg_horizontal(
@@ -146,75 +218,7 @@ def generate_ground_via_fence(
     Returns:
         Tuple of (positive_y_vias, negative_y_vias).
     """
-    # Calculate segment vector and length
-    dx = end.x - start.x
-    dy = end.y - start.y
-    segment_length = int(math.sqrt(dx * dx + dy * dy))
-
-    if segment_length == 0:
-        return ((), ())
-
-    # Number of vias along the segment
-    # Place first via at pitch/2 from start, then every pitch_nm
-    if fence_spec.pitch_nm <= 0:
-        raise ValueError("pitch_nm must be positive")
-
-    # Calculate via positions along the segment
-    # Start at half pitch from start, continue until we would exceed the end
-    num_vias = max(1, (segment_length + fence_spec.pitch_nm // 2) // fence_spec.pitch_nm)
-
-    # Normalize direction vector
-    unit_dx = dx / segment_length if segment_length > 0 else 0
-    unit_dy = dy / segment_length if segment_length > 0 else 0
-
-    # Perpendicular vector (90 degrees counterclockwise for +y offset)
-    perp_dx = -unit_dy
-    perp_dy = unit_dx
-
-    # Distance from centerline to via center:
-    # signal_trace_half_width + gap + offset_from_gap
-    via_offset_from_center = cpwg_spec.w_nm // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
-
-    positive_y_vias: list[Via] = []
-    negative_y_vias: list[Via] = []
-
-    for i in range(num_vias):
-        # Position along the segment (start at half pitch, then every pitch)
-        t = fence_spec.pitch_nm // 2 + i * fence_spec.pitch_nm
-        if t > segment_length:
-            break
-
-        # Base position on the centerline
-        base_x = start.x + int(t * unit_dx)
-        base_y = start.y + int(t * unit_dy)
-
-        # Positive Y side via
-        pos_y_via = Via(
-            position=PositionNM(
-                base_x + int(via_offset_from_center * perp_dx),
-                base_y + int(via_offset_from_center * perp_dy),
-            ),
-            diameter_nm=fence_spec.diameter_nm,
-            drill_nm=fence_spec.drill_nm,
-            layers=fence_spec.layers,
-            net_id=fence_spec.net_id,
-        )
-        positive_y_vias.append(pos_y_via)
-
-        # Negative Y side via
-        neg_y_via = Via(
-            position=PositionNM(
-                base_x - int(via_offset_from_center * perp_dx),
-                base_y - int(via_offset_from_center * perp_dy),
-            ),
-            diameter_nm=fence_spec.diameter_nm,
-            drill_nm=fence_spec.drill_nm,
-            layers=fence_spec.layers,
-            net_id=fence_spec.net_id,
-        )
-        negative_y_vias.append(neg_y_via)
-
-    return (tuple(positive_y_vias), tuple(negative_y_vias))
+    return _generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
 
 
 def generate_cpwg_with_fence(
@@ -235,13 +239,15 @@ def generate_cpwg_with_fence(
         direction: 1 for +x direction, -1 for -x direction.
 
     Returns:
-        CPWGResult containing the signal track and via fence tuples.
+        CPWGResult containing the signal track, ground rails, and via fence tuples.
     """
     signal_track = generate_cpwg_horizontal(origin, cpwg_spec, direction)
+    ground_tracks = generate_cpwg_ground_tracks(signal_track.start, signal_track.end, cpwg_spec)
 
     if fence_spec is None:
         return CPWGResult(
             signal_track=signal_track,
+            ground_tracks=ground_tracks,
             fence_vias_positive_y=(),
             fence_vias_negative_y=(),
         )
@@ -255,6 +261,7 @@ def generate_cpwg_with_fence(
 
     return CPWGResult(
         signal_track=signal_track,
+        ground_tracks=ground_tracks,
         fence_vias_positive_y=positive_y_vias,
         fence_vias_negative_y=negative_y_vias,
     )
@@ -289,6 +296,8 @@ def generate_symmetric_cpwg_pair(
         length_nm=left_length_nm,
         layer=cpwg_spec.layer,
         net_id=cpwg_spec.net_id,
+        ground_width_nm=cpwg_spec.ground_width_nm,
+        ground_net_id=cpwg_spec.ground_net_id,
     )
     right_spec = CPWGSpec(
         w_nm=cpwg_spec.w_nm,
@@ -296,6 +305,8 @@ def generate_symmetric_cpwg_pair(
         length_nm=right_length_nm,
         layer=cpwg_spec.layer,
         net_id=cpwg_spec.net_id,
+        ground_width_nm=cpwg_spec.ground_width_nm,
+        ground_net_id=cpwg_spec.ground_net_id,
     )
 
     left_result = generate_cpwg_with_fence(center, left_spec, fence_spec, direction=-1)

@@ -292,3 +292,136 @@ def validate_against_json_schema(data: dict[str, Any]) -> list[str]:
         path = ".".join(str(p) for p in error.absolute_path) or "(root)"
         errors.append(f"{path}: {error.message}")
     return errors
+
+
+class StrictValidationError(Exception):
+    """Raised when strict validation fails.
+
+    This exception is raised when a CouponSpec fails strict mode validation,
+    which includes JSON schema validation, extra field rejection, and
+    family-specific constraint enforcement.
+
+    Attributes:
+        errors: List of validation error messages.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        super().__init__(f"Strict validation failed with {len(errors)} error(s): {errors}")
+
+
+def validate_strict(
+    data: dict[str, Any],
+    *,
+    check_family_constraints: bool = True,
+) -> CouponSpec:
+    """Validate a CouponSpec in strict mode.
+
+    This function performs comprehensive validation that:
+    1. Validates against the JSON Schema (rejects unknown/extra fields via
+       additionalProperties: false)
+    2. Validates via Pydantic (extra="forbid" enforced on all models)
+    3. Optionally validates family-specific constraints (F0 vs F1 rules)
+
+    Strict mode validation enforces REQ-M1-002:
+    - Unknown/extra fields are rejected (no silent accept)
+    - Family-specific correctness is enforced (F0 cannot include F1-only
+      blocks like discontinuity, F1 requires discontinuity)
+    - Cross-family fields cause validation failures
+
+    Args:
+        data: Dictionary containing the CouponSpec data.
+        check_family_constraints: If True (default), validate family-specific
+            constraints. Set to False to skip family validation (useful for
+            schema-only validation).
+
+    Returns:
+        Validated CouponSpec instance.
+
+    Raises:
+        StrictValidationError: If validation fails. The exception contains
+            a list of all validation errors.
+
+    Example:
+        >>> data = {"schema_version": 1, "coupon_family": "F0_CAL_THRU_LINE", ...}
+        >>> try:
+        ...     spec = validate_strict(data)
+        ... except StrictValidationError as e:
+        ...     print(f"Validation failed: {e.errors}")
+    """
+    from .families import validate_family
+
+    errors: list[str] = []
+
+    # Step 1: JSON Schema validation (catches extra fields via additionalProperties: false)
+    schema_errors = validate_against_json_schema(data)
+    errors.extend(schema_errors)
+
+    # Step 2: Pydantic validation (extra="forbid" enforced on all _SpecBase models)
+    spec: CouponSpec | None = None
+    try:
+        spec = load_couponspec(data)
+    except Exception as e:
+        errors.append(f"Pydantic validation failed: {e}")
+
+    # If we have fatal errors at this point, raise early
+    if spec is None:
+        raise StrictValidationError(errors)
+
+    # Step 3: Family-specific constraint validation
+    if check_family_constraints:
+        try:
+            validate_family(spec)
+        except ValueError as e:
+            errors.append(f"Family validation failed: {e}")
+
+        # Additional cross-family field checks
+        family_errors = _validate_cross_family_fields(spec)
+        errors.extend(family_errors)
+
+    if errors:
+        raise StrictValidationError(errors)
+
+    return spec
+
+
+def _validate_cross_family_fields(spec: CouponSpec) -> list[str]:
+    """Validate cross-family field constraints.
+
+    This helper enforces family-specific field requirements:
+    - F0 (thru-line) requires transmission_line.length_right_nm to be specified
+      (both lengths define the symmetric through-line)
+    - F1 (via transition) deprecates transmission_line.length_right_nm
+      (it is derived from the continuity formula; if specified, it must be
+      validated against the derived value during resolve)
+
+    Args:
+        spec: Validated CouponSpec instance.
+
+    Returns:
+        List of validation error messages (empty if valid).
+    """
+    errors: list[str] = []
+
+    # Import here to avoid circular imports
+    from .families import FAMILY_F0, FAMILY_F1
+
+    if spec.coupon_family == FAMILY_F0:
+        # F0 requires both length_left_nm and length_right_nm
+        if spec.transmission_line.length_right_nm is None:
+            errors.append(
+                "F0_CAL_THRU_LINE requires transmission_line.length_right_nm to be specified "
+                "(both lengths define the symmetric through-line)"
+            )
+
+    elif spec.coupon_family == FAMILY_F1:
+        # F1 coupons: length_right_nm is deprecated (derived from continuity formula)
+        # We don't error here, but the resolve step will validate if it's specified
+        # For strict mode, we warn if it's specified (the user should remove it)
+        if spec.transmission_line.length_right_nm is not None:
+            # This is a warning/info for strict mode - length_right_nm is deprecated for F1
+            # The resolve step will validate that specified value matches derived value
+            # For now, we allow it but could optionally reject in stricter modes
+            pass
+
+    return errors

@@ -35,6 +35,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
+
 from .tiers import (
     _TIERS,
     ConstraintTier,
@@ -150,6 +152,9 @@ class RepairResult:
         repaired_vector: Repaired design vector (CP-3.4)
         distance_metrics: L2/Linf distance metrics in normalized space (CP-3.4)
         projection_policy_order: List of tiers in repair order (CP-3.4)
+        original_spec_hash: SHA256 hash of canonical original spec (REQ-M1-011)
+        repaired_spec_hash: SHA256 hash of canonical repaired spec (REQ-M1-011)
+        repaired_design_hash: Design hash from repaired spec (REQ-M1-011)
     """
 
     repair_map: dict[str, dict[str, int]]
@@ -163,6 +168,10 @@ class RepairResult:
     repaired_vector: DesignVector | None = None
     distance_metrics: RepairDistanceMetrics | None = None
     projection_policy_order: tuple[str, ...] = ("T0", "T1", "T2", "F1_CONTINUITY")
+    # REQ-M1-011: Hashes for rebuild verification
+    original_spec_hash: str | None = None
+    repaired_spec_hash: str | None = None
+    repaired_design_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert repair result to a dictionary for serialization."""
@@ -192,6 +201,14 @@ class RepairResult:
             result["repaired_vector"] = self.repaired_vector.to_dict()
         if self.distance_metrics is not None:
             result["distance_metrics"] = self.distance_metrics.to_dict()
+
+        # REQ-M1-011: Include spec hashes for rebuild verification
+        if self.original_spec_hash is not None:
+            result["original_spec_hash"] = self.original_spec_hash
+        if self.repaired_spec_hash is not None:
+            result["repaired_spec_hash"] = self.repaired_spec_hash
+        if self.repaired_design_hash is not None:
+            result["repaired_design_hash"] = self.repaired_design_hash
 
         return result
 
@@ -554,6 +571,40 @@ def _extract_design_vector(payload: dict[str, Any]) -> DesignVector:
             normalized[path] = _normalize_value(path, val)
 
     return DesignVector(parameters=parameters, normalized=normalized)
+
+
+def _build_repair_map(
+    actions: list[RepairAction],
+    original_vector: DesignVector | None,
+    repaired_vector: DesignVector | None,
+) -> dict[str, dict[str, int]]:
+    """Build a deterministic repair map from original/repaired vectors when possible."""
+    merged: dict[str, dict[str, int]] = {}
+
+    if original_vector is not None and repaired_vector is not None:
+        original_params = original_vector.parameters
+        repaired_params = repaired_vector.parameters
+        for path in sorted(set(original_params) | set(repaired_params)):
+            before = original_params.get(path)
+            after = repaired_params.get(path)
+            if before is None or after is None:
+                continue
+            if before != after:
+                merged[path] = {"before": before, "after": after}
+
+    if actions:
+        action_map: dict[str, dict[str, int]] = {}
+        for action in actions:
+            entry = action_map.get(action.path)
+            if entry is None:
+                action_map[action.path] = {"before": action.before, "after": action.after}
+            else:
+                entry["after"] = action.after
+        for path, entry in action_map.items():
+            if path not in merged:
+                merged[path] = entry
+
+    return {path: merged[path] for path in sorted(merged)}
 
 
 def _get_nested_value(data: dict[str, Any], path: str) -> Any:
@@ -1131,24 +1182,27 @@ class RepairEngine:
         repaired_proof: TieredConstraintProof,
         original_vector: DesignVector | None = None,
         repaired_vector: DesignVector | None = None,
+        *,
+        original_spec_hash: str | None = None,
+        repaired_spec_hash: str | None = None,
+        repaired_design_hash: str | None = None,
     ) -> RepairResult:
-        """Build the final repair result from accumulated actions (CP-3.4 enhanced).
+        """Build the final repair result from accumulated actions (CP-3.4/REQ-M1-011).
 
         Args:
             original_proof: Constraint proof before repair
             repaired_proof: Constraint proof after repair
             original_vector: Original design vector (CP-3.4)
             repaired_vector: Repaired design vector (CP-3.4)
+            original_spec_hash: SHA256 of canonical original spec (REQ-M1-011)
+            repaired_spec_hash: SHA256 of canonical repaired spec (REQ-M1-011)
+            repaired_design_hash: Design hash from repaired spec (REQ-M1-011)
 
         Returns:
-            RepairResult with full audit trail
+            RepairResult with full audit trail including hashes for rebuild verification
         """
-        repair_map: dict[str, dict[str, int]] = {}
-        repair_reason: list[str] = []
-
-        for action in self.actions:
-            repair_map[action.path] = {"before": action.before, "after": action.after}
-            repair_reason.append(action.reason)
+        repair_map = _build_repair_map(self.actions, original_vector, repaired_vector)
+        repair_reason = [action.reason for action in self.actions]
 
         repair_distance = _compute_repair_distance(self.actions)
 
@@ -1166,6 +1220,9 @@ class RepairEngine:
             repaired_vector=repaired_vector,
             distance_metrics=distance_metrics,
             projection_policy_order=("T0", "T1", "T2", "F1_CONTINUITY"),
+            original_spec_hash=original_spec_hash,
+            repaired_spec_hash=repaired_spec_hash,
+            repaired_design_hash=repaired_design_hash,
         )
 
 
@@ -1191,12 +1248,16 @@ def repair_spec_tiered(
         fab_limits: Dictionary of fab capability limits in nm
 
     Returns:
-        Tuple of (repaired_spec, repair_result) with CP-3.4 audit trail:
+        Tuple of (repaired_spec, repair_result) with CP-3.4/REQ-M1-011 audit trail:
         - original_vector: Design vector before repair
         - repaired_vector: Design vector after repair
         - distance_metrics: L2/Linf distances in normalized space
         - projection_policy_order: Order of repair tiers applied
+        - original_spec_hash: SHA256 of canonical original spec (REQ-M1-011)
+        - repaired_spec_hash: SHA256 of canonical repaired spec (REQ-M1-011)
+        - repaired_design_hash: Design hash for rebuild verification (REQ-M1-011)
     """
+    from ..resolve import design_hash, resolve
     from ..spec import CouponSpec
 
     # Get original proof
@@ -1207,8 +1268,13 @@ def repair_spec_tiered(
     payload = spec.model_dump(mode="json")
     original_vector = _extract_design_vector(payload)
 
-    # If already valid, return as-is with empty metrics
+    # Compute original spec hash (REQ-M1-011)
+    original_spec_hash = sha256_bytes(canonical_json_dumps(payload).encode("utf-8"))
+
+    # If already valid, return as-is with empty metrics and matching hashes
     if original_proof.passed:
+        resolved = resolve(spec)
+        spec_design_hash = design_hash(resolved)
         return spec, RepairResult(
             repair_map={},
             repair_reason=[],
@@ -1224,6 +1290,9 @@ def repair_spec_tiered(
                 normalized_sum_distance=0.0,
             ),
             projection_policy_order=("T0", "T1", "T2", "F1_CONTINUITY"),
+            original_spec_hash=original_spec_hash,
+            repaired_spec_hash=original_spec_hash,  # Same as original - no repairs
+            repaired_design_hash=spec_design_hash,
         )
 
     # Create repair engine and apply repairs in policy order
@@ -1248,11 +1317,20 @@ def repair_spec_tiered(
     repaired_spec = CouponSpec.model_validate(payload)
     repaired_proof = system.evaluate(repaired_spec, fab_limits)
 
+    # Compute repaired spec hash and design hash (REQ-M1-011)
+    repaired_payload = repaired_spec.model_dump(mode="json")
+    repaired_spec_hash = sha256_bytes(canonical_json_dumps(repaired_payload).encode("utf-8"))
+    repaired_resolved = resolve(repaired_spec)
+    repaired_design_hash = design_hash(repaired_resolved)
+
     return repaired_spec, engine.get_repair_result(
         original_proof,
         repaired_proof,
         original_vector=original_vector,
         repaired_vector=repaired_vector,
+        original_spec_hash=original_spec_hash,
+        repaired_spec_hash=repaired_spec_hash,
+        repaired_design_hash=repaired_design_hash,
     )
 
 
@@ -1530,7 +1608,7 @@ def write_repair_map(
     path: Path | str,
     repair_result: RepairResult,
 ) -> None:
-    """Write a repair_map.json file with full audit trail (CP-3.4).
+    """Write a repair_map.json file with full audit trail (CP-3.4/REQ-M1-011).
 
     The repair_map.json contains:
     - original_vector: Design vector before repair
@@ -1538,6 +1616,14 @@ def write_repair_map(
     - repair_actions: Per-constraint repair actions
     - distance_metrics: L2, Linf distances in normalized space
     - projection_policy_order: Order of repair tiers applied
+    - original_spec_hash: SHA256 hash of canonical original spec (REQ-M1-011)
+    - repaired_spec_hash: SHA256 hash of canonical repaired spec (REQ-M1-011)
+    - repaired_design_hash: Design hash from repaired spec (REQ-M1-011)
+
+    REQ-M1-011: The repair_map.json is written in canonical JSON format to ensure
+    deterministic serialization. The repaired_spec_hash and repaired_design_hash
+    enable verification that rebuilding from repaired_spec.json reproduces the
+    same design_hash and artifacts.
 
     Args:
         path: Path to write the repair_map.json file
@@ -1547,4 +1633,5 @@ def write_repair_map(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     content = repair_result.to_dict()
-    path.write_text(json.dumps(content, indent=2), encoding="utf-8")
+    # Use canonical JSON for deterministic serialization (REQ-M1-011)
+    path.write_text(canonical_json_dumps(content) + "\n", encoding="utf-8")

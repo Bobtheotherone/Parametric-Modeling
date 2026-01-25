@@ -441,6 +441,260 @@ def generate_plane_cutout_for_via(
         raise ValueError(f"Unsupported shape for via cutout: {shape}")
 
 
+class OutlineElement:
+    """Base class for board outline elements."""
+
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class OutlineLine:
+    """Straight line segment for board outline.
+
+    Attributes:
+        start: Start position in nanometers.
+        end: End position in nanometers.
+    """
+
+    start: PositionNM
+    end: PositionNM
+
+
+@dataclass(frozen=True, slots=True)
+class OutlineArc:
+    """Arc segment for board outline.
+
+    KiCad uses start/mid/end format where 'mid' is a point on the arc.
+
+    Attributes:
+        start: Start position in nanometers.
+        mid: Midpoint on the arc (not center) in nanometers.
+        end: End position in nanometers.
+    """
+
+    start: PositionNM
+    mid: PositionNM
+    end: PositionNM
+
+
+@dataclass(frozen=True, slots=True)
+class RoundedOutline:
+    """Rounded rectangle board outline.
+
+    Contains a sequence of line and arc elements that together form a
+    closed rounded rectangle on the Edge.Cuts layer.
+
+    Attributes:
+        elements: Tuple of OutlineLine and OutlineArc elements forming the outline.
+        corner_radius_nm: Corner radius used in nanometers.
+        width_nm: Total width of the rectangle in nanometers.
+        height_nm: Total height of the rectangle in nanometers.
+    """
+
+    elements: tuple[OutlineLine | OutlineArc, ...]
+    corner_radius_nm: int
+    width_nm: int
+    height_nm: int
+
+
+class OutlineFeasibilityError(ValueError):
+    """Error raised when outline parameters are not feasible."""
+
+    pass
+
+
+def validate_rounded_outline_feasibility(
+    width_nm: int,
+    height_nm: int,
+    corner_radius_nm: int,
+) -> None:
+    """Validate that rounded outline parameters are feasible.
+
+    Feasibility checks:
+    1. Width and height must be positive.
+    2. Corner radius must be non-negative.
+    3. Corner radius must be at most half of the smaller dimension.
+
+    Args:
+        width_nm: Rectangle width in nanometers.
+        height_nm: Rectangle height in nanometers.
+        corner_radius_nm: Corner radius in nanometers.
+
+    Raises:
+        OutlineFeasibilityError: If parameters are not feasible.
+    """
+    if width_nm <= 0:
+        raise OutlineFeasibilityError(f"Width must be positive, got {width_nm} nm")
+    if height_nm <= 0:
+        raise OutlineFeasibilityError(f"Height must be positive, got {height_nm} nm")
+    if corner_radius_nm < 0:
+        raise OutlineFeasibilityError(
+            f"Corner radius must be non-negative, got {corner_radius_nm} nm"
+        )
+    max_radius = min(width_nm, height_nm) // 2
+    if corner_radius_nm > max_radius:
+        raise OutlineFeasibilityError(
+            f"Corner radius ({corner_radius_nm} nm) exceeds maximum "
+            f"({max_radius} nm = min({width_nm}, {height_nm}) / 2)"
+        )
+
+
+def generate_rounded_outline(
+    x_left_nm: int,
+    y_bottom_nm: int,
+    width_nm: int,
+    height_nm: int,
+    corner_radius_nm: int,
+) -> RoundedOutline:
+    """Generate a rounded rectangle outline for Edge.Cuts layer.
+
+    Creates line and arc elements that form a closed rounded rectangle.
+    The outline starts at the top-left corner (after the corner arc) and
+    proceeds clockwise.
+
+    The arc midpoints are computed to be exactly on the arc at 45 degrees
+    from each endpoint, ensuring deterministic integer-nm coordinates.
+
+    Args:
+        x_left_nm: X coordinate of left edge in nanometers.
+        y_bottom_nm: Y coordinate of bottom edge in nanometers.
+        width_nm: Total width in nanometers.
+        height_nm: Total height in nanometers.
+        corner_radius_nm: Corner radius in nanometers.
+
+    Returns:
+        RoundedOutline with line and arc elements.
+
+    Raises:
+        OutlineFeasibilityError: If parameters are not feasible.
+    """
+    # Validate feasibility
+    validate_rounded_outline_feasibility(width_nm, height_nm, corner_radius_nm)
+
+    # If no corner radius, return simple rectangle with 4 lines
+    if corner_radius_nm == 0:
+        x_right_nm = x_left_nm + width_nm
+        y_top_nm = y_bottom_nm + height_nm
+
+        return RoundedOutline(
+            elements=(
+                OutlineLine(
+                    start=PositionNM(x_left_nm, y_top_nm),
+                    end=PositionNM(x_right_nm, y_top_nm),
+                ),
+                OutlineLine(
+                    start=PositionNM(x_right_nm, y_top_nm),
+                    end=PositionNM(x_right_nm, y_bottom_nm),
+                ),
+                OutlineLine(
+                    start=PositionNM(x_right_nm, y_bottom_nm),
+                    end=PositionNM(x_left_nm, y_bottom_nm),
+                ),
+                OutlineLine(
+                    start=PositionNM(x_left_nm, y_bottom_nm),
+                    end=PositionNM(x_left_nm, y_top_nm),
+                ),
+            ),
+            corner_radius_nm=0,
+            width_nm=width_nm,
+            height_nm=height_nm,
+        )
+
+    # Compute corner positions
+    r = corner_radius_nm
+    x_right_nm = x_left_nm + width_nm
+    y_top_nm = y_bottom_nm + height_nm
+
+    # Corner centers
+    tl_center = PositionNM(x_left_nm + r, y_top_nm - r)
+    tr_center = PositionNM(x_right_nm - r, y_top_nm - r)
+    br_center = PositionNM(x_right_nm - r, y_bottom_nm + r)
+    bl_center = PositionNM(x_left_nm + r, y_bottom_nm + r)
+
+    # Compute arc midpoint offset (45 degrees from center)
+    # The midpoint should be on the arc at the midpoint angle
+    # Using integer math: cos(45°) ≈ sin(45°) ≈ 0.7071
+    # We use integer approximation: r * 707 // 1000
+    mid_offset = r * 707 // 1000
+
+    elements: list[OutlineLine | OutlineArc] = []
+
+    # Top edge (from top-left corner end to top-right corner start)
+    elements.append(
+        OutlineLine(
+            start=PositionNM(x_left_nm + r, y_top_nm),
+            end=PositionNM(x_right_nm - r, y_top_nm),
+        )
+    )
+
+    # Top-right corner arc (from top to right)
+    elements.append(
+        OutlineArc(
+            start=PositionNM(x_right_nm - r, y_top_nm),
+            mid=PositionNM(tr_center.x + mid_offset, tr_center.y + mid_offset),
+            end=PositionNM(x_right_nm, y_top_nm - r),
+        )
+    )
+
+    # Right edge
+    elements.append(
+        OutlineLine(
+            start=PositionNM(x_right_nm, y_top_nm - r),
+            end=PositionNM(x_right_nm, y_bottom_nm + r),
+        )
+    )
+
+    # Bottom-right corner arc (from right to bottom)
+    elements.append(
+        OutlineArc(
+            start=PositionNM(x_right_nm, y_bottom_nm + r),
+            mid=PositionNM(br_center.x + mid_offset, br_center.y - mid_offset),
+            end=PositionNM(x_right_nm - r, y_bottom_nm),
+        )
+    )
+
+    # Bottom edge
+    elements.append(
+        OutlineLine(
+            start=PositionNM(x_right_nm - r, y_bottom_nm),
+            end=PositionNM(x_left_nm + r, y_bottom_nm),
+        )
+    )
+
+    # Bottom-left corner arc (from bottom to left)
+    elements.append(
+        OutlineArc(
+            start=PositionNM(x_left_nm + r, y_bottom_nm),
+            mid=PositionNM(bl_center.x - mid_offset, bl_center.y - mid_offset),
+            end=PositionNM(x_left_nm, y_bottom_nm + r),
+        )
+    )
+
+    # Left edge
+    elements.append(
+        OutlineLine(
+            start=PositionNM(x_left_nm, y_bottom_nm + r),
+            end=PositionNM(x_left_nm, y_top_nm - r),
+        )
+    )
+
+    # Top-left corner arc (from left to top)
+    elements.append(
+        OutlineArc(
+            start=PositionNM(x_left_nm, y_top_nm - r),
+            mid=PositionNM(tl_center.x - mid_offset, tl_center.y + mid_offset),
+            end=PositionNM(x_left_nm + r, y_top_nm),
+        )
+    )
+
+    return RoundedOutline(
+        elements=tuple(elements),
+        corner_radius_nm=corner_radius_nm,
+        width_nm=width_nm,
+        height_nm=height_nm,
+    )
+
+
 def generate_multivia_antipad(
     via_centers: tuple[PositionNM, ...],
     via_diameter_nm: int,

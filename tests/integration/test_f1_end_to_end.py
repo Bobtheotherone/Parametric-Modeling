@@ -377,8 +377,8 @@ class TestF1BoardWriter:
     def test_f1_board_has_two_signal_track_segments(self, f1_spec: CouponSpec) -> None:
         """F1 board should have exactly two signal track segments (left and right).
 
-        The board also contains ground ring segments for return via connectivity,
-        but these are on net 2 (GND). Signal traces are on net 1 (SIG).
+        The board also contains ground segments for return via connectivity and
+        CPWG rails on net 2 (GND). Signal traces are on net 1 (SIG).
         """
         resolved = resolve(f1_spec)
         writer = BoardWriter(f1_spec, resolved)
@@ -397,9 +397,9 @@ class TestF1BoardWriter:
         signal_segments = [s for s in all_segments if get_net(s) == 1]
         assert len(signal_segments) == 2, f"Expected 2 signal segments, got {len(signal_segments)}"
 
-        # Ground ring segments should also be present (4 vias × 2 layers = 8 segments)
+        # Ground segments include return via ring (4 vias × 2 layers = 8) + CPWG rails (4)
         gnd_segments = [s for s in all_segments if get_net(s) == 2]
-        assert len(gnd_segments) == 8, f"Expected 8 ground ring segments, got {len(gnd_segments)}"
+        assert len(gnd_segments) == 12, f"Expected 12 ground segments, got {len(gnd_segments)}"
 
     def test_f1_board_has_signal_via(self, f1_spec: CouponSpec) -> None:
         """F1 board should have a signal via at the discontinuity."""
@@ -752,9 +752,10 @@ class TestF1EndToEndPipeline:
         # F1 boards have:
         # - 2 signal trace segments (net 1: left on F.Cu, right on B.Cu)
         # - 8 ground ring segments (net 2: 4 vias × 2 layers for return via connectivity)
+        # - 4 CPWG ground rail segments (net 2)
         signal_segments = _get_signal_segments(parsed)
         assert len(signal_segments) == 2, "F1 should have exactly 2 signal trace segments"
-        assert len(all_segments) == 10, "F1 should have 10 total segments (2 signal + 8 ground ring)"
+        assert len(all_segments) == 14, "F1 should have 14 total segments (2 signal + 12 ground)"
         assert len(footprints) == 2, "F1 should have exactly 2 footprints"
         assert len(vias) == 5, "F1 should have 5 vias (1 signal + 4 return)"
         assert len(zones) >= 2, "F1 should have antipads/cutouts as zones"

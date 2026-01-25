@@ -60,11 +60,13 @@ class ConstraintEngineResult:
     """Result from ConstraintEngine.validate_or_repair().
 
     Attributes:
+        spec: The (possibly repaired) CouponSpec used for resolution
         resolved: The ResolvedDesign (original or repaired)
         proof: The constraint proof with per-constraint evaluations
         repair_result: Repair details if REPAIR mode was used and changes were made
     """
 
+    spec: CouponSpec
     resolved: ResolvedDesign
     proof: TieredConstraintProof
     repair_result: RepairResult | None = None
@@ -206,6 +208,7 @@ class ConstraintEngine:
         if proof.passed:
             # All constraints pass - return as-is
             return ConstraintEngineResult(
+                spec=spec,
                 resolved=resolved,
                 proof=proof,
                 repair_result=None,
@@ -228,6 +231,7 @@ class ConstraintEngine:
         repaired_proof = self._system.evaluate(repaired_spec, self.fab_limits, repaired_resolved)
 
         return ConstraintEngineResult(
+            spec=repaired_spec,
             resolved=repaired_resolved,
             proof=repaired_proof,
             repair_result=repair_result,

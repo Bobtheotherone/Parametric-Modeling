@@ -26,11 +26,12 @@ Example
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Core API functions (REQ-M1-022)
-from formula_foundry.coupongen.api import (
+from formula_foundry.api import (
     BuildResult,
     DrcReport,
     KiCadProjectPaths,
@@ -61,8 +62,15 @@ from formula_foundry.coupongen.resolve import (
 from formula_foundry.coupongen.spec import CouponSpec
 
 if TYPE_CHECKING:
+    from formula_foundry import commands as commands
     from formula_foundry.coupongen.kicad.cli import KicadCliMode
     from formula_foundry.coupongen.spec import KicadToolchain
+
+def __getattr__(name: str) -> Any:
+    if name == "commands":
+        return import_module("formula_foundry.commands")
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Core API functions (REQ-M1-022 - orchestration by M6-M8)
@@ -86,4 +94,6 @@ __all__ = [
     "ConstraintResult",
     "ConstraintViolation",
     "RepairInfo",
+    # Command helpers (REQ-M1-018)
+    "commands",
 ]

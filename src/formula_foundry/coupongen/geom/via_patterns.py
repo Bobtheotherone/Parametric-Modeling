@@ -133,6 +133,52 @@ class ViaTransitionResult:
     return_vias: tuple[Via, ...]
 
 
+def segment_length_nm(dx: int, dy: int) -> int:
+    """Return the integer segment length in nm using deterministic math."""
+    if dx == 0 and dy == 0:
+        return 0
+    if dy == 0:
+        return abs(dx)
+    if dx == 0:
+        return abs(dy)
+    return int(math.isqrt(dx * dx + dy * dy))
+
+
+def scale_component_nm(delta: int, distance_nm: int, length_nm: int) -> int:
+    """Scale a delta by distance/length with deterministic truncation toward zero."""
+    if length_nm == 0:
+        return 0
+    if delta >= 0:
+        return (delta * distance_nm) // length_nm
+    return -((-delta * distance_nm) // length_nm)
+
+
+def symmetric_offsets_nm(
+    length_nm: int,
+    pitch_nm: int,
+    *,
+    end_clearance_nm: int = 0,
+) -> tuple[int, ...]:
+    """Compute symmetric offsets along a segment with optional end clearance."""
+    if length_nm <= 0:
+        return ()
+    if pitch_nm <= 0:
+        raise ValueError("pitch_nm must be positive")
+    if end_clearance_nm < 0:
+        raise ValueError("end_clearance_nm must be non-negative")
+
+    available_length = length_nm - 2 * end_clearance_nm
+    if available_length < 0:
+        return ()
+
+    count = max(1, available_length // pitch_nm + 1)
+    span = (count - 1) * pitch_nm
+    margin = (available_length - span) // 2
+    start = end_clearance_nm + margin
+
+    return tuple(start + i * pitch_nm for i in range(count))
+
+
 def generate_signal_via(
     center: PositionNM,
     spec: SignalViaSpec,

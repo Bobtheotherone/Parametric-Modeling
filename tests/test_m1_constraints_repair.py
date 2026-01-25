@@ -941,3 +941,187 @@ class TestWriteRepairMap:
 
             # Verify projection_policy_order
             assert content["projection_policy_order"] == ["T0", "T1", "T2", "F1_CONTINUITY"]
+
+
+class TestREQM1011RebuildDeterminism:
+    """Tests for REQ-M1-011: REPAIR mode rebuild determinism.
+
+    REQ-M1-011: REPAIR mode MUST emit a serialized `repair_map` plus a
+    deterministic `repaired_spec` (or deterministic patch set) such that
+    rebuilding from the repaired spec reproduces the same `design_hash`
+    and artifacts.
+    """
+
+    def test_repair_result_includes_spec_hashes(self) -> None:
+        """RepairResult should include original and repaired spec hashes."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # REQ-M1-011: Spec hashes should be present
+        assert repair_result.original_spec_hash is not None
+        assert repair_result.repaired_spec_hash is not None
+        assert repair_result.repaired_design_hash is not None
+
+        # Hashes should be valid 64-character hex strings
+        assert len(repair_result.original_spec_hash) == 64
+        assert len(repair_result.repaired_spec_hash) == 64
+        assert len(repair_result.repaired_design_hash) == 64
+
+    def test_repair_result_hashes_differ_when_repaired(self) -> None:
+        """Original and repaired spec hashes should differ when repairs are made."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Hashes should differ because the spec was repaired
+        assert repair_result.original_spec_hash != repair_result.repaired_spec_hash
+
+    def test_repair_result_hashes_equal_when_valid(self) -> None:
+        """Original and repaired spec hashes should be equal when no repairs are needed."""
+        spec = CouponSpec.model_validate(_example_spec_data())
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        # Hashes should be equal because no repairs were made
+        assert repair_result.original_spec_hash == repair_result.repaired_spec_hash
+        assert repair_result.repair_map == {}
+
+    def test_rebuild_from_repaired_spec_produces_same_design_hash(self) -> None:
+        """Rebuilding from repaired_spec should produce the same design_hash.
+
+        This is the core REQ-M1-011 guarantee: the repaired_design_hash in
+        repair_map.json should match the design_hash computed when the
+        repaired spec is resolved again.
+        """
+        from formula_foundry.coupongen.resolve import design_hash, resolve
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        data["transmission_line"]["gap_nm"] = 50_000  # Another violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Re-resolve the repaired spec independently
+        re_resolved = resolve(repaired_spec)
+        re_design_hash = design_hash(re_resolved)
+
+        # REQ-M1-011: The design hash should match
+        assert re_design_hash == repair_result.repaired_design_hash
+
+    def test_rebuild_from_serialized_repaired_spec_produces_same_design_hash(self) -> None:
+        """Serializing and deserializing repaired_spec should preserve design_hash.
+
+        This tests the full round-trip: repair -> serialize -> deserialize -> resolve
+        should produce the same design_hash as the original repair operation.
+        """
+        from formula_foundry.coupongen.resolve import design_hash, resolve
+        from formula_foundry.substrate import canonical_json_dumps
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000  # Violation
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        repaired_spec, repair_result = repair_spec_tiered(spec, limits)
+
+        # Serialize and deserialize the repaired spec
+        repaired_payload = repaired_spec.model_dump(mode="json")
+        serialized = canonical_json_dumps(repaired_payload)
+        deserialized_payload = json.loads(serialized)
+        deserialized_spec = CouponSpec.model_validate(deserialized_payload)
+
+        # Resolve the deserialized spec
+        deserialized_resolved = resolve(deserialized_spec)
+        deserialized_design_hash = design_hash(deserialized_resolved)
+
+        # REQ-M1-011: The design hash should still match
+        assert deserialized_design_hash == repair_result.repaired_design_hash
+
+    def test_repair_map_json_includes_hashes(self) -> None:
+        """repair_map.json should include spec and design hashes for verification."""
+        from formula_foundry.coupongen.constraints.repair import write_repair_map
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "repair_map.json"
+            write_repair_map(output_path, repair_result)
+
+            content = json.loads(output_path.read_text())
+
+            # REQ-M1-011: Hashes should be in the repair_map.json
+            assert "original_spec_hash" in content
+            assert "repaired_spec_hash" in content
+            assert "repaired_design_hash" in content
+
+            # Verify they match the result
+            assert content["original_spec_hash"] == repair_result.original_spec_hash
+            assert content["repaired_spec_hash"] == repair_result.repaired_spec_hash
+            assert content["repaired_design_hash"] == repair_result.repaired_design_hash
+
+    def test_repair_map_json_is_deterministic(self) -> None:
+        """repair_map.json should be deterministically serialized."""
+        from formula_foundry.coupongen.constraints.repair import write_repair_map
+
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path1 = Path(tmpdir) / "repair_map1.json"
+            path2 = Path(tmpdir) / "repair_map2.json"
+
+            write_repair_map(path1, repair_result)
+            write_repair_map(path2, repair_result)
+
+            # The files should be byte-identical (deterministic serialization)
+            assert path1.read_bytes() == path2.read_bytes()
+
+    def test_multiple_repairs_produce_consistent_hashes(self) -> None:
+        """Running repair_spec_tiered multiple times should produce consistent hashes."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        # Run repair twice
+        _, result1 = repair_spec_tiered(spec, limits)
+        _, result2 = repair_spec_tiered(spec, limits)
+
+        # All hashes should match
+        assert result1.original_spec_hash == result2.original_spec_hash
+        assert result1.repaired_spec_hash == result2.repaired_spec_hash
+        assert result1.repaired_design_hash == result2.repaired_design_hash
+
+    def test_repair_to_dict_includes_hashes(self) -> None:
+        """to_dict() should include REQ-M1-011 hashes."""
+        data = _example_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        _, repair_result = repair_spec_tiered(spec, limits)
+        result_dict = repair_result.to_dict()
+
+        # REQ-M1-011: New hash fields should be present
+        assert "original_spec_hash" in result_dict
+        assert "repaired_spec_hash" in result_dict
+        assert "repaired_design_hash" in result_dict

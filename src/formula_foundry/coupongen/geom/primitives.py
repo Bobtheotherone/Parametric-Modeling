@@ -482,6 +482,13 @@ def create_coordinate_frame(
     )
 
 
+def half_width_nm(width_nm: int) -> int:
+    """Return half-width rounded up to preserve minimum clearance rules."""
+    if width_nm <= 0:
+        raise ValueError(f"Width must be positive, got {width_nm}")
+    return (width_nm + 1) // 2
+
+
 def transform_primitives_to_kicad(
     primitives: Sequence[TrackSegment | Via | FootprintInstance | Text],
     frame: CoordinateFrame,

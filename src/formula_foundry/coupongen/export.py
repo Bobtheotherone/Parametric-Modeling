@@ -310,8 +310,11 @@ class ExportPipeline:
             )
 
         # Stage 3: Generate KiCad board
+        # Pass design_hash to enable silkscreen annotations (REQ-M1-010)
         self._write_validation_outputs(evaluation, output_dir)
-        board_path = self._backend.write_board(evaluation.spec, resolved, output_dir)
+        board_path = self._backend.write_board(
+            evaluation.spec, resolved, output_dir, design_hash=cache_key.design_hash
+        )
 
         # Stage 4: Run DRC
         runner = self._get_runner(evaluation.spec.toolchain.kicad)

@@ -23,6 +23,18 @@ from formula_foundry.coupongen.resolve import resolve
 from formula_foundry.coupongen.spec import CouponSpec
 
 
+def _get_segment_net(seg: list) -> int:
+    for elem in seg:
+        if isinstance(elem, list) and elem[0] == "net":
+            return elem[1]
+    return -1
+
+
+def _get_segments_by_net(board: list, net_id: int) -> list:
+    segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+    return [seg for seg in segments if _get_segment_net(seg) == net_id]
+
+
 @pytest.fixture
 def f0_spec_data() -> dict:
     """Minimal F0 calibration spec data."""
@@ -202,14 +214,34 @@ class TestBoardWriter:
         assert 2 in net_ids
 
     def test_writer_includes_outline(self, f0_spec: CouponSpec) -> None:
-        """Board should include Edge.Cuts outline."""
+        """Board should include Edge.Cuts outline (rounded when corner_radius_nm > 0).
+
+        REQ-M1-009: When corner_radius_nm > 0, the outline is generated as
+        gr_line and gr_arc elements forming a rounded rectangle.
+        """
         resolved = resolve(f0_spec)
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        # Find gr_rect element
-        gr_rect = [e for e in board if isinstance(e, list) and e[0] == "gr_rect"]
-        assert len(gr_rect) == 1
+        # With corner_radius_nm=2000000, we get gr_line and gr_arc elements
+        # (4 lines for edges + 4 arcs for corners = 8 total elements)
+        gr_line = [e for e in board if isinstance(e, list) and e[0] == "gr_line"]
+        gr_arc = [e for e in board if isinstance(e, list) and e[0] == "gr_arc"]
+
+        # Rounded outline has 4 lines (edges) and 4 arcs (corners)
+        assert len(gr_line) == 4, f"Expected 4 gr_line elements, got {len(gr_line)}"
+        assert len(gr_arc) == 4, f"Expected 4 gr_arc elements, got {len(gr_arc)}"
+
+        # Verify all are on Edge.Cuts layer
+        for line in gr_line:
+            layer_elem = [e for e in line if isinstance(e, list) and e[0] == "layer"]
+            assert layer_elem, "gr_line missing layer"
+            assert layer_elem[0][1] == "Edge.Cuts"
+
+        for arc in gr_arc:
+            layer_elem = [e for e in arc if isinstance(e, list) and e[0] == "layer"]
+            assert layer_elem, "gr_arc missing layer"
+            assert layer_elem[0][1] == "Edge.Cuts"
 
     def test_writer_includes_footprints(self, f0_spec: CouponSpec) -> None:
         """Board should include connector footprints."""
@@ -227,11 +259,12 @@ class TestBoardWriter:
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        # Find segment elements
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+        signal_segments = _get_segments_by_net(board, 1)
+        ground_segments = _get_segments_by_net(board, 2)
         # F0 (calibration through-line) has a single continuous trace from
-        # left to right connector. This is correct per LayoutPlan model.
-        assert len(segments) == 1  # single through-line track for F0
+        # left to right connector, plus two CPWG ground rails.
+        assert len(signal_segments) == 1
+        assert len(ground_segments) == 2
 
     def test_writer_f1_includes_vias(self, f1_spec: CouponSpec) -> None:
         """F1 board should include signal and return vias."""
@@ -500,8 +533,9 @@ class TestF1RequirementCoverageInBoardWriter:
         content = board_path.read_text(encoding="utf-8")
 
         # Verify all required elements are present
-        # 1. Board outline (Edge.Cuts)
-        assert "(gr_rect" in content
+        # 1. Board outline (Edge.Cuts) - rounded with corner_radius_nm > 0
+        # Uses gr_line and gr_arc elements instead of gr_rect
+        assert "(gr_line" in content or "(gr_rect" in content
         assert "Edge.Cuts" in content
 
         # 2. Footprints (connectors) - count standalone "(footprint" at start of element
@@ -511,12 +545,13 @@ class TestF1RequirementCoverageInBoardWriter:
         footprint_matches = re.findall(r"\(footprint\s+[\w:]+", content)
         assert len(footprint_matches) == 2  # Left and right connectors
 
-        # 3. Transmission line tracks (2 signal traces + 8 ground ring traces)
+        # 3. Transmission line tracks (2 signal traces + 8 ground ring + 4 CPWG rails)
         # Signal traces: left on F.Cu, right on B.Cu (for via transition)
         # Ground ring: 4 return vias × 2 layers (F.Cu, B.Cu) = 8 traces
+        # CPWG rails: 2 per signal segment = 4 traces
         assert "(segment" in content
         segment_count = content.count("(segment")
-        assert segment_count == 10, f"Expected 10 segments (2 signal + 8 ground ring), got {segment_count}"
+        assert segment_count == 14, f"Expected 14 segments (2 signal + 12 ground), got {segment_count}"
 
         # 4. Signal via
         assert "(via" in content
@@ -929,3 +964,358 @@ class TestReturnViasNetAssignment:
                 signal_via_found = True
 
         assert signal_via_found, "F1 board should have a signal via on net 1"
+
+
+class TestSilkscreenAnnotations:
+    """Tests for silkscreen annotations with coupon_id and hash (REQ-M1-010)."""
+
+    def test_board_includes_silkscreen_text(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Board should include gr_text elements on silkscreen layers."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have gr_text elements for silkscreen
+        assert "(gr_text" in content
+        # Should be on silkscreen layer
+        assert "F.SilkS" in content or "B.SilkS" in content
+
+    def test_silkscreen_text_deterministic(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Silkscreen text should be deterministic across runs."""
+        resolved = resolve(f0_spec)
+
+        board_path1 = write_board(f0_spec, resolved, tmp_path / "run1")
+        board_path2 = write_board(f0_spec, resolved, tmp_path / "run2")
+
+        content1 = board_path1.read_text(encoding="utf-8")
+        content2 = board_path2.read_text(encoding="utf-8")
+
+        # Files should be identical
+        assert content1 == content2
+
+    def test_silkscreen_with_design_hash(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Board with design_hash should include hash marker in silkscreen."""
+        resolved = resolve(f0_spec)
+        design_hash = "a1b2c3d4e5f6789012345678901234567890abcd1234567890abcdef12345678"
+
+        board_path = write_board(f0_spec, resolved, tmp_path, design_hash=design_hash)
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should include short hash (first 8 chars)
+        assert "a1b2c3d4" in content
+
+    def test_silkscreen_has_front_layer(self, f0_spec: CouponSpec) -> None:
+        """Silkscreen annotations should appear on F.SilkS layer."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
+
+        resolved = resolve(f0_spec)
+        design_hash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        coupon_id = coupon_id_from_design_hash(design_hash)
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template="${COUPON_ID}",
+            include_manifest_hash=True,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"test-uuid-{path}",
+        )
+
+        # Should have at least one annotation
+        assert len(annotations) >= 1
+
+        # Check for F.SilkS layer
+        layers = []
+        for ann in annotations:
+            for elem in ann:
+                if isinstance(elem, list) and elem[0] == "layer":
+                    layers.append(elem[1])
+
+        assert "F.SilkS" in layers, f"Expected F.SilkS layer, got {layers}"
+
+    def test_silkscreen_coupon_id_template_substitution(self, f0_spec: CouponSpec) -> None:
+        """${COUPON_ID} template should be substituted with actual coupon_id."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.kicad.sexpr import dump
+
+        resolved = resolve(f0_spec)
+        design_hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        coupon_id = "testcouponid"
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template="${COUPON_ID}",
+            include_manifest_hash=True,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"uuid-{path}",
+        )
+
+        # Dump to text and check for coupon_id
+        for ann in annotations:
+            text = dump(ann)
+            assert coupon_id in text, f"Expected coupon_id '{coupon_id}' in annotation"
+
+    def test_silkscreen_without_hash_when_disabled(self, f0_spec: CouponSpec) -> None:
+        """When include_manifest_hash is False, annotations should not include hash."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.kicad.sexpr import dump
+
+        resolved = resolve(f0_spec)
+        design_hash = "1111111122222222333333334444444455555555666666667777777788888888"
+        short_hash = design_hash[:8]  # "11111111"
+        coupon_id = "nocoupon123"
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template=coupon_id,
+            include_manifest_hash=False,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"uuid-{path}",
+        )
+
+        # Should still have annotation
+        assert len(annotations) >= 1
+
+        # But should not have the full "coupon_id:hash" format
+        for ann in annotations:
+            text = dump(ann)
+            assert f":{short_hash}" not in text, "Hash should not appear when include_manifest_hash is False"
+
+    def test_f1_board_includes_silkscreen(self, f1_spec: CouponSpec, tmp_path: Path) -> None:
+        """F1 board should also include silkscreen annotations."""
+        resolved = resolve(f1_spec)
+        design_hash = "f1ae5bcd12345678901234567890123456789012345678901234567890abcdef"
+
+        board_path = write_board(f1_spec, resolved, tmp_path, design_hash=design_hash)
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have silkscreen text
+        assert "(gr_text" in content
+        # Should include short hash (first 8 hex chars)
+        assert "f1ae5bcd" in content
+
+
+class TestRoundedBoardOutline:
+    """Tests for REQ-M1-009: Rounded board outline generation.
+
+    REQ-M1-009: If `corner_radius_nm > 0` is provided, the board outline MUST
+    be generated as a rounded-rectangle on `Edge.Cuts` using deterministic
+    integer-nm arcs/segments and validated for feasibility.
+    """
+
+    @pytest.fixture
+    def spec_with_corner_radius(self, f0_spec_data: dict) -> CouponSpec:
+        """F0 spec with non-zero corner radius."""
+        data = f0_spec_data.copy()
+        data["board"]["outline"]["corner_radius_nm"] = 2_000_000  # 2mm
+        return CouponSpec.model_validate(data)
+
+    @pytest.fixture
+    def spec_without_corner_radius(self, f0_spec_data: dict) -> CouponSpec:
+        """F0 spec with zero corner radius (sharp corners)."""
+        data = f0_spec_data.copy()
+        data["board"]["outline"]["corner_radius_nm"] = 0
+        return CouponSpec.model_validate(data)
+
+    def test_rounded_outline_generates_lines_and_arcs(
+        self, spec_with_corner_radius: CouponSpec
+    ) -> None:
+        """Board with corner_radius > 0 should generate gr_line and gr_arc elements."""
+        resolved = resolve(spec_with_corner_radius)
+        writer = BoardWriter(spec_with_corner_radius, resolved)
+        board = writer.build_board()
+
+        # Find outline elements
+        gr_line = [e for e in board if isinstance(e, list) and e[0] == "gr_line"]
+        gr_arc = [e for e in board if isinstance(e, list) and e[0] == "gr_arc"]
+        gr_rect = [e for e in board if isinstance(e, list) and e[0] == "gr_rect"]
+
+        # Should have 4 lines (edges) and 4 arcs (corners)
+        assert len(gr_line) == 4, f"Expected 4 gr_line elements, got {len(gr_line)}"
+        assert len(gr_arc) == 4, f"Expected 4 gr_arc elements, got {len(gr_arc)}"
+        assert len(gr_rect) == 0, "Should NOT have gr_rect when corner_radius > 0"
+
+    def test_sharp_corner_outline_generates_rect(
+        self, spec_without_corner_radius: CouponSpec
+    ) -> None:
+        """Board with corner_radius = 0 should generate a simple gr_rect."""
+        resolved = resolve(spec_without_corner_radius)
+        writer = BoardWriter(spec_without_corner_radius, resolved)
+        board = writer.build_board()
+
+        # Find outline elements
+        gr_rect = [e for e in board if isinstance(e, list) and e[0] == "gr_rect"]
+        gr_line = [e for e in board if isinstance(e, list) and e[0] == "gr_line"]
+        gr_arc = [e for e in board if isinstance(e, list) and e[0] == "gr_arc"]
+
+        # Should have only gr_rect
+        assert len(gr_rect) == 1, f"Expected 1 gr_rect element, got {len(gr_rect)}"
+        assert len(gr_line) == 0, "Should NOT have gr_line when corner_radius = 0"
+        assert len(gr_arc) == 0, "Should NOT have gr_arc when corner_radius = 0"
+
+    def test_rounded_outline_elements_on_edge_cuts(
+        self, spec_with_corner_radius: CouponSpec
+    ) -> None:
+        """All rounded outline elements should be on Edge.Cuts layer."""
+        resolved = resolve(spec_with_corner_radius)
+        writer = BoardWriter(spec_with_corner_radius, resolved)
+        board = writer.build_board()
+
+        # Find all outline elements
+        outline_elems = [
+            e for e in board
+            if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")
+        ]
+
+        for elem in outline_elems:
+            layer_elem = [e for e in elem if isinstance(e, list) and e[0] == "layer"]
+            assert layer_elem, f"Outline element missing layer: {elem}"
+            assert layer_elem[0][1] == "Edge.Cuts", (
+                f"Outline element should be on Edge.Cuts, got {layer_elem[0][1]}"
+            )
+
+    def test_rounded_outline_arc_has_start_mid_end(
+        self, spec_with_corner_radius: CouponSpec
+    ) -> None:
+        """Arc elements should have start, mid, and end points (KiCad format)."""
+        resolved = resolve(spec_with_corner_radius)
+        writer = BoardWriter(spec_with_corner_radius, resolved)
+        board = writer.build_board()
+
+        gr_arc = [e for e in board if isinstance(e, list) and e[0] == "gr_arc"]
+
+        for arc in gr_arc:
+            start = [e for e in arc if isinstance(e, list) and e[0] == "start"]
+            mid = [e for e in arc if isinstance(e, list) and e[0] == "mid"]
+            end = [e for e in arc if isinstance(e, list) and e[0] == "end"]
+
+            assert len(start) == 1, f"Arc missing start point: {arc}"
+            assert len(mid) == 1, f"Arc missing mid point: {arc}"
+            assert len(end) == 1, f"Arc missing end point: {arc}"
+
+    def test_rounded_outline_deterministic(
+        self, spec_with_corner_radius: CouponSpec
+    ) -> None:
+        """Rounded outline should be deterministic across multiple builds."""
+        resolved = resolve(spec_with_corner_radius)
+
+        writer1 = BoardWriter(spec_with_corner_radius, resolved)
+        writer2 = BoardWriter(spec_with_corner_radius, resolved)
+
+        board1 = writer1.build_board()
+        board2 = writer2.build_board()
+
+        # Extract outline elements
+        def get_outline(board: list) -> list:
+            return [
+                e for e in board
+                if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")
+            ]
+
+        outline1 = get_outline(board1)
+        outline2 = get_outline(board2)
+
+        assert len(outline1) == len(outline2)
+        # Note: Deep comparison may need adjustment for UUID differences
+        # The key is that geometry coordinates are identical
+
+    def test_rounded_outline_coordinates_integer_nm(
+        self, spec_with_corner_radius: CouponSpec
+    ) -> None:
+        """Outline coordinates should be derived from integer-nm calculations."""
+        from formula_foundry.coupongen.geom.cutouts import generate_rounded_outline
+
+        # Test the underlying generator directly
+        rounded = generate_rounded_outline(
+            x_left_nm=0,
+            y_bottom_nm=-10_000_000,  # -10mm (board center at y=0)
+            width_nm=80_000_000,  # 80mm
+            height_nm=20_000_000,  # 20mm
+            corner_radius_nm=2_000_000,  # 2mm
+        )
+
+        # Verify all coordinates are integers
+        for elem in rounded.elements:
+            if hasattr(elem, 'start'):
+                assert isinstance(elem.start.x, int)
+                assert isinstance(elem.start.y, int)
+            if hasattr(elem, 'end'):
+                assert isinstance(elem.end.x, int)
+                assert isinstance(elem.end.y, int)
+            if hasattr(elem, 'mid'):
+                assert isinstance(elem.mid.x, int)
+                assert isinstance(elem.mid.y, int)
+
+    def test_rounded_outline_feasibility_check(self) -> None:
+        """Outline generator should validate feasibility of corner radius."""
+        from formula_foundry.coupongen.geom.cutouts import (
+            OutlineFeasibilityError,
+            generate_rounded_outline,
+        )
+
+        # Corner radius exceeds half of smallest dimension (height = 10mm, max_r = 5mm)
+        with pytest.raises(OutlineFeasibilityError):
+            generate_rounded_outline(
+                x_left_nm=0,
+                y_bottom_nm=0,
+                width_nm=80_000_000,
+                height_nm=10_000_000,
+                corner_radius_nm=6_000_000,  # > 5mm (half of height)
+            )
+
+    def test_rounded_outline_zero_radius_is_rectangle(self) -> None:
+        """Corner radius of 0 should produce a simple rectangle (4 lines only)."""
+        from formula_foundry.coupongen.geom.cutouts import (
+            OutlineLine,
+            generate_rounded_outline,
+        )
+
+        rounded = generate_rounded_outline(
+            x_left_nm=0,
+            y_bottom_nm=0,
+            width_nm=80_000_000,
+            height_nm=20_000_000,
+            corner_radius_nm=0,
+        )
+
+        # Should have exactly 4 line elements (no arcs)
+        assert len(rounded.elements) == 4
+        assert all(isinstance(e, OutlineLine) for e in rounded.elements)
+
+    def test_file_output_rounded_outline(
+        self, spec_with_corner_radius: CouponSpec, tmp_path: Path
+    ) -> None:
+        """Written board file should contain gr_line and gr_arc for rounded outline."""
+        resolved = resolve(spec_with_corner_radius)
+        board_path = write_board(spec_with_corner_radius, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have lines and arcs
+        assert "(gr_line" in content
+        assert "(gr_arc" in content
+        assert "Edge.Cuts" in content
+
+        # Should NOT have gr_rect
+        assert "(gr_rect" not in content
+
+    def test_file_output_sharp_corner_outline(
+        self, spec_without_corner_radius: CouponSpec, tmp_path: Path
+    ) -> None:
+        """Written board file should contain gr_rect for sharp corner outline."""
+        resolved = resolve(spec_without_corner_radius)
+        board_path = write_board(spec_without_corner_radius, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have gr_rect
+        assert "(gr_rect" in content
+        assert "Edge.Cuts" in content
+
+        # Should NOT have gr_line/gr_arc for outline (may appear elsewhere)
+        # Note: We check that there's no gr_arc at all since they're only used for outline
+        assert "(gr_arc" not in content

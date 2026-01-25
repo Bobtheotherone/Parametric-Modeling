@@ -17,14 +17,17 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import concurrent.futures
 import contextlib
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -40,6 +43,38 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# Atomic I/O for robust file operations
+from bridge.atomic_io import atomic_write_json, validate_json_file
+
+# Turn normalization - extracted to submodule for tooling readability
+from bridge.loop_pkg.turn_normalizer import (
+    NormalizationResult,
+    TurnNormalizer,
+    normalize_agent_output,
+)
+from bridge.loop_pkg.turn_normalizer import (
+    validate_turn_lenient as _validate_turn_lenient,
+)
+
+# Patch integration for commit-free worker operation
+from bridge.patch_integration import PatchIntegrator, collect_patch_artifact, save_patch_artifact
+from bridge.scheduler import BackfillGenerator, FillerTask, LaneConfig, TwoLaneScheduler
+from bridge.smoke_route import resolve_smoke_route
+from bridge.streaming import run_cmd_with_streaming
+from bridge.verify_repair import (
+    create_repair_callback,
+    run_verify_repair_loop,
+    write_repair_report,
+)
+
+# Design document parsing - modular adapter layer
+from bridge.design_doc import (
+    ContractMode,
+    DesignDocSpec,
+    parse_design_doc,
+    parse_design_doc_text,
+)
 
 AGENTS: tuple[str, ...] = ("codex", "claude")
 
@@ -63,6 +98,17 @@ class ParallelSettings:
 
 
 @dataclasses.dataclass(frozen=True)
+class AgentCapabilities:
+    """Capabilities for an agent - defines what tools/features are available."""
+
+    supports_tools: bool = True
+    supports_fs_read: bool = True
+    supports_fs_write: bool = True
+    supports_bash: bool = True
+    supports_write_access: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
 class RunConfig:
     max_calls_per_agent: int
     quota_retry_attempts: int
@@ -70,11 +116,13 @@ class RunConfig:
     max_json_correction_attempts: int
     fallback_order: list[str]
     enable_agents: list[str]
+    smoke_route: tuple[str, ...]
 
     agent_scripts: dict[str, str]
     agent_models: dict[str, str]
     quota_error_patterns: dict[str, list[str]]
     supports_write_access: dict[str, bool]
+    agent_capabilities: dict[str, AgentCapabilities]
     parallel: ParallelSettings
 
 
@@ -86,6 +134,7 @@ class RunState:
     schema_path: Path
     system_prompt_path: Path
     design_doc_path: Path
+    smoke_route: tuple[str, ...] = tuple()
 
     total_calls: int = 0
     call_counts: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
@@ -302,6 +351,19 @@ def _parse_all_milestones(design_doc_text: str) -> list[str]:
 
     # Sort by milestone number
     return sorted(milestones, key=lambda x: int(x[1:]))
+
+
+def _parse_smoke_route_arg(value: str) -> list[str]:
+    route = [tok.strip() for tok in value.split(",") if tok.strip()]
+    if not route:
+        raise argparse.ArgumentTypeError("smoke-route must include at least one agent name")
+    unknown = [tok for tok in route if tok not in AGENTS]
+    if unknown:
+        allowed = ", ".join(AGENTS)
+        raise argparse.ArgumentTypeError(
+            f"smoke-route contains unknown agent(s): {', '.join(unknown)} (allowed: {allowed})"
+        )
+    return route
 
 
 def _extract_milestone_from_task_id(task_id: str, fallback: str = "M0") -> str:
@@ -780,6 +842,7 @@ def load_config(config_path: Path) -> RunConfig:
     agent_models: dict[str, str] = {}
     quota_pats: dict[str, list[str]] = {}
     supports_write: dict[str, bool] = {}
+    agent_capabilities: dict[str, AgentCapabilities] = {}
 
     for a in AGENTS:
         if a not in agents_cfg:
@@ -788,6 +851,14 @@ def load_config(config_path: Path) -> RunConfig:
         agent_models[a] = str(agents_cfg[a].get("model", "(default)"))
         quota_pats[a] = list(agents_cfg[a].get("quota_error_patterns", []))
         supports_write[a] = bool(agents_cfg[a].get("supports_write_access", False))
+        # Parse agent capabilities
+        agent_capabilities[a] = AgentCapabilities(
+            supports_tools=bool(agents_cfg[a].get("supports_tools", True)),
+            supports_fs_read=bool(agents_cfg[a].get("supports_fs_read", True)),
+            supports_fs_write=bool(agents_cfg[a].get("supports_fs_write", True)),
+            supports_bash=bool(agents_cfg[a].get("supports_bash", True)),
+            supports_write_access=supports_write[a],
+        )
 
     parallel_cfg = data.get("parallel", {}) or {}
     parallel = ParallelSettings(
@@ -809,10 +880,12 @@ def load_config(config_path: Path) -> RunConfig:
         max_json_correction_attempts=max_json_correction_attempts,
         fallback_order=fallback_order,
         enable_agents=enable_agents,
+        smoke_route=tuple(),
         agent_scripts=agent_scripts,
         agent_models=agent_models,
         quota_error_patterns=quota_pats,
         supports_write_access=supports_write,
+        agent_capabilities=agent_capabilities,
         parallel=parallel,
     )
 
@@ -1020,6 +1093,332 @@ def _validate_turn(
 
 
 # -----------------------------
+# Contract hardening for agent outputs
+# -----------------------------
+
+# Patterns that indicate non-compliant agent output requiring strict reprompt
+# CRITICAL: These patterns detect when agents incorrectly claim they can't use tools
+NONCOMPLIANT_OUTPUT_PATTERNS: list[tuple[str, str]] = [
+    # Tool availability claims - these are CRITICAL violations in execution mode
+    (r"tools?\s+(are\s+)?(disabled|unavailable|not\s+available)", "tools_disabled_claim"),
+    (r"cannot\s+(use|access|execute)\s+tools?", "tools_access_claim"),
+    (r"don'?t\s+have\s+(access|permission)\s+to\s+tools?", "tools_permission_claim"),
+    (r"tool\s+(execution|use|usage)\s+(is\s+)?(blocked|disabled)", "tools_execution_claim"),
+    (r"i\s+(am\s+)?(unable|not\s+able)\s+to\s+(use|access|execute)\s+tools?", "tools_unable_claim"),
+    (r"no\s+(access|permission)\s+to\s+(read|write|edit|execute)", "no_access_claim"),
+    (r"(cannot|can't|unable)\s+(read|write|edit|modify)\s+(files?|code)", "file_access_claim"),
+    (r"(cannot|can't|unable)\s+(run|execute)\s+(commands?|bash|shell)", "command_access_claim"),
+    # Formatting violations
+    (r"```(json|python|bash|)", "markdown_code_block"),
+    (r"^(Here'?s?|I'?ll|Let me|Sure,)", "prose_prefix"),
+    (r"^\s*#(?!\s*\{)", "comment_line_as_output"),  # Exclude lines that might be starting JSON with #
+]
+
+# Patterns that are CRITICAL violations requiring immediate retry with tools-enabled prompt
+CRITICAL_TOOL_VIOLATIONS = {
+    "tools_disabled_claim",
+    "tools_access_claim",
+    "tools_permission_claim",
+    "tools_execution_claim",
+    "tools_unable_claim",
+    "no_access_claim",
+    "file_access_claim",
+    "command_access_claim",
+}
+
+# Hot files: critical integration points that should not be concurrently edited
+# by multiple workers. When multiple tasks list these files in touched_paths,
+# a shared lock is automatically injected to prevent merge conflicts.
+HOT_FILES: tuple[str, ...] = (
+    "**/api.py",
+    "**/board_writer.py",
+    "**/cli_main.py",
+    "**/pipeline.py",
+    "**/resolve.py",
+    "**/manifest.py",
+    "**/coupon_runner.py",
+)
+
+
+def _inject_hot_file_locks(tasks: list) -> list:
+    """Inject shared locks for hot files touched by multiple tasks.
+
+    When multiple tasks declare the same hot file in their touched_paths,
+    this function adds a shared lock (e.g., 'hot:api.py') to serialize
+    access and prevent merge conflicts.
+
+    Args:
+        tasks: List of ParallelTask objects
+
+    Returns:
+        Modified list with locks injected (same list, modified in place)
+    """
+    import fnmatch
+
+    # Map hot file base names to task IDs that touch them
+    hot_file_tasks: dict[str, list[str]] = {}
+
+    for task in tasks:
+        for path in task.touched_paths:
+            path_str = str(path)
+            for hot_pattern in HOT_FILES:
+                if fnmatch.fnmatch(path_str, hot_pattern):
+                    # Extract base name for lock key
+                    base_name = path_str.split("/")[-1] if "/" in path_str else path_str
+                    if base_name not in hot_file_tasks:
+                        hot_file_tasks[base_name] = []
+                    if task.id not in hot_file_tasks[base_name]:
+                        hot_file_tasks[base_name].append(task.id)
+                    break  # Don't match multiple patterns for same path
+
+    # Inject locks where multiple tasks touch the same hot file
+    tasks_by_id = {t.id: t for t in tasks}
+    injected_count = 0
+
+    for base_name, task_ids in hot_file_tasks.items():
+        if len(task_ids) > 1:
+            lock_name = f"hot:{base_name}"
+            for tid in task_ids:
+                task = tasks_by_id.get(tid)
+                if task and lock_name not in task.locks:
+                    task.locks.append(lock_name)
+                    injected_count += 1
+
+    if injected_count > 0:
+        print(f"[orchestrator] hot-file guardrail: injected {injected_count} lock(s) for concurrent hot file access")
+
+    return tasks
+
+
+def _inject_overlap_locks(tasks: list) -> list:
+    """Inject file-based locks for any files touched by multiple tasks.
+
+    This provides generalized collision prevention beyond just hot files.
+    When multiple tasks declare the same file in their touched_paths,
+    this function adds a file-specific lock to serialize access.
+
+    This is "as narrow as possible, as strong as necessary" locking:
+    - Only files actually touched by >1 task get locks
+    - Tasks with different touched_paths can run in parallel
+    - Tasks missing touched_paths get a conservative directory-based lock
+
+    Args:
+        tasks: List of ParallelTask objects
+
+    Returns:
+        Modified list with locks injected (same list, modified in place)
+    """
+    import hashlib
+
+    # Map file paths to task IDs that touch them
+    file_to_tasks: dict[str, list[str]] = {}
+
+    for task in tasks:
+        if task.status != "pending":
+            continue
+
+        if task.touched_paths:
+            for path in task.touched_paths:
+                path_str = str(path).replace("\\", "/")
+                if path_str not in file_to_tasks:
+                    file_to_tasks[path_str] = []
+                if task.id not in file_to_tasks[path_str]:
+                    file_to_tasks[path_str].append(task.id)
+        else:
+            # For tasks missing touched_paths, derive a conservative lock from task title/description
+            # This ensures tasks without declared paths don't silently collide
+            # Use a hash of title to create a "bucket" lock
+            title_hash = hashlib.md5(task.title.encode()).hexdigest()[:8]
+            # Derive directory from task ID (e.g., M1-IMPLEMENT-FOO -> dir:M1)
+            dir_lock = f"dir:unknown:{title_hash}"
+            if dir_lock not in task.locks:
+                task.locks.append(dir_lock)
+
+    # Inject locks where multiple tasks touch the same file
+    tasks_by_id = {t.id: t for t in tasks}
+    injected_count = 0
+
+    for file_path, task_ids in file_to_tasks.items():
+        if len(task_ids) > 1:
+            # Create a hash-based lock for the file path
+            path_hash = hashlib.md5(file_path.encode()).hexdigest()[:8]
+            base_name = file_path.split("/")[-1] if "/" in file_path else file_path
+            lock_name = f"file:{base_name}:{path_hash}"
+
+            for tid in task_ids:
+                task = tasks_by_id.get(tid)
+                if task and lock_name not in task.locks:
+                    task.locks.append(lock_name)
+                    injected_count += 1
+
+    if injected_count > 0:
+        print(f"[orchestrator] overlap-lock: injected {injected_count} lock(s) for shared file access")
+
+    return tasks
+
+
+def _detect_noncompliant_output(text: str) -> tuple[bool, list[str], bool]:
+    """Detect patterns in agent output that indicate non-compliance.
+
+    Returns:
+        (is_noncompliant, list_of_violations, has_critical_tool_violation)
+
+    has_critical_tool_violation is True if the agent incorrectly claims tools
+    are disabled - this requires immediate retry with explicit tools-enabled prompt.
+    """
+    violations: list[str] = []
+    text_lower = text.lower()
+    has_critical_tool_violation = False
+
+    for pattern, description in NONCOMPLIANT_OUTPUT_PATTERNS:
+        if re.search(pattern, text_lower, flags=re.IGNORECASE | re.MULTILINE):
+            violations.append(description)
+            # Check if this is a critical tool availability violation
+            if description in CRITICAL_TOOL_VIOLATIONS:
+                has_critical_tool_violation = True
+
+    return bool(violations), violations, has_critical_tool_violation
+
+
+def _build_strict_correction_prompt(
+    agent: str,
+    milestone_id: str,
+    validation_error: str,
+    task_title: str,
+    task_description: str,
+    noncompliant_violations: list[str] | None = None,
+    attempt_number: int = 1,
+    has_critical_tool_violation: bool = False,
+) -> str:
+    """Build an increasingly strict correction prompt based on attempt number.
+
+    Attempt 1: Standard correction with clear requirements
+    Attempt 2+: Stricter template with explicit prohibitions
+
+    If has_critical_tool_violation is True, adds explicit "TOOLS ARE ENABLED" messaging
+    to counteract any mistaken belief that tools are disabled.
+    """
+    stats_ref = "CL-1" if agent == "claude" else "CX-1"
+
+    # Base violations text
+    violations_text = ""
+    if noncompliant_violations:
+        violations_text = f"""
+VIOLATIONS DETECTED: {', '.join(noncompliant_violations)}
+These patterns are STRICTLY FORBIDDEN in your response."""
+
+    # CRITICAL: If agent claimed tools were disabled, explicitly correct this
+    tools_enabled_message = ""
+    if has_critical_tool_violation:
+        tools_enabled_message = """
+
+## CRITICAL CORRECTION: TOOLS ARE ENABLED
+
+Your previous response incorrectly claimed that tools are disabled.
+THIS IS FALSE. You have FULL ACCESS to the following tools:
+- Read: Read files from the filesystem
+- Edit: Edit files with precise replacements
+- Write: Create or overwrite files
+- Bash: Execute shell commands
+- Grep: Search file contents
+- Glob: Find files by pattern
+
+You CAN and SHOULD use these tools to complete your task.
+DO NOT claim tools are disabled. Use them to implement the required changes.
+"""
+
+    if attempt_number == 1:
+        return textwrap.dedent(f"""
+            STRICT JSON CORRECTION REQUIRED
+            {tools_enabled_message}
+            Your previous response was INVALID: {validation_error}
+            {violations_text}
+
+            You MUST output ONLY a valid JSON object with these EXACT fields:
+            - agent: "{agent}" (EXACTLY this string)
+            - milestone_id: "{milestone_id}" (EXACTLY this string)
+            - phase: "implement"
+            - work_completed: true or false
+            - project_complete: false
+            - summary: "description of work"
+            - gates_passed: []
+            - requirement_progress: {{"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}}
+            - next_agent: "{agent}"
+            - next_prompt: ""
+            - delegate_rationale: ""
+            - stats_refs: ["{stats_ref}"]
+            - needs_write_access: true
+            - artifacts: []
+
+            CRITICAL RULES:
+            - Output ONLY the JSON object, nothing else
+            - NO markdown (no ```)
+            - NO explanatory text before or after
+            - NO comments
+            - agent must be EXACTLY "{agent}"
+            - milestone_id must be EXACTLY "{milestone_id}"
+
+            FORBIDDEN PHRASES (do NOT output these):
+            - "tools disabled" or "tools are disabled"
+            - "cannot use tools" or "cannot access tools"
+            - "don't have access to tools"
+            - Any prose before/after the JSON
+
+            Your task: {task_title}
+            {task_description}
+        """).strip()
+    else:
+        # Stricter template for attempt 2+
+        return textwrap.dedent(f'''
+            FINAL CORRECTION ATTEMPT - STRICT JSON ONLY
+            {tools_enabled_message}
+            ERROR: {validation_error}
+            {violations_text}
+
+            OUTPUT THIS EXACT JSON (modify values as needed):
+
+            {{"agent": "{agent}", "milestone_id": "{milestone_id}", "phase": "implement", "work_completed": true, "project_complete": false, "summary": "Completed task", "gates_passed": [], "requirement_progress": {{"covered_req_ids": [], "tests_added_or_modified": [], "commands_run": []}}, "next_agent": "{agent}", "next_prompt": "", "delegate_rationale": "Task completed", "stats_refs": ["{stats_ref}"], "needs_write_access": true, "artifacts": []}}
+
+            ABSOLUTE REQUIREMENTS:
+            1. agent = "{agent}" (exact match required)
+            2. milestone_id = "{milestone_id}" (exact match required)
+            3. Output ONLY the JSON - no markdown, no prose, no explanation
+            4. Do NOT claim tools are disabled - TOOLS ARE ENABLED
+            5. Do NOT use ``` code blocks
+
+            Task: {task_title}
+        ''').strip()
+
+
+def _is_noncompliant_and_should_use_stricter_prompt(text: str) -> tuple[bool, list[str], bool]:
+    """Check if output warrants a stricter reprompt.
+
+    Returns (should_use_stricter, violations, has_critical_tool_violation).
+
+    has_critical_tool_violation indicates the agent incorrectly claimed tools are
+    disabled, requiring explicit correction in the retry prompt.
+    """
+    is_noncompliant, violations, has_critical_tool_violation = _detect_noncompliant_output(text)
+
+    # Also check if it looks like the agent dumped prose instead of JSON
+    stripped = text.strip()
+    if not stripped.startswith("{"):
+        violations.append("output does not start with JSON")
+        is_noncompliant = True
+
+    return is_noncompliant, violations, has_critical_tool_violation
+
+
+# NOTE: TurnNormalizer has been moved to bridge/loop_pkg/turn_normalizer.py
+# for better tooling readability. Import is at the top of this file.
+
+
+# -----------------------------
+# Agent selection + quota (TurnNormalizer moved to loop_pkg/turn_normalizer.py)
+# -----------------------------
+
+
+# -----------------------------
 # Agent selection + quota
 # -----------------------------
 
@@ -1072,6 +1471,11 @@ def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> 
             return forced, f"agent policy (--only-{policy.forced_agent})"
         return forced, None
 
+    if config.smoke_route:
+        idx = state.total_calls % len(config.smoke_route)
+        routed, reason = resolve_smoke_route(requested=requested, route=config.smoke_route, index=idx)
+        return routed, reason
+
     enabled = [
         a
         for a in config.enable_agents
@@ -1111,11 +1515,84 @@ def _git_init_if_needed(project_root: Path) -> None:
         _run_cmd(["git", "commit", "-m", "chore: initial state"], cwd=project_root, env=os.environ.copy())
 
 
+# Protected file that must never be reverted by auto-stash or checkout
+_PROTECTED_FILE = "DESIGN_DOCUMENT.md"
+
+
+def _capture_protected_file(project_root: Path) -> tuple[bytes | None, str | None]:
+    """Capture current bytes and SHA256 of DESIGN_DOCUMENT.md before git operations.
+
+    Returns (content_bytes, sha256_hex) or (None, None) if file doesn't exist.
+    """
+    protected_path = project_root / _PROTECTED_FILE
+    if not protected_path.exists():
+        return None, None
+    try:
+        content = protected_path.read_bytes()
+        sha256_hex = hashlib.sha256(content).hexdigest()
+        return content, sha256_hex
+    except OSError:
+        return None, None
+
+
+def _restore_protected_file_if_changed(
+    project_root: Path,
+    original_content: bytes | None,
+    original_hash: str | None,
+    operation_name: str,
+) -> bool:
+    """Restore DESIGN_DOCUMENT.md if it was changed by a git operation.
+
+    Returns True if file was restored, False otherwise.
+    """
+    if original_content is None:
+        # File didn't exist before, nothing to restore
+        return False
+
+    protected_path = project_root / _PROTECTED_FILE
+
+    # Check current state
+    if not protected_path.exists():
+        # File was deleted by git operation - restore it
+        try:
+            protected_path.write_bytes(original_content)
+            print(f"[orchestrator] Restored {_PROTECTED_FILE} after {operation_name} (file was deleted)")
+            return True
+        except OSError as e:
+            print(f"[orchestrator] WARNING: Failed to restore {_PROTECTED_FILE}: {e}")
+            return False
+
+    try:
+        current_content = protected_path.read_bytes()
+        current_hash = hashlib.sha256(current_content).hexdigest()
+    except OSError:
+        current_hash = None
+
+    if current_hash != original_hash:
+        # Content changed - restore original
+        try:
+            protected_path.write_bytes(original_content)
+            print(f"[orchestrator] Restored {_PROTECTED_FILE} after {operation_name} to preserve local edits")
+            return True
+        except OSError as e:
+            print(f"[orchestrator] WARNING: Failed to restore {_PROTECTED_FILE}: {e}")
+            return False
+
+    return False
+
+
 def _checkout_agent_branch(project_root: Path, run_id: str) -> None:
     branch = f"agent-run/{run_id}"
+
+    # Capture protected file state before checkout
+    original_content, original_hash = _capture_protected_file(project_root)
+
     rc, _, _ = _run_cmd(["git", "checkout", "-b", branch], cwd=project_root, env=os.environ.copy())
     if rc != 0:
         _run_cmd(["git", "checkout", branch], cwd=project_root, env=os.environ.copy())
+
+    # Restore protected file if it was changed by checkout
+    _restore_protected_file_if_changed(project_root, original_content, original_hash, "checkout")
 
 
 def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[int, str, str]:
@@ -1140,6 +1617,652 @@ def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
         return False, "git status not clean"
 
     return True, "ok"
+
+
+def _preflight_check_repo(
+    project_root: Path,
+    *,
+    auto_stash: bool = False,
+    force_dirty: bool = False,
+    runs_dir: Path | None = None,
+) -> tuple[bool, str, str | None]:
+    """Preflight check for dirty repo before starting parallel runs.
+
+    Returns:
+        (ok, message, stash_ref) where:
+        - ok: True if repo is clean or was auto-stashed
+        - message: Human-readable status message
+        - stash_ref: The stash reference if auto-stash was used, else None
+    """
+    env = os.environ.copy()
+
+    # Check for uncommitted changes
+    rc, porcelain, _ = _run_cmd(["git", "status", "--porcelain=v1"], cwd=project_root, env=env)
+    if rc != 0:
+        return False, "Failed to run git status", None
+
+    is_dirty = bool(porcelain.strip())
+
+    # Also check for unmerged files (merge conflict state)
+    rc2, unmerged, _ = _run_cmd(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=project_root,
+        env=env,
+    )
+    has_conflicts = rc2 == 0 and bool(unmerged.strip())
+
+    if has_conflicts:
+        conflict_files = unmerged.strip().split("\n")
+        return False, f"PREFLIGHT FAILED: Unresolved merge conflicts in: {conflict_files}", None
+
+    if not is_dirty:
+        return True, "Repository is clean", None
+
+    # Repo is dirty
+    if force_dirty:
+        return True, "WARNING: Proceeding with dirty repo (--force-dirty)", None
+
+    if auto_stash:
+        # Capture protected file state BEFORE stash (pathspec excludes are unreliable)
+        original_content, original_hash = _capture_protected_file(project_root)
+
+        # Stash all changes including untracked files
+        # Note: pathspec exclude kept for belt-and-suspenders, but we don't rely on it
+        stash_msg = f"orchestrator-auto-stash-{dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
+        rc_stash, out_stash, err_stash = _run_cmd(
+            ["git", "stash", "push", "-u", "-m", stash_msg, "--", ":/", ":(exclude):/DESIGN_DOCUMENT.md"],
+            cwd=project_root,
+            env=env,
+        )
+        if rc_stash != 0:
+            return False, f"Failed to auto-stash: {err_stash}", None
+
+        # CRITICAL: Restore protected file if stash reverted it (pathspec exclude unreliable)
+        _restore_protected_file_if_changed(project_root, original_content, original_hash, "auto-stash")
+
+        # Get the stash ref
+        rc_ref, stash_list, _ = _run_cmd(
+            ["git", "stash", "list", "--format=%gd %s"],
+            cwd=project_root,
+            env=env,
+        )
+        stash_ref = None
+        if rc_ref == 0:
+            for line in stash_list.strip().split("\n"):
+                if stash_msg in line:
+                    stash_ref = line.split()[0] if line else None
+                    break
+
+        # Write stash info to runs_dir if provided
+        if runs_dir and stash_ref:
+            _ensure_dir(runs_dir)
+            stash_info_path = runs_dir / "stash_info.txt"
+            stash_info_path.write_text(
+                f"Auto-stash created: {stash_ref}\n"
+                f"Message: {stash_msg}\n\n"
+                f"To restore:\n  git stash pop {stash_ref}\n\n"
+                f"Changes stashed:\n{porcelain}\n",
+                encoding="utf-8",
+            )
+
+        return True, f"Auto-stashed uncommitted changes to {stash_ref}", stash_ref
+
+    # Fail fast with clear error
+    dirty_files = porcelain.strip().split("\n")[:10]  # First 10 files
+    msg = (
+        f"PREFLIGHT FAILED: Repository has uncommitted changes.\n"
+        f"  Dirty files ({len(porcelain.strip().split(chr(10)))} total):\n"
+        + "\n".join(f"    {f}" for f in dirty_files)
+        + "\n\n"
+        "  This will cause tools.verify --strict-git to fail during the run.\n"
+        "  Options:\n"
+        "    1. Commit or stash changes before running\n"
+        "    2. Use --auto-stash to automatically stash changes\n"
+        "    3. Use --force-dirty --verify-mode=skip-git to proceed anyway (not recommended)\n"
+    )
+    return False, msg, None
+
+
+def _ast_extract_init_components(source: str) -> tuple[bool, str | None, list[str], list[str], list[tuple[str, str]]]:
+    """Extract components from __init__.py source using AST for safety.
+
+    Returns:
+        (valid, docstring, imports, all_items, safe_assignments)
+
+    safe_assignments is a list of (name, source_line) for simple string/int/version assignments.
+    """
+    imports: list[str] = []
+    all_items: list[str] = []
+    safe_assignments: list[tuple[str, str]] = []
+    docstring: str | None = None
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False, None, [], [], []
+
+    # Get docstring
+    docstring = ast.get_docstring(tree)
+
+    source_lines = source.split("\n")
+
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            # Module docstring - already handled
+            continue
+
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            # Reconstruct import statement from source lines
+            start = node.lineno - 1
+            end = getattr(node, "end_lineno", node.lineno)
+            import_lines = source_lines[start:end]
+            import_str = "\n".join(import_lines).strip()
+            if import_str:
+                imports.append(import_str)
+
+        elif isinstance(node, ast.Assign):
+            # Check for __all__ or safe constant assignments
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    if target.id == "__all__" and isinstance(node.value, ast.List):
+                        # Extract __all__ items
+                        for elt in node.value.elts:
+                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                                all_items.append(elt.value)
+                    elif target.id.startswith("_") or target.id.isupper() or target.id == "__version__":
+                        # Safe assignments: private vars, constants (ALL_CAPS), __version__
+                        if isinstance(node.value, ast.Constant):
+                            value = node.value.value
+                            if isinstance(value, str):
+                                safe_assignments.append((target.id, f'{target.id} = "{value}"'))
+                            elif isinstance(value, (int, float)):
+                                safe_assignments.append((target.id, f'{target.id} = {value}'))
+
+    return True, docstring, imports, all_items, safe_assignments
+
+
+def _text_extract_init_components(source: str) -> tuple[str | None, set[str], set[str]]:
+    """Fallback text-based extraction for malformed Python.
+
+    Returns:
+        (docstring, imports, all_items)
+    """
+    imports: set[str] = set()
+    all_items: set[str] = set()
+    docstring: str | None = None
+
+    lines = source.split("\n")
+    in_docstring = False
+    docstring_lines: list[str] = []
+    in_multiline_all = False
+    all_buffer: list[str] = []
+    in_multiline_import = False
+    import_buffer: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Handle docstrings
+        if not docstring:
+            if '"""' in stripped or "'''" in stripped:
+                quote = '"""' if '"""' in stripped else "'''"
+                if not in_docstring:
+                    in_docstring = True
+                    docstring_lines.append(line)
+                    # Check for single-line docstring
+                    if stripped.count(quote) >= 2 and not stripped.endswith(quote + quote):
+                        in_docstring = False
+                        docstring = "\n".join(docstring_lines)
+                else:
+                    docstring_lines.append(line)
+                    in_docstring = False
+                    docstring = "\n".join(docstring_lines)
+                continue
+            elif in_docstring:
+                docstring_lines.append(line)
+                continue
+
+        # Handle multiline imports (with parentheses)
+        if in_multiline_import:
+            # Check if this line starts a new import (abort the incomplete one)
+            if stripped.startswith("from ") or stripped.startswith("import "):
+                in_multiline_import = False
+                import_buffer = []
+                # Don't continue - fall through to process as new import
+            elif ")" in stripped:
+                import_buffer.append(stripped)
+                in_multiline_import = False
+                # Validate the import is complete
+                full_import = " ".join(import_buffer)
+                if full_import.count("(") == full_import.count(")"):
+                    imports.add(full_import)
+                import_buffer = []
+                continue
+            else:
+                import_buffer.append(stripped)
+                continue
+
+        # Handle multiline __all__
+        if in_multiline_all:
+            all_buffer.append(stripped)
+            if "]" in stripped:
+                in_multiline_all = False
+                full_all = " ".join(all_buffer)
+                for item in re.findall(r'"([^"]+)"|\'([^\']+)\'', full_all):
+                    all_items.add(item[0] or item[1])
+                all_buffer = []
+            continue
+
+        # Handle imports
+        if stripped.startswith("from ") and " import " in stripped:
+            # Check for multiline import (unclosed paren)
+            if "(" in stripped and ")" not in stripped:
+                in_multiline_import = True
+                import_buffer = [stripped]
+            elif "(" in stripped and ")" in stripped:
+                # Complete single-line import with parens
+                imports.add(stripped)
+            elif "(" not in stripped:
+                # Simple import without parens
+                imports.add(stripped)
+            # Skip incomplete imports (has open paren but no close)
+        elif stripped.startswith("import "):
+            imports.add(stripped)
+
+        # Handle __all__ (single line or start of multiline)
+        if "__all__" in stripped and "=" in stripped:
+            if "[" in stripped and "]" in stripped:
+                # Single line __all__
+                for item in re.findall(r'"([^"]+)"|\'([^\']+)\'', stripped):
+                    all_items.add(item[0] or item[1])
+            elif "[" in stripped:
+                # Start of multiline __all__
+                in_multiline_all = True
+                all_buffer.append(stripped)
+
+    return docstring, imports, all_items
+
+
+def _parse_conflict_blocks(content: str) -> list[tuple[str, str]]:
+    """Parse all conflict blocks from content.
+
+    Returns list of (ours_content, theirs_content) tuples for each conflict block.
+    """
+    conflicts: list[tuple[str, str]] = []
+    lines = content.split("\n")
+
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("<<<<<<< "):
+            ours_lines: list[str] = []
+            theirs_lines: list[str] = []
+            i += 1
+
+            # Collect "ours" side
+            while i < len(lines) and not lines[i].startswith("======="):
+                ours_lines.append(lines[i])
+                i += 1
+
+            i += 1  # Skip =======
+
+            # Collect "theirs" side
+            while i < len(lines) and not lines[i].startswith(">>>>>>> "):
+                theirs_lines.append(lines[i])
+                i += 1
+
+            conflicts.append(("\n".join(ours_lines), "\n".join(theirs_lines)))
+        i += 1
+
+    return conflicts
+
+
+def _remove_conflict_markers(content: str) -> str:
+    """Remove conflict markers while keeping common content."""
+    lines = content.split("\n")
+    result: list[str] = []
+    state = "normal"
+
+    for line in lines:
+        if line.startswith("<<<<<<< "):
+            state = "ours"
+        elif line.startswith("=======") and state == "ours":
+            state = "theirs"
+        elif line.startswith(">>>>>>> ") and state == "theirs":
+            state = "normal"
+        elif state == "normal":
+            result.append(line)
+        # In conflict state, we skip lines (they'll be re-added by merge)
+
+    return "\n".join(result)
+
+
+def _write_manual_resolution_artifact(file_path: Path, reason: str, ours: str, theirs: str) -> None:
+    """Write a .manual_resolution file when auto-resolution fails."""
+    artifact_path = file_path.parent / f"{file_path.name}.manual_resolution"
+    content = f"""# MANUAL RESOLUTION REQUIRED
+# File: {file_path}
+# Reason: {reason}
+# Timestamp: {dt.datetime.now(dt.timezone.utc).isoformat()}
+
+# === OURS (HEAD) ===
+{ours}
+
+# === THEIRS (incoming) ===
+{theirs}
+
+# === ACTION REQUIRED ===
+# 1. Edit {file_path} to resolve the conflict manually
+# 2. Run: python3 -m py_compile {file_path}
+# 3. Run: git add {file_path}
+# 4. Delete this file: rm {artifact_path}
+"""
+    try:
+        artifact_path.write_text(content, encoding="utf-8")
+    except Exception:
+        pass  # Best effort
+
+
+def _auto_resolve_init_py_conflict(file_path: Path, project_root: Path) -> tuple[bool, str]:
+    """Auto-resolve merge conflict in __init__.py files using AST-safe union merge.
+
+    Strategy:
+    1. Parse all conflict blocks
+    2. Try AST-based extraction on each side (fall back to text-based for invalid syntax)
+    3. Extract: docstring, imports, __all__ items, safe assignments
+    4. Union-merge: deduplicate imports, union __all__, prefer longer docstring
+    5. Validate result with py_compile
+    6. If unresolvable, write manual resolution artifact
+
+    Returns:
+        (success, message)
+    """
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        return False, f"Cannot read conflict file: {e}"
+
+    # Check for conflict markers
+    has_markers = "<<<<<<< " in content and "=======" in content and ">>>>>>> " in content
+
+    if not has_markers:
+        return False, "No conflict markers found"
+
+    # Parse all conflict blocks
+    conflict_blocks = _parse_conflict_blocks(content)
+    if not conflict_blocks:
+        return False, "Failed to parse conflict blocks"
+
+    # Get common content (before/after conflict blocks, with markers removed)
+    common_content = _remove_conflict_markers(content)
+
+    # Collect all components
+    all_docstrings: list[str] = []
+    all_imports: set[str] = set()
+    all_all_items: set[str] = set()
+    all_safe_assigns: dict[str, str] = {}
+
+    # Process common content
+    common_valid, common_doc, common_imports, common_all, common_assigns = _ast_extract_init_components(common_content)
+    if common_valid:
+        if common_doc:
+            all_docstrings.append(common_doc)
+        all_imports.update(common_imports)
+        all_all_items.update(common_all)
+        for name, line in common_assigns:
+            all_safe_assigns[name] = line
+    else:
+        # Fallback to text extraction
+        doc, imps, items = _text_extract_init_components(common_content)
+        if doc:
+            all_docstrings.append(doc)
+        all_imports.update(imps)
+        all_all_items.update(items)
+
+    # Process each conflict block
+    ours_full: list[str] = []
+    theirs_full: list[str] = []
+
+    for ours_content, theirs_content in conflict_blocks:
+        ours_full.append(ours_content)
+        theirs_full.append(theirs_content)
+
+        # Process "ours" side
+        ours_valid, ours_doc, ours_imports, ours_all, ours_assigns = _ast_extract_init_components(ours_content)
+        if ours_valid:
+            if ours_doc:
+                all_docstrings.append(ours_doc)
+            all_imports.update(ours_imports)
+            all_all_items.update(ours_all)
+            for name, line in ours_assigns:
+                all_safe_assigns[name] = line
+        else:
+            # Fallback to text extraction for invalid syntax
+            doc, imps, items = _text_extract_init_components(ours_content)
+            if doc:
+                all_docstrings.append(doc)
+            all_imports.update(imps)
+            all_all_items.update(items)
+
+        # Process "theirs" side
+        theirs_valid, theirs_doc, theirs_imports, theirs_all, theirs_assigns = _ast_extract_init_components(theirs_content)
+        if theirs_valid:
+            if theirs_doc:
+                all_docstrings.append(theirs_doc)
+            all_imports.update(theirs_imports)
+            all_all_items.update(theirs_all)
+            for name, line in theirs_assigns:
+                all_safe_assigns[name] = line
+        else:
+            # Fallback to text extraction for invalid syntax
+            doc, imps, items = _text_extract_init_components(theirs_content)
+            if doc:
+                all_docstrings.append(doc)
+            all_imports.update(imps)
+            all_all_items.update(items)
+
+    # Choose docstring (prefer longer)
+    docstring = '"""Package exports."""'
+    if all_docstrings:
+        all_docstrings.sort(key=len, reverse=True)
+        docstring = all_docstrings[0]
+        # Ensure docstring is properly formatted
+        if not docstring.startswith(('"""', "'''")):
+            docstring = f'"""{docstring}"""'
+
+    # Sort imports for determinism (group from imports and regular imports)
+    from_imports = sorted([i for i in all_imports if i.startswith("from ")])
+    regular_imports = sorted([i for i in all_imports if i.startswith("import ")])
+    sorted_imports = from_imports + regular_imports
+
+    # Sort __all__ items for determinism
+    sorted_all_items = sorted(all_all_items)
+
+    # Build result
+    result_lines: list[str] = []
+
+    # Add docstring
+    result_lines.append(docstring)
+    result_lines.append("")
+
+    # Add imports
+    for imp in sorted_imports:
+        result_lines.append(imp)
+
+    if sorted_imports:
+        result_lines.append("")
+
+    # Add safe assignments (like __version__)
+    for name in sorted(all_safe_assigns.keys()):
+        result_lines.append(all_safe_assigns[name])
+
+    if all_safe_assigns:
+        result_lines.append("")
+
+    # Add __all__
+    if sorted_all_items:
+        result_lines.append("__all__ = [")
+        for item in sorted_all_items:
+            result_lines.append(f'    "{item}",')
+        result_lines.append("]")
+
+    result_content = "\n".join(result_lines)
+    if not result_content.endswith("\n"):
+        result_content += "\n"
+
+    # Validate syntax with compile()
+    try:
+        compile(result_content, str(file_path), "exec")
+    except SyntaxError as e:
+        # Write manual resolution artifact
+        _write_manual_resolution_artifact(
+            file_path,
+            f"Generated code has syntax error: {e}",
+            "\n".join(ours_full),
+            "\n".join(theirs_full),
+        )
+        return False, f"Generated code has syntax error: {e}. Manual resolution artifact written."
+
+    # Double-check with py_compile for extra safety
+    import py_compile
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tf:
+        tf.write(result_content)
+        tf_path = tf.name
+
+    try:
+        py_compile.compile(tf_path, doraise=True)
+    except py_compile.PyCompileError as e:
+        os.unlink(tf_path)
+        _write_manual_resolution_artifact(
+            file_path,
+            f"py_compile failed: {e}",
+            "\n".join(ours_full),
+            "\n".join(theirs_full),
+        )
+        return False, f"py_compile validation failed: {e}. Manual resolution artifact written."
+    finally:
+        if os.path.exists(tf_path):
+            os.unlink(tf_path)
+
+    # Write resolved file
+    try:
+        file_path.write_text(result_content, encoding="utf-8")
+    except Exception as e:
+        return False, f"Cannot write resolved file: {e}"
+
+    return True, "Auto-resolved __init__.py conflict by AST-safe union merge"
+
+
+def _attempt_auto_merge_resolution(
+    project_root: Path,
+    task_id: str,
+    runs_dir: Path,
+    task_context: str = "",
+    milestone_id: str = "M0",
+) -> tuple[bool, str]:
+    """Attempt to auto-resolve merge conflicts.
+
+    This function:
+    1. Tries built-in resolution for __init__.py files (deterministic merge)
+    2. Uses agent-based resolution for other files (Claude-powered intelligent merge)
+    3. Falls back to manual only if all automated approaches fail
+
+    Returns:
+        (success, message)
+    """
+    env = os.environ.copy()
+
+    # Get list of conflicted files
+    rc, conflict_out, _ = _run_cmd(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=project_root,
+        env=env,
+    )
+    if rc != 0 or not conflict_out.strip():
+        return False, "No conflict files detected or git command failed"
+
+    conflict_files = [f.strip() for f in conflict_out.strip().split("\n") if f.strip()]
+    if not conflict_files:
+        return False, "No conflict files"
+
+    resolved_files: list[str] = []
+    unresolved_files: list[str] = []
+    init_py_files: list[str] = []
+    other_files: list[str] = []
+
+    # Categorize files
+    for cf in conflict_files:
+        if cf.endswith("__init__.py"):
+            init_py_files.append(cf)
+        else:
+            other_files.append(cf)
+
+    # Phase 1: Try built-in resolution for __init__.py files (deterministic)
+    for cf in init_py_files:
+        file_path = project_root / cf
+        success, msg = _auto_resolve_init_py_conflict(file_path, project_root)
+        if success:
+            # Stage the resolved file
+            _run_cmd(["git", "add", cf], cwd=project_root, env=env)
+            resolved_files.append(cf)
+            print(f"[orchestrator] AUTO-RESOLVED (__init__.py): {cf} ({msg})")
+        else:
+            unresolved_files.append(cf)
+            print(f"[orchestrator] CANNOT AUTO-RESOLVE (__init__.py): {cf} ({msg})")
+
+    # Phase 2: Try agent-based resolution for other files
+    if other_files:
+        print(f"[orchestrator] Trying agent-based merge resolution for {len(other_files)} file(s): {other_files}")
+        try:
+            from bridge.merge_resolver import attempt_agent_merge_resolution
+
+            merge_result = attempt_agent_merge_resolution(
+                project_root=project_root,
+                runs_dir=runs_dir,
+                task_id=task_id,
+                task_context=task_context,
+                milestone_id=milestone_id,
+                max_attempts=3,
+            )
+
+            if merge_result.success:
+                resolved_files.extend(merge_result.resolved_files)
+                print(f"[orchestrator] AGENT-RESOLVED: {merge_result.resolved_files} after {merge_result.attempt} attempt(s)")
+            else:
+                unresolved_files.extend(merge_result.unresolved_files)
+                print(f"[orchestrator] AGENT RESOLUTION FAILED: {merge_result.error}")
+                print(f"[orchestrator] Unresolved: {merge_result.unresolved_files}")
+
+        except Exception as e:
+            print(f"[orchestrator] Agent merge resolver exception: {e}")
+            unresolved_files.extend(other_files)
+
+    if unresolved_files:
+        return False, f"Unresolved conflicts remain: {unresolved_files}"
+
+    # All conflicts resolved - commit
+    if resolved_files:
+        commit_msg = f"auto-resolve: merge conflict in {', '.join(resolved_files)}"
+        rc_commit, _, err_commit = _run_cmd(
+            ["git", "commit", "-m", commit_msg],
+            cwd=project_root,
+            env=env,
+        )
+        if rc_commit != 0:
+            return False, f"Failed to commit resolved conflicts: {err_commit}"
+
+        # Log resolution
+        resolution_log_path = runs_dir / "auto_merge_resolutions.txt"
+        with resolution_log_path.open("a", encoding="utf-8") as f:
+            f.write(f"Task: {task_id}\n")
+            f.write(f"Resolved: {resolved_files}\n")
+            f.write(f"Commit: {commit_msg}\n")
+            f.write("-" * 40 + "\n")
+
+        return True, f"Auto-resolved conflicts in: {resolved_files}"
+
+    return False, "No files were resolved"
 
 
 # -----------------------------
@@ -1182,86 +2305,18 @@ def _run_agent_live(
     # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
     env["ORCH_SCHEMA_KIND"] = "turn"
 
-    # Check if streaming is enabled
-    if stream_agent_output != "none" and call_dir:
-        return _run_cmd_with_streaming(
+    if call_dir:
+        return run_cmd_with_streaming(
             cmd=cmd,
             cwd=state.project_root,
             env=env,
             agent=agent,
-            stream_agent_output=stream_agent_output,
+            stream_mode=stream_agent_output,
             call_dir=call_dir,
         )
 
-    return _run_cmd(cmd, cwd=state.project_root, env=env, stream=True)
-
-
-def _run_cmd_with_streaming(
-    cmd: list[str],
-    cwd: Path,
-    env: dict[str, str],
-    agent: str,
-    stream_agent_output: str,
-    call_dir: Path,
-) -> tuple[int, str, str]:
-    """Run subprocess with prefixed streaming and log file output."""
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(cwd),
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=1,
-    )
-
-    out_chunks: list[str] = []
-    err_chunks: list[str] = []
-
-    stdout_log = call_dir / "agent_stdout.log"
-    stderr_log = call_dir / "agent_stderr.log"
-    _ensure_dir(call_dir)
-
-    stream_stdout = stream_agent_output in ("stdout", "both")
-    stream_stderr = stream_agent_output in ("stderr", "both")
-
-    def _pump_stdout(src: Any, chunks: list[str], log_path: Path) -> None:
-        try:
-            with log_path.open("w", encoding="utf-8") as log_file:
-                for line in iter(src.readline, ""):
-                    chunks.append(line)
-                    log_file.write(line)
-                    log_file.flush()
-                    if stream_stdout:
-                        sys.stdout.write(f"[{agent}][stdout] {line}")
-                        sys.stdout.flush()
-        finally:
-            with contextlib.suppress(Exception):
-                src.close()
-
-    def _pump_stderr(src: Any, chunks: list[str], log_path: Path) -> None:
-        try:
-            with log_path.open("w", encoding="utf-8") as log_file:
-                for line in iter(src.readline, ""):
-                    chunks.append(line)
-                    log_file.write(line)
-                    log_file.flush()
-                    if stream_stderr:
-                        sys.stderr.write(f"[{agent}][stderr] {line}")
-                        sys.stderr.flush()
-        finally:
-            with contextlib.suppress(Exception):
-                src.close()
-
-    t_out = threading.Thread(target=_pump_stdout, args=(proc.stdout, out_chunks, stdout_log), daemon=True)
-    t_err = threading.Thread(target=_pump_stderr, args=(proc.stderr, err_chunks, stderr_log), daemon=True)
-    t_out.start()
-    t_err.start()
-
-    rc = proc.wait()
-    t_out.join(timeout=2)
-    t_err.join(timeout=2)
-    return rc, "".join(out_chunks), "".join(err_chunks)
+    stream_enabled = stream_agent_output != "none"
+    return _run_cmd(cmd, cwd=state.project_root, env=env, stream=stream_enabled)
 
 
 def _run_agent_mock(*, agent: str, scenario: dict[str, Any], mock_indices: dict[str, int]) -> tuple[int, str, str]:
@@ -1297,6 +2352,7 @@ class ParallelTask:
     agent: str
     intensity: str = "low"  # low|medium|high
     locks: list[str] = dataclasses.field(default_factory=list)
+    touched_paths: list[str] = dataclasses.field(default_factory=list)
     depends_on: list[str] = dataclasses.field(default_factory=list)
     solo: bool = False
 
@@ -1327,6 +2383,9 @@ class ParallelTask:
     work_completed: bool | None = None
     commit_sha: str | None = None
     turn_summary: str | None = None
+    # Patch integration (commit-free worker operation)
+    patch_path: Path | None = None
+    has_patch: bool = False
     # Retry tracking for plan-only responses
     retry_count: int = 0
     max_retries: int = 2
@@ -1347,6 +2406,447 @@ def _collect_machine_info() -> dict[str, Any]:
     }
 
 
+def _analyze_plan_width(
+    plan_obj: dict[str, Any],
+    max_workers_limit: int,
+) -> dict[str, Any]:
+    """Analyze a plan for throughput mode compliance.
+
+    Returns:
+        dict with keys:
+        - task_count: int
+        - root_count: int (tasks with empty depends_on)
+        - plan_cap: int (max_parallel_tasks from plan)
+        - min_plan_cap: int (required minimum for throughput)
+        - min_root: int (required minimum roots for throughput)
+        - min_task_count: int (recommended, not required)
+        - is_thin: bool (True only if HARD requirements not met)
+        - issues: list[str] (human-readable issues - hard failures)
+        - warnings: list[str] (soft warnings - don't trigger reprompt)
+
+    Note: is_thin is True only for HARD failures (plan_cap, root_count).
+    total_tasks < 2*workers is a soft warning that does NOT trigger reprompt.
+    """
+    tasks = plan_obj.get("tasks", [])
+    task_count = len(tasks) if isinstance(tasks, list) else 0
+    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else [])
+                     if isinstance(t, dict) and not t.get("depends_on"))
+    plan_cap = int(plan_obj.get("max_parallel_tasks", 1) or 1)
+
+    # Throughput mode thresholds
+    min_plan_cap = max_workers_limit
+    min_root = max_workers_limit
+    min_task_count = max_workers_limit * 2  # Recommended (soft), not required
+
+    # HARD failures (must reprompt)
+    issues: list[str] = []
+    if plan_cap < min_plan_cap:
+        issues.append(f"max_parallel_tasks={plan_cap} < required {min_plan_cap}")
+    if root_count < min_root:
+        issues.append(f"root_tasks={root_count} < required {min_root}")
+
+    # SOFT warnings (do NOT trigger reprompt on their own)
+    warnings: list[str] = []
+    if task_count < min_task_count:
+        warnings.append(f"total_tasks={task_count} < recommended {min_task_count}")
+
+    return {
+        "task_count": task_count,
+        "root_count": root_count,
+        "plan_cap": plan_cap,
+        "min_plan_cap": min_plan_cap,
+        "min_root": min_root,
+        "min_task_count": min_task_count,
+        "is_thin": len(issues) > 0,  # Only hard failures trigger is_thin
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+# ------------------------------------
+# Plan Quality Scoring (Throughput Mode)
+# ------------------------------------
+
+def _compute_lock_pressure(plan_obj: dict[str, Any]) -> dict[str, Any]:
+    """Compute lock pressure metrics for the plan.
+
+    Returns dict with:
+    - lock_counts: dict mapping lock key -> count of tasks using it
+    - max_lock_count: highest count for any single lock
+    - high_pressure_locks: list of locks with > 2 tasks (likely serialization)
+    - pressure_score: 0.0 (no pressure) to 1.0 (severe serialization)
+    """
+    tasks = plan_obj.get("tasks", [])
+    if not isinstance(tasks, list):
+        return {
+            "lock_counts": {},
+            "max_lock_count": 0,
+            "high_pressure_locks": [],
+            "pressure_score": 0.0,
+        }
+
+    lock_counts: dict[str, int] = {}
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        locks = t.get("locks", [])
+        if not isinstance(locks, list):
+            continue
+        for lock in locks:
+            if isinstance(lock, str) and lock.strip():
+                lock_counts[lock.strip()] = lock_counts.get(lock.strip(), 0) + 1
+
+    max_lock_count = max(lock_counts.values()) if lock_counts else 0
+    high_pressure_locks = [k for k, v in lock_counts.items() if v > 2]
+
+    # Pressure score: 0 if max <= 2, scaled up to 1.0 if max >= 8
+    pressure_score = 0.0
+    if max_lock_count > 2:
+        pressure_score = min(1.0, (max_lock_count - 2) / 6)
+
+    return {
+        "lock_counts": lock_counts,
+        "max_lock_count": max_lock_count,
+        "high_pressure_locks": high_pressure_locks,
+        "pressure_score": pressure_score,
+    }
+
+
+def _compute_task_focus_score(task: dict[str, Any]) -> float:
+    """Compute focus score for a single task (0.0 = vague, 1.0 = highly focused).
+
+    Scoring:
+    - +0.3 if description mentions specific files/modules (patterns: .py, .ts, src/, tests/)
+    - +0.2 if description mentions specific functions/classes (patterns: def, class, function)
+    - +0.2 if description mentions tests or test coverage
+    - +0.2 if description is sufficiently detailed (>100 chars)
+    - +0.1 if title is specific (not generic like "implement", "do", "setup")
+    - -0.3 if description is vague (contains "subsystem", "everything", "all of")
+    """
+    desc = str(task.get("description", "")).lower()
+    title = str(task.get("title", "")).lower()
+
+    score = 0.0
+
+    # +0.3 for file/module references
+    file_patterns = [".py", ".ts", ".js", ".json", "src/", "tests/", "bridge/", "docs/"]
+    if any(pat in desc for pat in file_patterns):
+        score += 0.3
+
+    # +0.2 for function/class references
+    code_patterns = ["def ", "class ", "function ", "const ", "import ", "from "]
+    if any(pat in desc for pat in code_patterns):
+        score += 0.2
+
+    # +0.2 for test mentions
+    test_patterns = ["test", "pytest", "assert", "validate", "verify", "coverage"]
+    if any(pat in desc for pat in test_patterns):
+        score += 0.2
+
+    # +0.2 for detailed description
+    if len(desc) > 100:
+        score += 0.2
+
+    # +0.1 for specific title (not generic)
+    vague_titles = ["implement", "do ", "setup", "handle", "work on", "complete"]
+    if not any(vt in title for vt in vague_titles):
+        score += 0.1
+
+    # -0.3 for vague descriptions
+    vague_patterns = ["subsystem", "everything", "all of ", "entire ", "whole "]
+    if any(vp in desc for vp in vague_patterns):
+        score -= 0.3
+
+    return max(0.0, min(1.0, score))
+
+
+def _compute_coverage_intent(plan_obj: dict[str, Any]) -> float:
+    """Compute proportion of tasks that mention tests or validation outputs.
+
+    Returns float in [0.0, 1.0] representing the proportion.
+    Throughput mode target: >= 0.30 (30%)
+    """
+    tasks = plan_obj.get("tasks", [])
+    if not isinstance(tasks, list) or len(tasks) == 0:
+        return 0.0
+
+    test_patterns = ["test", "pytest", "assert", "validate", "verify", "spec", "check"]
+    test_count = 0
+
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        desc = str(t.get("description", "")).lower()
+        title = str(t.get("title", "")).lower()
+        text = desc + " " + title
+        if any(pat in text for pat in test_patterns):
+            test_count += 1
+
+    return test_count / len(tasks)
+
+
+def _analyze_risk_flags(plan_obj: dict[str, Any]) -> dict[str, Any]:
+    """Analyze risk flags in the plan.
+
+    Returns dict with:
+    - solo_tasks: list of task IDs with solo=True
+    - high_intensity_tasks: list of task IDs with intensity="high"
+    - risk_count: total count of risky tasks
+    - risk_ratio: proportion of risky tasks (target: < 0.2 in throughput mode)
+    """
+    tasks = plan_obj.get("tasks", [])
+    if not isinstance(tasks, list):
+        return {
+            "solo_tasks": [],
+            "high_intensity_tasks": [],
+            "risk_count": 0,
+            "risk_ratio": 0.0,
+        }
+
+    solo_tasks = []
+    high_intensity_tasks = []
+
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id", "unknown"))
+        if t.get("solo", False):
+            solo_tasks.append(tid)
+        intensity = str(t.get("estimated_intensity", t.get("intensity", "low"))).lower()
+        if intensity == "high":
+            high_intensity_tasks.append(tid)
+
+    risk_count = len(set(solo_tasks) | set(high_intensity_tasks))
+    risk_ratio = risk_count / len(tasks) if tasks else 0.0
+
+    return {
+        "solo_tasks": solo_tasks,
+        "high_intensity_tasks": high_intensity_tasks,
+        "risk_count": risk_count,
+        "risk_ratio": risk_ratio,
+    }
+
+
+def _build_plan_quality_report(
+    plan_obj: dict[str, Any],
+    max_workers_limit: int,
+    planner_profile: str = "balanced",
+) -> dict[str, Any]:
+    """Build comprehensive plan quality report for throughput mode.
+
+    Returns dict with:
+    - metrics: all computed metrics
+    - issues: list of actionable issue strings
+    - should_reprompt: bool - whether to trigger a reprompt
+    - reprompt_message: str - targeted guidance for the reprompt
+    - hard_failures: list of issues that are hard failures (must reprompt)
+    - soft_warnings: list of issues that are warnings only
+    """
+    # Only do quality scoring in throughput mode
+    if planner_profile != "throughput":
+        return {
+            "metrics": {},
+            "issues": [],
+            "should_reprompt": False,
+            "reprompt_message": "",
+            "hard_failures": [],
+            "soft_warnings": [],
+        }
+
+    tasks = plan_obj.get("tasks", [])
+    task_count = len(tasks) if isinstance(tasks, list) else 0
+    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else [])
+                     if isinstance(t, dict) and not t.get("depends_on"))
+    plan_cap = int(plan_obj.get("max_parallel_tasks", 1) or 1)
+
+    # Compute quality metrics
+    lock_pressure = _compute_lock_pressure(plan_obj)
+    coverage_intent = _compute_coverage_intent(plan_obj)
+    risk_flags = _analyze_risk_flags(plan_obj)
+
+    # Compute average focus score
+    focus_scores = []
+    for t in (tasks if isinstance(tasks, list) else []):
+        if isinstance(t, dict):
+            focus_scores.append(_compute_task_focus_score(t))
+    avg_focus_score = sum(focus_scores) / len(focus_scores) if focus_scores else 0.0
+
+    metrics = {
+        "plan_cap": plan_cap,
+        "root_ready": root_count,
+        "total_tasks": task_count,
+        "max_lock_count": lock_pressure["max_lock_count"],
+        "high_pressure_locks": lock_pressure["high_pressure_locks"],
+        "lock_pressure_score": lock_pressure["pressure_score"],
+        "avg_focus_score": round(avg_focus_score, 2),
+        "coverage_intent": round(coverage_intent, 2),
+        "risk_ratio": round(risk_flags["risk_ratio"], 2),
+        "solo_tasks": risk_flags["solo_tasks"],
+        "high_intensity_tasks": risk_flags["high_intensity_tasks"],
+    }
+
+    # Categorize issues into hard failures vs soft warnings
+    hard_failures: list[str] = []
+    soft_warnings: list[str] = []
+
+    # HARD FAILURE: plan_cap < max_workers
+    if plan_cap < max_workers_limit:
+        hard_failures.append(
+            f"max_parallel_tasks={plan_cap} < required {max_workers_limit}"
+        )
+
+    # HARD FAILURE: root_ready < max_workers
+    if root_count < max_workers_limit:
+        hard_failures.append(
+            f"root_tasks={root_count} < required {max_workers_limit}"
+        )
+
+    # HARD FAILURE: high lock pressure (serializes workers)
+    if lock_pressure["max_lock_count"] > 3:
+        locks_str = ", ".join(lock_pressure["high_pressure_locks"][:3])
+        hard_failures.append(
+            f"lock_pressure=high (max {lock_pressure['max_lock_count']} tasks share a lock: {locks_str})"
+        )
+
+    # SOFT WARNING: total_tasks < 2*workers (only if root_ready is also borderline)
+    min_task_count = max_workers_limit * 2
+    if task_count < min_task_count:
+        if root_count < max_workers_limit + 2:  # borderline roots
+            soft_warnings.append(
+                f"total_tasks={task_count} < recommended {min_task_count} (with borderline roots)"
+            )
+        else:
+            soft_warnings.append(
+                f"total_tasks={task_count} < recommended {min_task_count} (acceptable: roots={root_count})"
+            )
+
+    # SOFT WARNING: low coverage intent
+    if coverage_intent < 0.30:
+        soft_warnings.append(
+            f"coverage_intent={coverage_intent:.0%} < recommended 30% (few tasks mention tests)"
+        )
+
+    # SOFT WARNING: low focus scores
+    if avg_focus_score < 0.4:
+        soft_warnings.append(
+            f"avg_focus_score={avg_focus_score:.2f} < recommended 0.40 (tasks may be vague)"
+        )
+
+    # SOFT WARNING: high risk ratio
+    if risk_flags["risk_ratio"] > 0.2:
+        soft_warnings.append(
+            f"risk_ratio={risk_flags['risk_ratio']:.0%} > recommended 20% (too many solo/high tasks)"
+        )
+
+    # Build reprompt message
+    all_issues = hard_failures + soft_warnings
+    should_reprompt = len(hard_failures) > 0
+
+    reprompt_message = ""
+    if should_reprompt:
+        issues_text = "\n".join(f"  - {issue}" for issue in all_issues)
+        reprompt_message = f"Issues detected:\n{issues_text}"
+
+        # Add targeted guidance based on failure type
+        if any("lock_pressure" in hf for hf in hard_failures):
+            reprompt_message += "\n\nYour locks are serializing workers. Use distinct locks per file/module or separate files to enable true parallelism."
+
+    return {
+        "metrics": metrics,
+        "issues": all_issues,
+        "should_reprompt": should_reprompt,
+        "reprompt_message": reprompt_message,
+        "hard_failures": hard_failures,
+        "soft_warnings": soft_warnings,
+    }
+
+
+def _build_throughput_correction_prompt(
+    analysis: dict[str, Any],
+    max_workers_limit: int,
+    *,
+    quality_report: dict[str, Any] | None = None,
+    attempt_number: int = 1,
+) -> str:
+    """Build a strict correction prompt for thin plans in throughput mode.
+
+    Args:
+        analysis: Result from _analyze_plan_width
+        max_workers_limit: Target worker count
+        quality_report: Optional result from _build_plan_quality_report (for detailed guidance)
+        attempt_number: Current retry attempt (1-based); adds targeted guidance on attempt 2+
+    """
+    # Combine issues from analysis and quality report
+    all_issues = list(analysis.get("issues", []))
+    all_warnings = list(analysis.get("warnings", []))
+
+    if quality_report:
+        # Add quality-specific issues
+        for issue in quality_report.get("hard_failures", []):
+            if issue not in all_issues:
+                all_issues.append(issue)
+        for warning in quality_report.get("soft_warnings", []):
+            if warning not in all_warnings:
+                all_warnings.append(warning)
+
+    issues_text = "\n".join(f"  - {issue}" for issue in all_issues)
+    warnings_text = "\n".join(f"  - {warning}" for warning in all_warnings) if all_warnings else ""
+
+    # Build targeted guidance based on failure type and attempt number
+    targeted_guidance = ""
+
+    # Check for lock pressure issues
+    has_lock_pressure = quality_report and any(
+        "lock_pressure" in hf for hf in quality_report.get("hard_failures", [])
+    )
+
+    if has_lock_pressure or attempt_number >= 2:
+        # On second attempt or if lock pressure detected, add explicit lock guidance
+        targeted_guidance = """
+        **LOCK SERIALIZATION WARNING:**
+        Your locks are serializing workers! This kills parallelism.
+
+        FIX THIS:
+        - Use DISTINCT lock keys per file or module (e.g., "m4-types", "m4-io-reader", "m5-eval")
+        - Do NOT put multiple tasks behind the same lock unless they truly conflict
+        - If a shared integration file must be touched, create ONE "INTEGRATION" task that runs LAST
+        - Example: 8 tasks using lock "init-m4" = serial execution = BAD
+                   8 tasks using locks "m4-types", "m4-io", "m4-preprocess", etc. = parallel = GOOD
+        """
+
+    base_prompt = textwrap.dedent(f"""
+        PLAN REJECTED: Your plan does not meet throughput mode requirements.
+
+        **HARD FAILURES (must fix):**
+        {issues_text}
+        {f'''
+        **WARNINGS (should address):**
+        {warnings_text}
+        ''' if warnings_text else ''}
+        {targeted_guidance}
+
+        **THROUGHPUT MODE REQUIREMENTS (MANDATORY):**
+        1. Set max_parallel_tasks = {max_workers_limit}
+        2. Create at least {max_workers_limit} root tasks (depends_on = [])
+        3. Target {max_workers_limit * 2}+ total tasks (recommended, not strictly required)
+        4. Use DISTINCT locks per file/module - avoid lock serialization
+        5. Split large tasks into smaller, file-focused tasks (each touching ≤3 files)
+
+        **QUALITY REQUIREMENTS:**
+        - Each task description MUST include files/modules touched
+        - Each task SHOULD have clear acceptance criteria (what makes it "done")
+        - Prefer 10-20 meaningful tasks over 50 micro-edits
+        - Avoid tasks that only rename/reformat without functional change
+
+        **If you cannot produce {max_workers_limit}+ root tasks without junk tasks:**
+        Produce fewer tasks but ensure root_ready >= {max_workers_limit} by splitting along meaningful seams.
+
+        Please regenerate the plan with these requirements. Output ONLY the corrected JSON.
+    """).strip()
+
+    return base_prompt
+
+
 def _build_task_plan_prompt(
     *,
     design_doc_text: str,
@@ -1355,6 +2855,7 @@ def _build_task_plan_prompt(
     cpu_threshold_pct_total: float,
     mem_threshold_pct_total: float,
     machine_info: dict[str, Any],
+    planner_profile: str = "balanced",
 ) -> str:
     design_excerpt = _truncate(design_doc_text, 40000)  # Increased for multi-doc support
     cores = machine_info.get("cpu_cores")
@@ -1425,17 +2926,100 @@ For each milestone in the document, identify and create the necessary tasks."""
         Concurrency:
         - Choose `max_parallel_tasks` <= {max_workers_limit}.
         - Prefer fewer parallel tasks if you believe tasks are likely to conflict or require heavy commands.
+
+        Shared integration files policy (CRITICAL for avoiding merge conflicts):
+        - These files are HIGH CONFLICT RISK and should be edited by AT MOST ONE task:
+          * src/formula_foundry/*/\\_\\_init\\_\\_.py (package exports)
+          * pyproject.toml (dependencies, config)
+        - If multiple tasks need to add exports to __init__.py:
+          * DO NOT have each task edit __init__.py directly
+          * Instead, have ONE dedicated task (e.g., "API-EXPORTS" or "INTEGRATE-EXPORTS") that:
+            - Runs LAST (depends_on all implementation tasks)
+            - Collects all new exports and updates __init__.py once
+          * Implementation tasks should focus on creating modules, not updating package exports
+        - Use lock keys to prevent conflicts: e.g., locks: ["init-m4"], locks: ["pyproject"]
 {agent_assignment_instruction}
         {milestone_instruction}
         """
     ).strip()
 
-    return "\n\n".join(
-        [
-            header,
-            "---\n\n# Design Document\n" + design_excerpt,
-        ]
-    )
+    # Add THROUGHPUT MODE block if enabled
+    throughput_block = ""
+    if planner_profile == "throughput":
+        throughput_block = textwrap.dedent(f"""
+            ---
+
+            # THROUGHPUT MODE (ENABLED) - HIGH-OUTPUT, HIGH-QUALITY
+
+            You are in **throughput mode** - maximize parallel worker utilization while maintaining quality.
+            This is NOT "microtask spam" mode. Each task must produce meaningful progress.
+
+            **MANDATORY REQUIREMENTS:**
+
+            1. **Set max_parallel_tasks = {max_workers_limit}** (the allowed limit).
+
+            2. **Create at least {max_workers_limit} root tasks** (tasks with `depends_on: []`) that can start immediately.
+               - Workers idle when there are no ready tasks. More roots = faster start.
+
+            3. **Target {max_workers_limit * 2}+ total tasks** to keep the worker pipeline busy.
+               - This is a soft target. If you cannot produce this many meaningful tasks, produce fewer.
+
+            4. **Use DISTINCT locks per file/module:**
+               - BAD: 8 tasks all using `locks: ["init-m4"]` (serial execution = no parallelism)
+               - GOOD: Tasks using `locks: ["m4-types"]`, `locks: ["m4-io"]`, `locks: ["m4-preprocess"]` (true parallelism)
+               - Do NOT share a lock across more than 2-3 tasks unless truly necessary.
+
+            5. **Prefer 10-20 meaningful tasks over 50 micro-edits:**
+               - Each task should produce a testable unit of work (feature, function, module, test file).
+               - Avoid tasks that only rename/reformat without functional change.
+               - Avoid tasks that are too vague ("implement subsystem") or too tiny ("add import line").
+
+            **TASK QUALITY REQUIREMENTS:**
+
+            Each task description MUST include:
+
+            6. **Files/modules touched** (or lock key):
+               - Example: "Files: src/formula_foundry/m4/types.py, tests/test_m4_types.py"
+               - This helps validate lock correctness.
+
+            7. **Acceptance criteria** (what makes the task "done"):
+               - Example: "Done when: NetworkConfig dataclass exists with fields for host, port, timeout; unit tests pass"
+               - Must be concrete and verifiable.
+
+            8. **Why this task is valuable** (1 sentence):
+               - Example: "Provides typed configuration for network connections, enabling type-safe API calls"
+
+            **INTEGRATION TASK PATTERN:**
+
+            If a shared integration file (e.g., `__init__.py`) must be touched by multiple features:
+            - Create ONE "INTEGRATION" or "API-EXPORTS" task that runs LAST (`depends_on` all impl tasks)
+            - Implementation tasks should create modules WITHOUT updating package exports
+            - The integration task collects all exports and updates `__init__.py` once
+
+            **ANTI-PATTERNS TO AVOID:**
+
+            - Splitting into tasks that only rename/reformat unless paired with a functional change
+            - Creating 50 tiny tasks just to hit a task count target
+            - Putting 8+ tasks behind the same lock (kills parallelism)
+            - Vague descriptions like "implement subsystem" or "do M4 work"
+
+            **EXAMPLE of a good throughput plan for {max_workers_limit} workers:**
+            - {max_workers_limit}+ root tasks (all can start immediately)
+            - {max_workers_limit * 2}+ total tasks (with meaningful scope each)
+            - max_parallel_tasks = {max_workers_limit}
+            - Each task names specific files, has clear acceptance criteria
+            - Uses DISTINCT lock keys: "m4-types", "m4-io-reader", "m4-io-writer", "m5-eval", etc.
+
+            **If you cannot produce {max_workers_limit}+ root tasks without junk tasks:**
+            Produce fewer tasks but ensure root_ready >= {max_workers_limit} by splitting along meaningful seams (modules, test files, features).
+        """).strip()
+
+    parts = [header]
+    if throughput_block:
+        parts.append(throughput_block)
+    parts.append("---\n\n# Design Document\n" + design_excerpt)
+
+    return "\n\n".join(parts)
 
 
 def _build_parallel_task_prompt(
@@ -1475,7 +3059,7 @@ def _build_parallel_task_prompt(
         - Implement ONLY this task.
         - Keep changes focused.
         - Make the repo consistent and runnable.
-        - Commit your changes when done.
+        - DO NOT run git add or git commit - the orchestrator handles commits.
 
         Resource safety:
         - Avoid running heavy commands while other agents may be running.
@@ -1992,48 +3576,210 @@ def _run_parallel_task(
             )
             return
 
-        # Validate JSON output (STRICT - unparseable or missing output is FAILED)
+        # Validate JSON output with auto-recovery for bad output
+        # Track correction attempts for this specific agent call
+        if not hasattr(task, '_json_correction_count'):
+            task._json_correction_count = 0
+        if not hasattr(task, '_agent_fallback_used'):
+            task._agent_fallback_used = False
+
+        validation_error: str | None = None
+        turn_obj: dict | None = None
+        normalization_warnings: list[str] = []
+
         if not out_path.exists():
-            task.status = "failed"
-            task.error = "Agent did not produce output file"
-            task.manual_path = _write_manual_task_file(
-                manual_dir=manual_dir,
-                task=task,
-                reason=task.error,
-                agent_cmd=cmd,
-                schema_path=schema_path,
-                prompt_path=prompt_path,
-                out_path=out_path,
-                raw_log_path=raw_log_path,
-            )
-            return
+            validation_error = "Agent did not produce output file"
+        else:
+            # Validate file is not 0-bytes (critical robustness check)
+            is_valid, turn_data, file_error = validate_json_file(out_path)
+            if not is_valid:
+                if "empty (0 bytes)" in (file_error or ""):
+                    print(f"[orchestrator] {task.id}: CRITICAL: 0-byte turn.json detected, triggering retry")
+                    validation_error = "0-byte output file - agent output was not written correctly"
+                else:
+                    validation_error = f"Invalid turn.json: {file_error}"
+            else:
+                turn_text = out_path.read_text(encoding="utf-8")
 
-        turn_text = out_path.read_text(encoding="utf-8")
-        turn_obj = _try_parse_json(turn_text)
-        if turn_obj is None:
-            task.status = "failed"
-            task.error = f"Agent output is not valid JSON: {turn_text[:500]}"
-            task.manual_path = _write_manual_task_file(
-                manual_dir=manual_dir,
-                task=task,
-                reason=task.error,
-                agent_cmd=cmd,
-                schema_path=schema_path,
-                prompt_path=prompt_path,
-                out_path=out_path,
-                raw_log_path=raw_log_path,
-            )
-            return
+                # Use TurnNormalizer for robust payload extraction and invariant override
+                norm_result = normalize_agent_output(
+                    turn_text,
+                    expected_agent=agent,
+                    expected_milestone_id=milestone_id,
+                    stats_id_set=stats_id_set,
+                    default_phase="implement",
+                )
 
-        ok, msg = _validate_turn(
-            turn_obj,
-            expected_agent=agent,
-            expected_milestone_id=milestone_id,
-            stats_id_set=stats_id_set,
-        )
-        if not ok:
+                if norm_result.success and norm_result.turn:
+                    turn_obj = norm_result.turn
+                    normalization_warnings = norm_result.warnings
+                    # Log normalization warnings (auto-corrections)
+                    for warning in normalization_warnings:
+                        print(f"[orchestrator] {task.id}: NORMALIZED: {warning}")
+
+                    # Use lenient validation (auto-corrects mismatches with warnings)
+                    ok, msg, val_warnings = _validate_turn_lenient(
+                        turn_obj,
+                        expected_agent=agent,
+                        expected_milestone_id=milestone_id,
+                        stats_id_set=stats_id_set,
+                    )
+                    for warning in val_warnings:
+                        print(f"[orchestrator] {task.id}: VALIDATION: {warning}")
+                    if not ok:
+                        validation_error = f"Invalid JSON output after normalization: {msg}"
+                    else:
+                        # Write normalized turn atomically to ensure file integrity
+                        try:
+                            atomic_write_json(out_path, turn_obj, indent=2)
+                            print(f"[orchestrator] {task.id}: turn.json written atomically")
+                        except Exception as e:
+                            print(f"[orchestrator] {task.id}: WARNING: atomic write failed: {e}")
+                else:
+                    # Normalization failed - fall back to direct parsing
+                    turn_obj = _try_parse_json(turn_text)
+                    if turn_obj is None:
+                        validation_error = f"Cannot extract JSON payload: {norm_result.error or 'unknown error'}"
+                    else:
+                        # Got JSON but didn't pass normalizer - try lenient validation directly
+                        ok, msg, val_warnings = _validate_turn_lenient(
+                            turn_obj,
+                            expected_agent=agent,
+                            expected_milestone_id=milestone_id,
+                            stats_id_set=stats_id_set,
+                        )
+                        for warning in val_warnings:
+                            print(f"[orchestrator] {task.id}: VALIDATION: {warning}")
+                        if not ok:
+                            validation_error = f"Invalid JSON output: {msg}"
+
+        # Auto-recovery: reprompt on validation error
+        if validation_error:
+            max_json_corrections = config.max_json_correction_attempts
+            task._json_correction_count += 1
+
+            # Check for noncompliant output patterns (tools disabled, markdown, etc.)
+            raw_text = ""
+            noncompliant_violations: list[str] = []
+            has_critical_tool_violation = False
+            if out_path.exists():
+                try:
+                    raw_text = out_path.read_text(encoding="utf-8")
+                    _, noncompliant_violations, has_critical_tool_violation = _is_noncompliant_and_should_use_stricter_prompt(raw_text)
+                except Exception:
+                    pass
+
+            if noncompliant_violations:
+                print(f"[orchestrator] {task.id}: Noncompliant output detected: {noncompliant_violations}")
+                if has_critical_tool_violation:
+                    print(f"[orchestrator] {task.id}: CRITICAL: Agent incorrectly claimed tools are disabled - will explicitly correct")
+
+            if task._json_correction_count <= max_json_corrections:
+                # Reprompt with strict correction prompt
+                print(f"[orchestrator] {task.id}: JSON validation failed ({validation_error}), "
+                      f"auto-reprompt {task._json_correction_count}/{max_json_corrections}")
+
+                # Build strict correction prompt using contract hardening
+                correction_prompt = _build_strict_correction_prompt(
+                    agent=agent,
+                    milestone_id=milestone_id,
+                    validation_error=validation_error,
+                    task_title=task.title,
+                    task_description=task.description,
+                    noncompliant_violations=noncompliant_violations if noncompliant_violations else None,
+                    attempt_number=task._json_correction_count,
+                    has_critical_tool_violation=has_critical_tool_violation,
+                )
+
+                # Save correction prompt and retry
+                correction_path = task.task_dir / f"correction_{task._json_correction_count}.txt"
+                correction_path.write_text(correction_prompt, encoding="utf-8")
+                task.prompt_path = correction_path
+
+                correction_out_path = task.task_dir / f"turn_correction_{task._json_correction_count}.json"
+                correction_raw_log = task.task_dir / f"raw_correction_{task._json_correction_count}.log"
+
+                cmd = [str(script_path), str(correction_path), str(schema_path), str(correction_out_path)]
+                res = _run_cmd_monitored(
+                    cmd,
+                    cwd=task.worktree_path,
+                    env=env,
+                    prefix=f"{prefix} correction",
+                    raw_log_path=correction_raw_log,
+                    stream_to_terminal=True,
+                    terminal_max_bytes=terminal_max_bytes,
+                    terminal_max_line_length=terminal_max_line_length,
+                    cpu_threshold_pct_total=cpu_threshold_pct_total,
+                    mem_threshold_pct_total=mem_threshold_pct_total,
+                    sample_interval_s=config.parallel.sample_interval_s,
+                    consecutive_samples=config.parallel.consecutive_samples,
+                    kill_grace_s=config.parallel.kill_grace_s,
+                    allow_resource_intensive=allow_resource_intensive,
+                )
+
+                if res.returncode == 0 and correction_out_path.exists():
+                    # Re-validate the correction output using TurnNormalizer
+                    corr_text = correction_out_path.read_text(encoding="utf-8")
+
+                    # Check for noncompliant patterns in correction output
+                    is_still_noncompliant, new_violations, new_has_critical = _is_noncompliant_and_should_use_stricter_prompt(corr_text)
+                    if is_still_noncompliant:
+                        print(f"[orchestrator] {task.id}: Correction output still noncompliant: {new_violations}")
+                        # Force another correction attempt with stricter prompt
+                        noncompliant_violations = new_violations
+                        has_critical_tool_violation = new_has_critical
+                    else:
+                        # Use TurnNormalizer for correction output
+                        corr_norm = normalize_agent_output(
+                            corr_text,
+                            expected_agent=agent,
+                            expected_milestone_id=milestone_id,
+                            stats_id_set=stats_id_set,
+                            default_phase="implement",
+                        )
+                        if corr_norm.success and corr_norm.turn:
+                            corr_obj = corr_norm.turn
+                            for w in corr_norm.warnings:
+                                print(f"[orchestrator] {task.id}: CORRECTION NORMALIZED: {w}")
+                            # Use lenient validation
+                            ok2, msg2, val_w = _validate_turn_lenient(
+                                corr_obj,
+                                expected_agent=agent,
+                                expected_milestone_id=milestone_id,
+                                stats_id_set=stats_id_set,
+                            )
+                            for w in val_w:
+                                print(f"[orchestrator] {task.id}: CORRECTION VALIDATION: {w}")
+                            if ok2:
+                                # Correction succeeded!
+                                print(f"[orchestrator] {task.id}: JSON correction succeeded on attempt {task._json_correction_count}")
+                                turn_obj = corr_obj
+                                out_path = correction_out_path
+                                validation_error = None
+
+                # If still invalid, try fallback agent
+                if validation_error and not task._agent_fallback_used:
+                    other_agent = "claude" if agent == "codex" else "codex"
+                    # Check if other agent is enabled
+                    enabled = config.enable_agents or []
+                    if other_agent in enabled:
+                        print(f"[orchestrator] {task.id}: Falling back to {other_agent} after {agent} failed")
+                        task._agent_fallback_used = True
+                        task._json_correction_count = 0
+
+                        # Update agent and script
+                        agent = other_agent
+                        script_rel = config.agent_scripts.get(agent, "")
+                        script_path = (task.worktree_path / script_rel) if script_rel else None
+                        if script_path and script_path.exists():
+                            prefix = f"[w{worker_id:02d} {agent} {task.id}]"
+                            # Retry with new agent (continue loop)
+                            continue
+
+        # If validation still fails after all attempts, mark as failed
+        if validation_error:
             task.status = "failed"
-            task.error = f"Invalid JSON output: {msg}"
+            task.error = f"JSON validation failed after recovery attempts: {validation_error}"
             task.manual_path = _write_manual_task_file(
                 manual_dir=manual_dir,
                 task=task,
@@ -2050,20 +3796,37 @@ def _run_parallel_task(
         task.work_completed = bool(turn_obj.get("work_completed", False))
         task.turn_summary = str(turn_obj.get("summary", ""))[:500]
 
-        # Ensure a commit exists (auto-commit any uncommitted changes)
+        # Collect changes as patch artifact (no git commit required from worker)
+        # This eliminates the ".git/worktrees/*/index.lock permission denied" class of failures
         rc, porcelain, err = _run_cmd(["git", "status", "--porcelain=v1"], cwd=task.worktree_path, env=os.environ.copy())
         has_changes = rc == 0 and bool(porcelain.strip())
         if has_changes:
-            _run_cmd(["git", "add", "-A"], cwd=task.worktree_path, env=os.environ.copy())
-            _run_cmd(
-                ["git", "commit", "-m", f"task({task.id}): auto commit"],
-                cwd=task.worktree_path,
-                env=os.environ.copy(),
+            # Collect patch artifact from worktree
+            patch_artifact = collect_patch_artifact(
+                worktree_path=task.worktree_path,
+                task_id=task.id,
+                base_sha=task.base_sha,
             )
-            # Get commit SHA
-            rc_sha, sha_out, _ = _run_cmd(["git", "rev-parse", "HEAD"], cwd=task.worktree_path, env=os.environ.copy())
-            if rc_sha == 0:
-                task.commit_sha = sha_out.strip()
+            if patch_artifact.success:
+                # Save patch artifacts atomically
+                patch_path, manifest_path = save_patch_artifact(patch_artifact, task.task_dir)
+                task.patch_path = patch_path
+                task.has_patch = True
+                print(f"[orchestrator] {task.id}: collected patch with {len(patch_artifact.changes)} changed files")
+            else:
+                print(f"[orchestrator] WARNING: {task.id}: patch collection failed: {patch_artifact.error}")
+                # Fall back to legacy worktree-based commit attempt (may fail in sandbox)
+                _run_cmd(["git", "add", "-A"], cwd=task.worktree_path, env=os.environ.copy())
+                rc_commit, out_commit, err_commit = _run_cmd(
+                    ["git", "commit", "-m", f"task({task.id}): auto commit"],
+                    cwd=task.worktree_path,
+                    env=os.environ.copy(),
+                )
+                if rc_commit == 0:
+                    rc_sha, sha_out, _ = _run_cmd(["git", "rev-parse", "HEAD"], cwd=task.worktree_path, env=os.environ.copy())
+                    if rc_sha == 0:
+                        task.commit_sha = sha_out.strip()
+                # If commit fails, that's OK - we'll rely on the patch artifact
 
         # CRITICAL: Task is only "done" if work_completed==true
         if task.work_completed:
@@ -2071,10 +3834,10 @@ def _run_parallel_task(
             task.error = None
             return
 
-        # Check if there were actual code changes committed despite work_completed=false
-        if task.commit_sha and task.commit_sha != task.base_sha:
-            # Agent made changes but claimed work_completed=false - trust the commit, mark done
-            print(f"[orchestrator] NOTE: {task.id} has work_completed=false but made commits; marking done")
+        # Check if there were actual changes (patch or commit) despite work_completed=false
+        if getattr(task, 'has_patch', False) or (task.commit_sha and task.commit_sha != task.base_sha):
+            # Agent made changes but claimed work_completed=false - trust the changes, mark done
+            print(f"[orchestrator] NOTE: {task.id} has work_completed=false but made changes; marking done")
             task.status = "done"
             task.error = None
             return
@@ -2172,6 +3935,64 @@ def run_parallel(
     machine_info = _collect_machine_info()
     selftest_mode = getattr(args, "selftest_parallel", False)
 
+    # Preflight check: detect dirty repo before spending credits
+    # Skip in selftest mode since we're not doing real work
+    if not selftest_mode:
+        auto_stash = getattr(args, "auto_stash", False)
+        force_dirty = getattr(args, "force_dirty", False)
+        verify_mode = getattr(args, "verify_mode", "strict")
+
+        preflight_ok, preflight_msg, stash_ref = _preflight_check_repo(
+            state.project_root,
+            auto_stash=auto_stash,
+            force_dirty=force_dirty,
+            runs_dir=state.runs_dir,
+        )
+
+        if not preflight_ok:
+            print(f"\n[orchestrator] {preflight_msg}")
+            # Write error to runs_dir for debugging
+            error_path = state.runs_dir / "preflight_error.txt"
+            error_path.write_text(preflight_msg, encoding="utf-8")
+            stderr_path = state.runs_dir / "stderr.log"
+            stderr_path.write_text(f"PREFLIGHT FAILURE\n\n{preflight_msg}\n", encoding="utf-8")
+            # Write minimal run.json
+            run_json_path = state.runs_dir / "run.json"
+            run_json_path.write_text(
+                json.dumps(
+                    {
+                        "status": "preflight_failed",
+                        "error": preflight_msg,
+                        "run_id": state.run_id,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            return 2
+
+        if stash_ref:
+            print(f"[orchestrator] {preflight_msg}")
+            print(f"[orchestrator] IMPORTANT: Run 'git stash pop {stash_ref}' to restore your changes after the run")
+        elif "WARNING" in preflight_msg:
+            print(f"[orchestrator] {preflight_msg}")
+
+        # Run bootstrap to ensure environment is consistent before tasks start
+        print("[orchestrator] Running environment bootstrap...")
+        from bridge.verify_repair.bootstrap import run_bootstrap
+        bootstrap_log = state.runs_dir / "bootstrap_start.log"
+        bootstrap_result = run_bootstrap(
+            state.project_root,
+            log_path=bootstrap_log,
+            verbose=True,
+        )
+        if bootstrap_result.success:
+            if not bootstrap_result.skipped:
+                print(f"[orchestrator] Bootstrap completed in {bootstrap_result.elapsed_s:.1f}s")
+        else:
+            print(f"[orchestrator] WARNING: Bootstrap failed: {bootstrap_result.stderr[:200]}")
+            print("[orchestrator] Continuing anyway - verify will catch any missing dependencies")
+
     # In selftest mode, we use synthetic tasks
     if selftest_mode:
         print("[orchestrator] SELFTEST MODE: using synthetic tasks (no real agents)")
@@ -2212,12 +4033,52 @@ def run_parallel(
         max_workers = 2
         safe_cap = 2
     else:
-        design_doc_text = _read_text(state.design_doc_path) if state.design_doc_path.exists() else ""
+        # Parse design document using modular adapter layer
+        # This supports arbitrary markdown formats without rigid heading assumptions
+        contract_mode: ContractMode = getattr(args, "design_doc_contract", "loose")
+        milestone_override = getattr(args, "milestone_id", None)
+
+        design_spec = parse_design_doc(
+            state.design_doc_path,
+            contract_mode=contract_mode,
+            milestone_override=milestone_override,
+        )
+
+        # Log design doc parsing results
+        print(f"[orchestrator] design_doc: path={state.design_doc_path}, hash={design_spec.doc_hash[:12]}")
+        print(f"[orchestrator] design_doc: milestone={design_spec.milestone_id or '(not found)'}, "
+              f"requirements={len(design_spec.requirements)}, contract_mode={contract_mode}")
+
+        if design_spec.warnings:
+            for warning in design_spec.warnings[:5]:
+                print(f"[orchestrator] design_doc WARNING: {warning}")
+            if len(design_spec.warnings) > 5:
+                print(f"[orchestrator] design_doc: ... and {len(design_spec.warnings) - 5} more warnings")
+
+        # Check for errors based on contract mode
+        if design_spec.errors:
+            for error in design_spec.errors:
+                print(f"[orchestrator] design_doc ERROR: {error}")
+            if contract_mode != "off":
+                print(f"[orchestrator] ERROR: Design doc validation failed. Use --design-doc-contract=off to bypass.")
+                return 2
+
+        # Extract values for use in prompts
+        design_doc_text = design_spec.raw_text
         if not design_doc_text.strip():
-            print(f"[orchestrator] ERROR: design doc not found: {state.design_doc_path}")
+            print(f"[orchestrator] ERROR: design doc not found or empty: {state.design_doc_path}")
             return 2
 
-        milestone_id = _parse_milestone_id(design_doc_text)
+        # Use milestone from spec (may be CLI override or extracted)
+        milestone_id = design_spec.milestone_id or "M0"
+
+        # Save design spec artifact for debugging
+        design_spec_artifact = state.runs_dir / "design_doc_spec.json"
+        try:
+            import json
+            design_spec_artifact.write_text(json.dumps(design_spec.to_dict(), indent=2), encoding="utf-8")
+        except Exception:
+            pass  # Non-fatal if we can't write the artifact
 
         # Thresholds & stream limits
         cpu_thr = args.cpu_threshold if args.cpu_threshold > 0 else config.parallel.cpu_intensive_threshold_pct
@@ -2232,17 +4093,30 @@ def run_parallel(
         plan_prompt_path = state.runs_dir / "task_planner_prompt.txt"
         plan_out_path = state.runs_dir / "task_plan.json"
 
-        # Safety cap hint: default to half cores (e.g. 8 on a 16-core machine), up to 16.
+        # Safety cap hint: default to cores - 6 (leaving headroom for OS + orchestrator), capped at 12.
+        # This gives 10 on a 16-core machine. Use --max-workers to override if needed.
         cores = machine_info.get("cpu_cores") or 1
-        safe_cap = min(16, max(1, int(cores) // 2))
+        safe_cap = min(12, max(4, int(cores) - 6))
+
+        # If CLI explicitly sets --max-workers, use that as the planner limit too
+        cli_cap = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
+        planner_max_workers_limit = cli_cap if cli_cap > 0 else safe_cap
+
+        # Get planner profile (default: balanced)
+        planner_profile = getattr(args, "planner_profile", "balanced") or "balanced"
+
+        # Log throughput mode settings
+        if planner_profile == "throughput":
+            print(f"[orchestrator] planner_profile=throughput (target_roots={planner_max_workers_limit}, target_plan_cap={planner_max_workers_limit})")
 
         plan_prompt = _build_task_plan_prompt(
             design_doc_text=design_doc_text,
             milestone_id=milestone_id,
-            max_workers_limit=safe_cap,
+            max_workers_limit=planner_max_workers_limit,
             cpu_threshold_pct_total=cpu_thr,
             mem_threshold_pct_total=mem_thr,
             machine_info=machine_info,
+            planner_profile=planner_profile,
         )
         plan_prompt_path.write_text(plan_prompt, encoding="utf-8")
 
@@ -2262,21 +4136,110 @@ def run_parallel(
         # This prevents turn normalization from corrupting the planner output
         env["ORCH_SCHEMA_KIND"] = "task_plan"
 
-        rc, _, err = _run_cmd(
-            [str(planner_script), str(plan_prompt_path), str(plan_schema_path), str(plan_out_path)],
-            cwd=state.project_root,
-            env=env,
-            stream=True,
-        )
-        if rc != 0 or not plan_out_path.exists():
-            print("[orchestrator] ERROR: planning step failed")
-            if err:
-                print(err)
-            return 2
+        # Planner loop with auto-reprompt for throughput mode
+        # Uses comprehensive plan quality scoring to determine reprompt
+        max_planner_attempts = 3 if planner_profile == "throughput" else 1
+        plan_obj: dict[str, Any] | None = None
+        final_quality_report: dict[str, Any] | None = None
 
-        plan_obj = _try_parse_json(plan_out_path.read_text(encoding="utf-8"))
-        if not isinstance(plan_obj, dict):
-            print("[orchestrator] ERROR: could not parse task_plan.json")
+        for planner_attempt in range(max_planner_attempts):
+            current_prompt_path = plan_prompt_path if planner_attempt == 0 else state.runs_dir / f"task_planner_prompt_retry{planner_attempt}.txt"
+            current_out_path = plan_out_path if planner_attempt == 0 else state.runs_dir / f"task_plan_retry{planner_attempt}.json"
+
+            rc, _, err = _run_cmd(
+                [str(planner_script), str(current_prompt_path), str(plan_schema_path), str(current_out_path)],
+                cwd=state.project_root,
+                env=env,
+                stream=True,
+            )
+            if rc != 0 or not current_out_path.exists():
+                print("[orchestrator] ERROR: planning step failed")
+                if err:
+                    print(err)
+                return 2
+
+            plan_obj = _try_parse_json(current_out_path.read_text(encoding="utf-8"))
+            if not isinstance(plan_obj, dict):
+                print("[orchestrator] ERROR: could not parse task_plan.json")
+                return 2
+
+            # Analyze plan width (basic metrics)
+            analysis = _analyze_plan_width(plan_obj, planner_max_workers_limit)
+
+            # Build comprehensive quality report (throughput mode only)
+            quality_report = _build_plan_quality_report(
+                plan_obj, planner_max_workers_limit, planner_profile
+            )
+            final_quality_report = quality_report
+
+            # Log plan quality metrics
+            metrics = quality_report.get("metrics", {})
+            if planner_profile == "throughput" and metrics:
+                max_lock = metrics.get("max_lock_count", 0)
+                tests_intent = metrics.get("coverage_intent", 0)
+                should_reprompt = quality_report.get("should_reprompt", False)
+                print(
+                    f"[orchestrator] plan_quality: cap={metrics.get('plan_cap', 0)} "
+                    f"roots={metrics.get('root_ready', 0)} tasks={metrics.get('total_tasks', 0)} "
+                    f"lock_pressure=max(lock)={max_lock} tests_intent={tests_intent:.2f} "
+                    f"reprompt={'yes' if should_reprompt else 'no'}"
+                )
+            else:
+                # Balanced mode: simple width log
+                print(f"[orchestrator] plan_width: tasks={analysis['task_count']}, roots={analysis['root_count']}, plan_cap={analysis['plan_cap']}")
+
+            # In throughput mode, use quality report to determine reprompt
+            if planner_profile == "throughput" and quality_report.get("should_reprompt", False):
+                if planner_attempt < max_planner_attempts - 1:
+                    print(f"[orchestrator] WARNING: Plan does not meet throughput quality requirements (attempt {planner_attempt + 1}/{max_planner_attempts})")
+                    for issue in quality_report.get("hard_failures", []):
+                        print(f"[orchestrator]   FAIL: {issue}")
+                    for warning in quality_report.get("soft_warnings", []):
+                        print(f"[orchestrator]   WARN: {warning}")
+                    print("[orchestrator] Re-prompting planner with targeted correction...")
+
+                    # Build correction prompt with quality report and attempt number
+                    correction_prompt = _build_throughput_correction_prompt(
+                        analysis,
+                        planner_max_workers_limit,
+                        quality_report=quality_report,
+                        attempt_number=planner_attempt + 1,
+                    )
+                    # Append correction to original prompt
+                    combined_prompt = plan_prompt + "\n\n" + correction_prompt
+                    next_prompt_path = state.runs_dir / f"task_planner_prompt_retry{planner_attempt + 1}.txt"
+                    next_prompt_path.write_text(combined_prompt, encoding="utf-8")
+                    continue  # Retry with correction
+                else:
+                    # Exhausted retries - warn loudly but proceed (do not fail run)
+                    print(f"[orchestrator] WARNING: Plan still has quality issues after {max_planner_attempts} attempts. Proceeding anyway.")
+                    for issue in quality_report.get("hard_failures", []):
+                        print(f"[orchestrator]   FAIL: {issue}")
+                    for warning in quality_report.get("soft_warnings", []):
+                        print(f"[orchestrator]   WARN: {warning}")
+                    break
+            else:
+                # Plan is acceptable (or balanced mode)
+                if planner_profile == "throughput":
+                    # Log any soft warnings even for acceptable plans
+                    for warning in quality_report.get("soft_warnings", []):
+                        print(f"[orchestrator] note: {warning}")
+                break
+
+        # Write plan quality report to runs directory (observability)
+        if final_quality_report and planner_profile == "throughput":
+            quality_report_path = state.runs_dir / "plan_quality_report.json"
+            try:
+                quality_report_path.write_text(
+                    json.dumps(final_quality_report, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                print("[orchestrator] wrote plan_quality_report.json")
+            except Exception as e:
+                print(f"[orchestrator] warning: could not write plan_quality_report.json: {e}")
+
+        if plan_obj is None:
+            print("[orchestrator] ERROR: no valid plan generated")
             return 2
 
         raw_tasks = plan_obj.get("tasks", [])
@@ -2338,6 +4301,7 @@ def run_parallel(
                     agent=agent,
                     intensity=str(t.get("estimated_intensity", t.get("intensity", "low"))).strip().lower(),
                     locks=list(t.get("locks", []) or []),
+                    touched_paths=list(t.get("touched_paths", []) or []),
                     depends_on=list(t.get("depends_on", []) or []),
                     solo=bool(t.get("solo", False)),
                 )
@@ -2345,11 +4309,18 @@ def run_parallel(
 
         tasks = _select_only_tasks(tasks, args.only_task)
 
+        # Inject hot-file locks to prevent concurrent edits to critical files
+        tasks = _inject_hot_file_locks(tasks)
+
+        # Inject general overlap locks for any files touched by multiple tasks
+        # This provides "as narrow as possible, as strong as necessary" locking
+        tasks = _inject_overlap_locks(tasks)
+
         if not tasks:
             print("[orchestrator] ERROR: no tasks in plan")
             return 2
 
-        # Final worker count
+        # Final worker count (CLI override takes precedence and bypasses safe_cap)
         if args.max_workers and int(args.max_workers) > 0:
             max_workers = min(16, int(args.max_workers))
         else:
@@ -2370,7 +4341,12 @@ def run_parallel(
         term_line = 200
         allow_resource_intensive = True
 
-    print(f"[orchestrator] parallel: max_workers={max_workers} (safe_cap={safe_cap})")
+    # Verbose logging of all worker limits
+    if not selftest_mode:
+        cli_val = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
+        print(f"[orchestrator] parallel: max_workers={max_workers} (safe_cap={safe_cap}, plan_cap={plan_max_parallel}, cli_cap={cli_val if cli_val > 0 else 'auto'})")
+    else:
+        print(f"[orchestrator] parallel: max_workers={max_workers} (selftest mode)")
 
     tasks_dir = state.runs_dir / "tasks"
     worktrees_dir = state.runs_dir / "worktrees"
@@ -2405,25 +4381,227 @@ def run_parallel(
     running: dict[str, concurrent.futures.Future] = {}  # task_id -> future
     git_lock = threading.Lock()
 
+    # Patch integrator for commit-free integration
+    patch_integrator = PatchIntegrator(state.project_root, state.runs_dir)
+    patch_integrator.set_lock(git_lock)
+
     def locks_available(t: ParallelTask) -> bool:
-        return not (set(map(str, t.locks)) & held_locks)
+        # Check named locks
+        if set(map(str, t.locks)) & held_locks:
+            return False
+        # Check touched_paths overlap - auto-generate path-based locks
+        task_paths = set(str(p) for p in t.touched_paths)
+        return not task_paths & held_locks
+
+    # Create two-lane scheduler for high-utilization execution
+    lane_config = LaneConfig.from_max_workers(max_workers)
+    two_lane_scheduler = TwoLaneScheduler(
+        lane_config=lane_config,
+        tasks=tasks,
+        deps_satisfied_fn=deps_satisfied,
+        locks_available_fn=locks_available,
+    )
+    print(f"[orchestrator] two-lane scheduler: coding_lane={lane_config.coding_lane_size}, executor_lane={lane_config.executor_lane_size}")
+
+    # Create backfill generator to keep workers busy when primary tasks are blocked
+    backfill_generator = BackfillGenerator(
+        project_root=str(state.project_root),
+        min_queue_depth=max_workers * 2,  # Keep 2x workers worth of tasks ready
+    )
+    backfill_tasks_generated = 0
+    max_backfill_tasks = max_workers * 3  # Cap total backfill to avoid runaway
 
     def can_start(t: ParallelTask) -> bool:
-        if t.status != "pending":
-            return False
-        if not deps_satisfied(t):
-            return False
-        if t.solo and running:
-            return False
-        return locks_available(t)
+        """Check if task can start using two-lane scheduler."""
+        return two_lane_scheduler.can_start(t)
 
     def get_ready_tasks() -> list[ParallelTask]:
-        return [t for t in tasks if can_start(t)]
+        """Get ready tasks sorted by priority."""
+        return two_lane_scheduler.get_ready_tasks()
 
-    # Merge helper
+    # Allowed directories for backfill tasks (to prevent merge conflicts)
+    # NOTE: bridge/ removed from default to protect orchestrator core
+    BACKFILL_ALLOWED_DIRS = ["tests/", "docs/", ".github/"]
+
+    # Track recently rejected backfill paths for cooldown (prevents spam loops)
+    # Maps path -> cycle_count when rejected
+    backfill_rejection_cooldown: dict[str, int] = {}
+    BACKFILL_COOLDOWN_CYCLES = 5  # Number of cycles before retry after rejection
+
+    def derive_backfill_lock(filler: FillerTask) -> list[str]:
+        """Derive fine-grained locks for a backfill task based on its target.
+
+        Instead of a global "backfill" lock, we use task-type-specific locks.
+        This allows multiple backfill tasks to run concurrently when they
+        target different areas (e.g., lint and docs can run together).
+
+        Lock strategy:
+        - backfill:type:<task_type> - prevents two lint tasks colliding
+        - Different task types can run in parallel
+        """
+        # Use task type as lock key - allows parallel backfill of different types
+        task_type = filler.task_type
+        return [f"backfill:type:{task_type}"]
+
+    def convert_filler_to_parallel_task(filler: FillerTask) -> ParallelTask:
+        """Convert a FillerTask to a ParallelTask for execution.
+
+        Backfill tasks are scope-constrained to safe directories to prevent
+        merge conflicts with primary tasks.
+
+        Uses file-derived locks instead of global "backfill" lock to allow
+        concurrent backfill when tasks target different areas.
+        """
+        # Add scope constraint to description
+        scope_note = (
+            f"\n\nSCOPE CONSTRAINT: This is a FILLER task. You MUST only modify files in: "
+            f"{', '.join(BACKFILL_ALLOWED_DIRS)}. "
+            f"Do NOT touch files outside these directories (especially src/, api.py, bridge/loop.py, DESIGN_DOCUMENT.md, etc.)"
+        )
+
+        # Derive locks based on task type - allows parallel execution of different types
+        task_locks = derive_backfill_lock(filler)
+
+        return ParallelTask(
+            id=filler.id,
+            title=filler.title,
+            description=filler.description + scope_note,
+            agent="claude",  # Use Claude for safe filler tasks
+            intensity="light",  # Filler tasks are always light
+            locks=task_locks,  # Type-based locks instead of global "backfill"
+            depends_on=[],  # No dependencies
+            touched_paths=[],  # Will be filled during execution
+            solo=False,
+            max_retries=1,  # One retry max for filler tasks
+        )
+
+    def maybe_generate_backfill() -> int:
+        """Generate backfill tasks if needed. Returns count of tasks added."""
+        nonlocal backfill_tasks_generated, tasks, by_id
+
+        # Don't generate in selftest mode
+        if selftest_mode:
+            return 0
+
+        # Check if we've hit the backfill cap
+        if backfill_tasks_generated >= max_backfill_tasks:
+            return 0
+
+        # Check if we should generate based on queue depth
+        pending_count = sum(1 for t in tasks if t.status == "pending")
+        if not backfill_generator.should_generate(pending_count, max_workers):
+            return 0
+
+        # Check if there are available workers but no ready tasks
+        ready_count = len(get_ready_tasks())
+        available_workers = len(available_worker_ids)
+        if ready_count >= available_workers:
+            return 0
+
+        # Generate filler tasks
+        count_needed = min(
+            available_workers - ready_count,
+            max_backfill_tasks - backfill_tasks_generated,
+            5,  # Generate at most 5 at a time
+        )
+
+        if count_needed <= 0:
+            return 0
+
+        filler_tasks = backfill_generator.generate_filler_tasks(count_needed)
+        added = 0
+        for filler in filler_tasks:
+            parallel_task = convert_filler_to_parallel_task(filler)
+            tasks.append(parallel_task)
+            by_id[parallel_task.id] = parallel_task
+            backfill_tasks_generated += 1
+            added += 1
+            print(f"[orchestrator] BACKFILL: Generated {parallel_task.id} - {parallel_task.title}")
+
+        # Update scheduler with new tasks
+        if added > 0:
+            two_lane_scheduler.update_tasks(tasks)
+
+        return added
+
+    def record_backfill_rejection(task_id: str, reason: str, rejected_paths: list[str]) -> None:
+        """Record a backfill rejection for cooldown tracking.
+
+        When a backfill patch is scope-rejected, this records the rejection
+        to prevent generating similar tasks for a cooldown period.
+
+        Args:
+            task_id: The FILLER-* task ID that was rejected
+            reason: The rejection reason (e.g., "SCOPE_REJECTED")
+            rejected_paths: List of paths that caused the rejection
+        """
+        nonlocal backfill_rejection_cooldown
+
+        current_cycle = backfill_tasks_generated  # Use as cycle counter
+        for path in rejected_paths:
+            backfill_rejection_cooldown[path] = current_cycle
+            print(f"[orchestrator] BACKFILL-COOLDOWN: {path} on cooldown for {BACKFILL_COOLDOWN_CYCLES} cycles (rejected in {task_id})")
+
+    def is_backfill_task_type_on_cooldown(task_type: str) -> bool:
+        """Check if a backfill task type is on cooldown due to recent rejections.
+
+        Returns True if this task type should not be generated yet.
+        """
+        current_cycle = backfill_tasks_generated
+        # Check if any rejected paths are still on cooldown for this task type
+        for path, rejection_cycle in list(backfill_rejection_cooldown.items()):
+            if current_cycle - rejection_cycle < BACKFILL_COOLDOWN_CYCLES:
+                # This path is still on cooldown
+                # For now, we just check if any rejections are recent
+                # More sophisticated: match task_type to path patterns
+                if task_type in ("lint", "type_hints") and "bridge/" in path:
+                    return True
+                if task_type in ("test",) and "tests/" in path:
+                    return True
+            else:
+                # Cooldown expired, remove from tracking
+                del backfill_rejection_cooldown[path]
+        return False
+
+    def cleanup_expired_cooldowns() -> None:
+        """Clean up expired cooldown entries."""
+        nonlocal backfill_rejection_cooldown
+        current_cycle = backfill_tasks_generated
+        expired = [
+            path for path, cycle in backfill_rejection_cooldown.items()
+            if current_cycle - cycle >= BACKFILL_COOLDOWN_CYCLES
+        ]
+        for path in expired:
+            del backfill_rejection_cooldown[path]
+
+    # Integration helper: prefers patch-based integration, falls back to git merge
     def merge_task(t: ParallelTask) -> bool:
         if selftest_mode or not t.branch:
             return True
+
+        # Compute task milestone from ID prefix
+        task_milestone = _extract_milestone_from_task_id(t.id, fallback=milestone_id)
+
+        # Try patch-based integration first (preferred - no sandbox issues)
+        if getattr(t, 'has_patch', False) and t.task_dir:
+            success, msg, commit_sha = patch_integrator.integrate_task(
+                task_id=t.id,
+                task_dir=t.task_dir,
+                task_branch=t.branch,
+                agent_name=t.agent,
+                task_context=f"Task: {t.title}\nDescription: {t.description}",
+                milestone_id=task_milestone,
+            )
+            if success:
+                if commit_sha:
+                    t.commit_sha = commit_sha
+                print(f"[orchestrator] PATCH INTEGRATED: {t.id} - {msg}")
+                return True
+            elif "needs_manual_resolution" not in msg:
+                # Non-fatal issue, try git merge fallback
+                print(f"[orchestrator] Patch integration issue for {t.id}: {msg}, trying git merge...")
+
+        # Fall back to git merge (for legacy commits or when patch integration fails)
         with git_lock:
             rc, out, err = _run_cmd(
                 ["git", "merge", "--no-ff", "--no-edit", t.branch],
@@ -2433,10 +4611,28 @@ def run_parallel(
             )
             if rc == 0:
                 return True
-            # Abort merge if conflicted
+
+            # Merge conflict detected - attempt auto-resolution
+            print(f"[orchestrator] MERGE CONFLICT detected for {t.id}, attempting auto-resolution...")
+
+            # Try auto-resolution (handles __init__.py files and uses agent for others)
+            auto_ok, auto_msg = _attempt_auto_merge_resolution(
+                project_root=state.project_root,
+                task_id=t.id,
+                runs_dir=state.runs_dir,
+                task_context=f"Task: {t.title}\nDescription: {t.description}",
+                milestone_id=task_milestone,
+            )
+
+            if auto_ok:
+                print(f"[orchestrator] AUTO-RESOLVED: {auto_msg}")
+                return True
+
+            # Auto-resolution failed - abort and mark for manual
+            print(f"[orchestrator] AUTO-RESOLUTION FAILED: {auto_msg}")
             _run_cmd(["git", "merge", "--abort"], cwd=state.project_root, env=os.environ.copy())
             t.status = "manual"
-            t.error = "Merge conflict; manual rebase/resolve required"
+            t.error = f"Merge conflict; auto-resolve failed: {auto_msg}"
             t.manual_path = _write_manual_task_file(
                 manual_dir=manual_dir,
                 task=t,
@@ -2507,11 +4703,15 @@ def run_parallel(
             pending_count = sum(1 for t in tasks if t.status == "pending")
             ready_tasks = get_ready_tasks()
 
-            # Heartbeat logging
+            # Heartbeat logging with lane stats
             now = time.monotonic()
             if now - last_heartbeat >= heartbeat_interval:
+                lane_stats = two_lane_scheduler.get_lane_stats()
+                # Sample metrics for utilization tracking
+                two_lane_scheduler.sample_metrics(queue_depth=pending_count)
                 print(
-                    f"[orchestrator] parallel: progress done={done_count} running={running_count} queued={pending_count} ready={len(ready_tasks)}"
+                    f"[orchestrator] parallel: progress done={done_count} running={running_count} queued={pending_count} ready={len(ready_tasks)} "
+                    f"lanes[coding={lane_stats['coding_active']}/{lane_stats['coding_capacity']}, exec={lane_stats['executor_active']}/{lane_stats['executor_capacity']}]"
                 )
                 last_heartbeat = now
 
@@ -2522,6 +4722,7 @@ def run_parallel(
                 break
 
             # Detect stuck state: no tasks running, no tasks ready, but tasks remain pending
+            # SELF-HEALING: Instead of immediately marking as stuck, try recovery actions
             if not running and not ready_tasks and pending_count > 0:
                 # Identify root failures (tasks that failed on their own, not due to dependencies)
                 root_failure_ids = {t.id for t in tasks if is_root_failure(t)}
@@ -2531,71 +4732,135 @@ def run_parallel(
                 blocked_ids = _compute_transitive_blocked(tasks, root_failure_ids)
                 pending_but_not_blocked = [t for t in tasks if t.status == "pending" and t.id not in blocked_ids]
 
-                print(f"\n[orchestrator] STUCK: {pending_count} task(s) cannot proceed")
+                print(f"\n[orchestrator] STUCK DETECTED: {pending_count} task(s) cannot proceed")
+                print("[orchestrator] Attempting SELF-HEALING recovery...")
 
-                if root_failures:
-                    print(f"\n  ROOT FAILURES ({len(root_failures)}):")
-                    for t in root_failures:
-                        reason = t.error or t.status
-                        manual_hint = f" -> {t.manual_path}" if t.manual_path else ""
-                        print(f"    - {t.id}: {reason}{manual_hint}")
+                # Track if we recovered
+                recovered = False
+                recovery_reason = ""
 
-                if blocked_ids:
-                    blocked_pending = [t for t in tasks if t.status == "pending" and t.id in blocked_ids]
-                    if blocked_pending:
-                        print(f"\n  BLOCKED TASKS ({len(blocked_pending)}):")
-                        for t in blocked_pending:
-                            # Find which root failures this task is transitively blocked by
-                            blocking_roots = []
-                            visited = set()
-                            queue = list(t.depends_on)
-                            while queue:
-                                dep_id = queue.pop(0)
-                                if dep_id in visited:
-                                    continue
-                                visited.add(dep_id)
-                                if dep_id in root_failure_ids:
-                                    blocking_roots.append(dep_id)
-                                elif dep_id in blocked_ids:
-                                    # This dep is also blocked, trace further
-                                    dep_task = by_id.get(dep_id)
-                                    if dep_task:
-                                        queue.extend(dep_task.depends_on)
-                            if blocking_roots:
-                                print(f"    - {t.id}: blocked by root failures: {blocking_roots}")
-                            else:
-                                print(f"    - {t.id}: transitively blocked")
-
-                # Check for true cycles (tasks pending but not blocked by any root failure)
-                if pending_but_not_blocked:
-                    print(f"\n  DEPENDENCY CYCLES ({len(pending_but_not_blocked)}):")
+                # SELF-HEALING STRATEGY 1: Check for lock contention without root failures
+                # Tasks may be waiting on locks held by no one - re-check lock availability
+                if pending_but_not_blocked and not root_failures:
+                    print("[orchestrator] RECOVERY: Checking for stale lock contention...")
                     for t in pending_but_not_blocked:
-                        unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status != "done"]
-                        print(f"    - {t.id}: cycle/deadlock waiting on: {unmet}")
+                        # Re-check if locks are available now
+                        locks_free = all(str(lk) not in held_locks for lk in t.locks)
+                        paths_free = all(str(p) not in held_locks for p in t.touched_paths)
+                        deps_done = all(by_id.get(d) and by_id[d].status == "done" for d in t.depends_on)
+                        if locks_free and paths_free and deps_done:
+                            print(f"[orchestrator] RECOVERY: Task {t.id} is now ready (stale lock cleared)")
+                            recovered = True
+                            recovery_reason = "stale_lock_cleared"
+                            break  # Break out of for loop, will continue scheduler loop
 
-                # Mark stuck tasks with proper status
-                for t in tasks:
-                    if t.status == "pending":
-                        if t.id in blocked_ids:
-                            # Transitively blocked by a root failure
-                            t.status = "blocked"
-                            # Find the immediate failing dependencies
-                            blocking_roots = [d for d in t.depends_on if d in root_failure_ids]
-                            blocked_deps = [d for d in t.depends_on if d in blocked_ids]
-                            if blocking_roots:
-                                t.error = f"Blocked by root failures: {blocking_roots}"
-                            elif blocked_deps:
-                                t.error = f"Blocked by transitively blocked tasks: {blocked_deps}"
-                            else:
-                                t.error = "Transitively blocked"
+                # SELF-HEALING STRATEGY 2: If there are root failures, schedule them for rerun
+                # This converts permanent failures into retriable tasks
+                if not recovered and root_failures:
+                    print(f"[orchestrator] RECOVERY: {len(root_failures)} root failure(s) detected")
+                    rerun_count = 0
+                    for t in root_failures:
+                        # Only retry if the task hasn't been retried too many times
+                        current_retries = getattr(t, '_self_heal_retries', 0)
+                        max_self_heal_retries = 2
+                        if current_retries < max_self_heal_retries:
+                            t._self_heal_retries = current_retries + 1
+                            # Reset the task for rerun
+                            print(f"[orchestrator] RECOVERY: Scheduling {t.id} for self-heal rerun (attempt {t._self_heal_retries})")
+                            t.status = "pending"
+                            t.error = None
+                            t.retry_count = 0  # Reset retry counter
+                            rerun_count += 1
                         else:
-                            # True dependency cycle
-                            unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status != "done"]
-                            t.status = "failed"
-                            t.error = f"Dependency cycle: waiting on {unmet}"
-                break
+                            print(f"[orchestrator] RECOVERY: {t.id} exhausted self-heal retries ({max_self_heal_retries})")
 
-            # Start ready tasks up to capacity
+                    if rerun_count > 0:
+                        recovered = True
+                        recovery_reason = f"scheduled_{rerun_count}_reruns"
+                        print(f"[orchestrator] RECOVERY: {rerun_count} task(s) scheduled for self-heal rerun")
+
+                # If still not recovered, print detailed diagnostics and mark as truly stuck
+                if not recovered:
+                    print(f"\n[orchestrator] SELF-HEALING FAILED: Marking run as STUCK")
+
+                    if root_failures:
+                        print(f"\n  ROOT FAILURES ({len(root_failures)}):")
+                        for t in root_failures:
+                            reason = t.error or t.status
+                            manual_hint = f" -> {t.manual_path}" if t.manual_path else ""
+                            retries = getattr(t, '_self_heal_retries', 0)
+                            print(f"    - {t.id}: {reason} (retries={retries}){manual_hint}")
+
+                    if blocked_ids:
+                        blocked_pending = [t for t in tasks if t.status == "pending" and t.id in blocked_ids]
+                        if blocked_pending:
+                            print(f"\n  BLOCKED TASKS ({len(blocked_pending)}):")
+                            for t in blocked_pending:
+                                # Find which root failures this task is transitively blocked by
+                                blocking_roots = []
+                                visited = set()
+                                queue = list(t.depends_on)
+                                while queue:
+                                    dep_id = queue.pop(0)
+                                    if dep_id in visited:
+                                        continue
+                                    visited.add(dep_id)
+                                    if dep_id in root_failure_ids:
+                                        blocking_roots.append(dep_id)
+                                    elif dep_id in blocked_ids:
+                                        # This dep is also blocked, trace further
+                                        dep_task = by_id.get(dep_id)
+                                        if dep_task:
+                                            queue.extend(dep_task.depends_on)
+                                if blocking_roots:
+                                    print(f"    - {t.id}: blocked by root failures: {blocking_roots}")
+                                else:
+                                    print(f"    - {t.id}: transitively blocked")
+
+                    # Check for true cycles (tasks pending but not blocked by any root failure)
+                    if pending_but_not_blocked:
+                        print(f"\n  DEPENDENCY CYCLES ({len(pending_but_not_blocked)}):")
+                        for t in pending_but_not_blocked:
+                            unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status != "done"]
+                            print(f"    - {t.id}: cycle/deadlock waiting on: {unmet}")
+
+                    # Mark stuck tasks with proper status
+                    for t in tasks:
+                        if t.status == "pending":
+                            if t.id in blocked_ids:
+                                # Transitively blocked by a root failure
+                                t.status = "blocked"
+                                # Find the immediate failing dependencies
+                                blocking_roots = [d for d in t.depends_on if d in root_failure_ids]
+                                blocked_deps = [d for d in t.depends_on if d in blocked_ids]
+                                if blocking_roots:
+                                    t.error = f"Blocked by root failures: {blocking_roots}"
+                                elif blocked_deps:
+                                    t.error = f"Blocked by transitively blocked tasks: {blocked_deps}"
+                                else:
+                                    t.error = "Transitively blocked"
+                            else:
+                                # True dependency cycle
+                                unmet = [d for d in t.depends_on if by_id.get(d) and by_id[d].status != "done"]
+                                t.status = "failed"
+                                t.error = f"Dependency cycle: waiting on {unmet}"
+                    break
+                else:
+                    # Recovery succeeded - continue the scheduler loop
+                    print(f"[orchestrator] SELF-HEALING: Recovered via {recovery_reason}, continuing...")
+                    # Small delay to avoid tight loop
+                    time.sleep(0.5)
+                    continue
+
+            # BACKFILL: Generate safe filler tasks to keep workers busy
+            # This prevents worker idle time when primary tasks are blocked
+            if available_worker_ids and not ready_tasks:
+                backfill_added = maybe_generate_backfill()
+                if backfill_added > 0:
+                    # Re-check ready tasks after backfill
+                    ready_tasks = get_ready_tasks()
+
+            # Start ready tasks up to capacity using two-lane scheduler
             started_any = False
             while available_worker_ids and ready_tasks and len(running) < max_workers:
                 # Re-check ready tasks since state may have changed
@@ -2608,12 +4873,20 @@ def run_parallel(
 
                 t.status = "running"
                 t.worker_id = worker_id
+
+                # Assign to lane using two-lane scheduler
+                lane = two_lane_scheduler.assign_to_lane(t.id)
+
+                # Acquire named locks
                 for lk in t.locks:
                     held_locks.add(str(lk))
+                # Acquire path-based locks from touched_paths
+                for path in t.touched_paths:
+                    held_locks.add(str(path))
 
-                # Log agent selection explicitly
-                agent_script = config.agent_scripts.get(t.agent, "(unknown)")
-                print(f"[orchestrator] parallel: starting {t.id} on worker {worker_id} (agent={t.agent}, script={agent_script})")
+                # Log agent selection with lane info
+                lane_stats = two_lane_scheduler.get_lane_stats()
+                print(f"[orchestrator] parallel: starting {t.id} on worker {worker_id} (agent={t.agent}, lane={lane}, coding={lane_stats['coding_active']}/{lane_stats['coding_capacity']}, exec={lane_stats['executor_active']}/{lane_stats['executor_capacity']})")
                 future = executor.submit(execute_task, t, worker_id)
                 running[t.id] = future
                 started_any = True
@@ -2642,9 +4915,14 @@ def run_parallel(
                         del running[completed_tid]
                         t = by_id.get(completed_tid)
                         if t:
-                            # Release locks and worker
+                            # Release from two-lane scheduler
+                            two_lane_scheduler.release_from_lane(completed_tid)
+                            # Release named locks
                             for lk in t.locks:
                                 held_locks.discard(str(lk))
+                            # Release path-based locks
+                            for path in t.touched_paths:
+                                held_locks.discard(str(path))
                             if t.worker_id is not None:
                                 available_worker_ids.append(t.worker_id)
 
@@ -2667,11 +4945,61 @@ def run_parallel(
                 # Nothing running and nothing started, wait a bit before retrying
                 time.sleep(0.5)
 
-    # Final verification (skip in selftest mode)
+    # Final verification with auto-repair loop (skip in selftest mode; respect verify_mode)
+    # STALL PREVENTION: The repair callback ensures verify failures trigger automatic
+    # repair actions instead of waiting for manual intervention.
     if not selftest_mode:
+        verify_mode = getattr(args, "verify_mode", "strict")
         verify_json = state.runs_dir / "final_verify.json"
-        print("[orchestrator] parallel: running tools.verify (strict)")
-        rc_v, _, _ = _run_verify(state.project_root, verify_json, strict_git=True)
+        repair_report_path = state.runs_dir / "verify_repair_report.json"
+        max_repair_attempts = getattr(args, "max_repair_attempts", 5)
+
+        if verify_mode == "off":
+            print("[orchestrator] parallel: skipping final verification (--verify-mode=off)")
+            rc_v = 0
+        else:
+            strict_git = (verify_mode != "skip-git")
+            mode_label = "strict" if strict_git else "skip-git"
+            print(f"[orchestrator] parallel: running verify auto-repair loop ({mode_label}, max_attempts={max_repair_attempts})")
+
+            # Create repair callback for automatic execution of repair tasks
+            # This prevents the orchestrator from stalling on verify failures
+            repair_callback = create_repair_callback(
+                project_root=state.project_root,
+                runs_dir=state.runs_dir,
+                verbose=True,
+                scheduler_callback=None,  # No external scheduler, use internal executor
+            )
+
+            repair_result = run_verify_repair_loop(
+                project_root=state.project_root,
+                verify_json_path=verify_json,
+                max_attempts=max_repair_attempts,
+                strict_git=strict_git,
+                verbose=True,
+                runs_dir=state.runs_dir,
+                bootstrap_on_start=True,
+                agent_task_callback=repair_callback,  # CRITICAL: enables auto-repair
+            )
+
+            rc_v = repair_result.final_exit_code
+            write_repair_report(repair_result, repair_report_path)
+
+            if repair_result.success:
+                print(f"[orchestrator] parallel: verify PASSED after {repair_result.total_attempts} attempt(s)")
+            else:
+                print(f"[orchestrator] parallel: verify FAILED after {repair_result.total_attempts} attempt(s)")
+                print(f"[orchestrator] parallel: remaining failures: {repair_result.remaining_failures}")
+                print(f"[orchestrator] parallel: repair report: {repair_report_path}")
+                # Write final verify attempt artifact
+                final_verify_artifact = state.runs_dir / f"final_verify_attempt_{repair_result.total_attempts}.json"
+                if verify_json.exists():
+                    shutil.copy(verify_json, final_verify_artifact)
+                    print(f"[orchestrator] parallel: final verify artifact: {final_verify_artifact}")
+                # Check for out-of-scope repairs that need manual intervention
+                out_of_scope_path = state.runs_dir / "out_of_scope_repairs.json"
+                if out_of_scope_path.exists():
+                    print(f"[orchestrator] parallel: out-of-scope repairs (need manual): {out_of_scope_path}")
     else:
         rc_v = 0
 
@@ -2747,6 +5075,73 @@ def run_parallel(
 # -----------------------------
 
 
+def _generate_repair_context_for_failures(
+    root_failures: list[dict[str, Any]],
+    runs_dir: Path,
+) -> str:
+    """Generate repair context for root failures to feed into the next planning cycle.
+
+    This enables self-healing by giving the planner specific guidance on what failed
+    and how to approach fixing it.
+    """
+    if not root_failures:
+        return ""
+
+    lines = [
+        "\n\n# REPAIR CONTEXT - CRITICAL",
+        "",
+        "The previous run had the following root failures that need targeted repair:",
+        "",
+    ]
+
+    for failure in root_failures:
+        task_id = failure.get("id", "unknown")
+        title = failure.get("title", "unknown task")
+        error = failure.get("error", "unknown error")
+        agent = failure.get("agent", "unknown")
+
+        lines.append(f"## REPAIR NEEDED: {task_id}")
+        lines.append(f"- Original task: {title}")
+        lines.append(f"- Agent: {agent}")
+        lines.append(f"- Error: {error}")
+        lines.append("")
+        lines.append("**REPAIR GUIDANCE:**")
+
+        # Provide specific guidance based on error type
+        error_lower = error.lower() if error else ""
+        if "tools" in error_lower and ("disabled" in error_lower or "cannot" in error_lower):
+            lines.append("- The agent incorrectly believed tools were disabled.")
+            lines.append("- Tools ARE ENABLED. Use Read, Edit, Write, Bash to implement changes.")
+            lines.append("- Do NOT claim tools are unavailable.")
+        elif "merge conflict" in error_lower or "conflict" in error_lower:
+            lines.append("- There was a merge conflict during integration.")
+            lines.append("- Ensure changes don't conflict with other parallel tasks.")
+            lines.append("- Consider more granular changes that are less likely to conflict.")
+        elif "work_completed=false" in error_lower or "plan" in error_lower:
+            lines.append("- The agent returned work_completed=false without making changes.")
+            lines.append("- IMPLEMENT the changes directly. Do NOT just plan.")
+            lines.append("- Set work_completed=true after implementing.")
+        elif "json" in error_lower or "validation" in error_lower:
+            lines.append("- JSON output was invalid.")
+            lines.append("- Ensure output is a valid JSON object matching the schema.")
+            lines.append("- No markdown fences. No prose before/after JSON.")
+        else:
+            lines.append("- Analyze the error and implement a fix.")
+            lines.append("- If the task is too complex, break it into smaller sub-tasks.")
+
+        lines.append("")
+
+    lines.append("## INSTRUCTIONS FOR THIS RUN")
+    lines.append("")
+    lines.append("1. Generate a repair-focused task plan that addresses the above failures.")
+    lines.append("2. Each repair task should be atomic and independently verifiable.")
+    lines.append("3. Include targeted test coverage for repaired functionality.")
+    lines.append("4. Prioritize unblocking dependent tasks.")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def _run_parallel_with_auto_continue(
     *,
     args: argparse.Namespace,
@@ -2758,15 +5153,25 @@ def _run_parallel_with_auto_continue(
     stats_id_set: set,
     system_prompt: str,
 ) -> int:
-    """Run the parallel runner with auto-continue until success or max runs."""
+    """Run the parallel runner with auto-continue until success or max runs.
+
+    This function implements SELF-HEALING behavior:
+    - Does NOT immediately give up on planning failures (rc==2)
+    - Generates repair context for failed tasks to guide subsequent runs
+    - Has a high tolerance for stalled runs (max_stalled=10) before escalation
+    - Continues burning credits to maximize chance of success
+    """
     max_runs = max(1, args.max_continuation_runs)
     run_count = 0
     last_summary: dict[str, Any] | None = None
     prev_root_failure_ids: set = set()
     stalled_count = 0
-    max_stalled = 3  # Stop if same failures for N consecutive runs
+    # SELF-HEALING: Increased from 3 to 10 - we prefer burning credits to giving up early
+    max_stalled = 10
+    planning_failure_count = 0
+    max_planning_failures = 3  # Retry planning up to 3 times before escalating
 
-    print(f"[orchestrator] AUTO-CONTINUE MODE: max_runs={max_runs}")
+    print(f"[orchestrator] AUTO-CONTINUE MODE (SELF-HEALING): max_runs={max_runs}, max_stalled={max_stalled}")
 
     while run_count < max_runs:
         run_count += 1
@@ -2810,6 +5215,7 @@ def _run_parallel_with_auto_continue(
             schema_path=schema_path,
             system_prompt_path=system_prompt_path,
             design_doc_path=(project_root / args.design_doc).resolve(),
+            smoke_route=config.smoke_route,
         )
 
         # Run parallel
@@ -2837,19 +5243,30 @@ def _run_parallel_with_auto_continue(
             print(f"\n[orchestrator] AUTO-CONTINUE: SUCCESS after {run_count} run(s)")
             return 0
 
-        # Check for planning failure (rc == 2) - stop immediately to avoid burning credits
+        # SELF-HEALING: Planning failures (rc == 2) get retried with repair context
+        # We do NOT immediately give up - we burn credits to maximize success chance
         if rc == 2:
-            print("\n[orchestrator] AUTO-CONTINUE: STOPPING - Planning step failed (rc=2)")
-            print("[orchestrator] This is a structural failure that auto-continue cannot fix.")
-            # Print debug file locations for the user
-            plan_debug = runs_dir / "task_plan.extract_debug.txt"
-            raw_stream = runs_dir / "task_plan.json.wrapper_schema_claude_raw_stream.txt"
-            if plan_debug.exists():
-                print(f"[orchestrator] Debug file: {plan_debug}")
-            if raw_stream.exists():
-                print(f"[orchestrator] Raw stream: {raw_stream}")
-            print("[orchestrator] Check the files above to diagnose the planning failure.")
-            return 2
+            planning_failure_count += 1
+            print(f"\n[orchestrator] AUTO-CONTINUE: Planning failure (rc=2), attempt {planning_failure_count}/{max_planning_failures}")
+
+            if planning_failure_count >= max_planning_failures:
+                print(f"\n[orchestrator] AUTO-CONTINUE: ESCALATING - Planning failed {planning_failure_count} times")
+                print("[orchestrator] This may be a structural issue with the design document.")
+                # Print debug file locations for the user
+                plan_debug = runs_dir / "task_plan.extract_debug.txt"
+                raw_stream = runs_dir / "task_plan.json.wrapper_schema_claude_raw_stream.txt"
+                if plan_debug.exists():
+                    print(f"[orchestrator] Debug file: {plan_debug}")
+                if raw_stream.exists():
+                    print(f"[orchestrator] Raw stream: {raw_stream}")
+                print("[orchestrator] Check the files above to diagnose the planning failure.")
+                _write_escalation_file(runs_dir, {"root_failures": [{"id": "PLANNING", "title": "Planning Step", "error": "Planning step failed repeatedly", "agent": "unknown"}]})
+                return 2
+
+            # SELF-HEALING: Generate repair context for planning issues
+            print("[orchestrator] AUTO-CONTINUE: Retrying planning with simplified context...")
+            # Continue to next iteration - the repair context will help
+            continue
 
         # Check for progress - compare root failures
         if last_summary:
@@ -2858,22 +5275,32 @@ def _run_parallel_with_auto_continue(
             if current_root_failure_ids == prev_root_failure_ids:
                 stalled_count += 1
                 print(f"[orchestrator] AUTO-CONTINUE: No progress (same failures). Stalled count: {stalled_count}/{max_stalled}")
+
+                # SELF-HEALING: Generate repair context for stalled failures
+                root_failures = last_summary.get("root_failures", [])
+                if root_failures:
+                    repair_context = _generate_repair_context_for_failures(root_failures, runs_dir)
+                    repair_path = runs_dir / "repair_context.md"
+                    repair_path.write_text(repair_context, encoding="utf-8")
+                    print(f"[orchestrator] AUTO-CONTINUE: Generated repair context at {repair_path}")
+
                 if stalled_count >= max_stalled:
-                    print(f"\n[orchestrator] AUTO-CONTINUE: GIVING UP - no progress for {stalled_count} consecutive runs")
-                    print("[orchestrator] Root failures that cannot be resolved automatically:")
+                    print(f"\n[orchestrator] AUTO-CONTINUE: ESCALATING - no progress for {stalled_count} consecutive runs")
+                    print("[orchestrator] Root failures that could not be resolved automatically:")
                     for t in last_summary.get("root_failures", []):
                         print(f"  - {t['id']}: {t.get('error', 'unknown')}")
                     _write_escalation_file(runs_dir, last_summary)
                     return 1
             else:
                 stalled_count = 0
+                planning_failure_count = 0  # Reset planning failures on progress
                 print("[orchestrator] AUTO-CONTINUE: Progress detected (different failures)")
 
             prev_root_failure_ids = current_root_failure_ids
         else:
             stalled_count += 1
 
-        print(f"[orchestrator] AUTO-CONTINUE: Run {run_count} incomplete, continuing...")
+        print(f"[orchestrator] AUTO-CONTINUE: Run {run_count} incomplete, continuing with self-healing...")
 
     print(f"\n[orchestrator] AUTO-CONTINUE: GIVING UP - max runs ({max_runs}) reached")
     if last_summary:
@@ -2935,7 +5362,26 @@ def main() -> int:
     ap.add_argument("--schema", default="bridge/turn.schema.json")
     ap.add_argument("--system-prompt", default="bridge/prompts/system.md")
     ap.add_argument("--design-doc", default="DESIGN_DOCUMENT.md")
+    ap.add_argument(
+        "--design-doc-contract",
+        choices=["strict", "loose", "off"],
+        default="loose",
+        help="Design doc contract validation mode: strict (fail if missing fields), "
+        "loose (warn but continue), off (no validation)",
+    )
+    ap.add_argument(
+        "--milestone-id",
+        type=str,
+        default=None,
+        help="Override milestone ID from design doc (required if strict mode and parser can't infer)",
+    )
     ap.add_argument("--start-agent", choices=AGENTS, default="codex")
+    ap.add_argument(
+        "--smoke-route",
+        type=_parse_smoke_route_arg,
+        default=None,
+        help="Comma-separated agent route for smoke tests (e.g. 'codex,claude').",
+    )
     ap.add_argument("--mode", choices=["live", "mock"], default="mock")
     ap.add_argument("--runner", choices=["sequential", "parallel"], default="sequential")
     # Parallel runner knobs (safe defaults; can override on CLI)
@@ -2944,6 +5390,13 @@ def main() -> int:
     ap.add_argument("--only-task", action="append", default=[], help="Run only specific task id(s) from the generated plan")
     ap.add_argument(
         "--allow-resource-intensive", action="store_true", help="Do not auto-kill tasks that exceed resource thresholds"
+    )
+    ap.add_argument(
+        "--planner-profile",
+        choices=["balanced", "throughput"],
+        default="balanced",
+        help="Planner profile: 'balanced' (default) for conservative planning, "
+        "'throughput' for many small parallel tasks to maximize worker utilization",
     )
     ap.add_argument("--cpu-threshold", type=float, default=0.0, help="Override CPU%% threshold for auto-stop (0=use config)")
     ap.add_argument("--mem-threshold", type=float, default=0.0, help="Override RAM%% threshold for auto-stop (0=use config)")
@@ -2994,6 +5447,30 @@ def main() -> int:
         "--only-claude", action="store_true", help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)"
     )
 
+    # Robustness flags for unattended runs
+    ap.add_argument(
+        "--auto-stash",
+        action="store_true",
+        help="Auto-stash uncommitted changes before starting (prints stash ref, does NOT auto-pop)",
+    )
+    ap.add_argument(
+        "--verify-mode",
+        choices=["strict", "skip-git", "off"],
+        default="strict",
+        help="Verification mode: strict (fail on dirty repo), skip-git (skip git checks during run), off (no verification)",
+    )
+    ap.add_argument(
+        "--force-dirty",
+        action="store_true",
+        help="Allow starting with dirty repo (DANGEROUS: may cause verify stalls, use with --verify-mode=skip-git)",
+    )
+    ap.add_argument(
+        "--max-repair-attempts",
+        type=int,
+        default=3,
+        help="Maximum verify auto-repair attempts before giving up (default: 3)",
+    )
+
     args = ap.parse_args()
 
     # Validate mutually exclusive agent flags
@@ -3007,6 +5484,7 @@ def main() -> int:
 
     project_root = Path(args.project_root).resolve()
     config = load_config(project_root / args.config)
+    config = dataclasses.replace(config, smoke_route=tuple(args.smoke_route or ()))
 
     # Initialize agent policy based on --only-* flags
     forced_agent: str | None = None
@@ -3049,6 +5527,7 @@ def main() -> int:
         schema_path=schema_path,
         system_prompt_path=system_prompt_path,
         design_doc_path=design_doc_path,
+        smoke_route=config.smoke_route,
     )
 
     stats_md_path = project_root / "STATS.md"
@@ -3100,6 +5579,12 @@ def main() -> int:
     ).strip()
 
     agent = args.start_agent
+    if config.smoke_route:
+        if agent != config.smoke_route[0]:
+            print(
+                f"[orchestrator] SMOKE ROUTE: overriding --start-agent {agent} -> {config.smoke_route[0]}"
+            )
+        agent = config.smoke_route[0]
 
     print(f"[orchestrator] run_id={state.run_id} mode={args.mode} project_root={project_root}")
     print(
@@ -3219,21 +5704,51 @@ def main() -> int:
             agent = fb
             continue
 
-        # Parse and validate JSON.
+        # Parse and validate JSON using TurnNormalizer for robustness.
         try:
             out_for_parse = out
             if out_path.exists() and out_path.stat().st_size > 0:
                 out_for_parse = _read_text(out_path)
 
-            turn_obj = _try_parse_json(out_for_parse)
-            ok, msg = _validate_turn(
-                turn_obj,
+            # Use TurnNormalizer for robust payload extraction
+            norm_result = normalize_agent_output(
+                out_for_parse,
                 expected_agent=agent,
                 expected_milestone_id=milestone_id,
                 stats_id_set=stats_id_set,
+                default_phase="implement",
             )
-            if not ok:
-                raise ValueError(msg)
+
+            if norm_result.success and norm_result.turn:
+                turn_obj = norm_result.turn
+                # Log normalization warnings (auto-corrections)
+                for warning in norm_result.warnings:
+                    print(f"[orchestrator] NORMALIZED: {warning}")
+
+                # Use lenient validation (auto-corrects mismatches with warnings)
+                ok, msg, val_warnings = _validate_turn_lenient(
+                    turn_obj,
+                    expected_agent=agent,
+                    expected_milestone_id=milestone_id,
+                    stats_id_set=stats_id_set,
+                )
+                for warning in val_warnings:
+                    print(f"[orchestrator] VALIDATION: {warning}")
+                if not ok:
+                    raise ValueError(msg)
+            else:
+                # Normalization failed - try legacy direct parsing
+                turn_obj = _try_parse_json(out_for_parse)
+                ok, msg, val_warnings = _validate_turn_lenient(
+                    turn_obj,
+                    expected_agent=agent,
+                    expected_milestone_id=milestone_id,
+                    stats_id_set=stats_id_set,
+                )
+                for warning in val_warnings:
+                    print(f"[orchestrator] VALIDATION: {warning}")
+                if not ok:
+                    raise ValueError(msg)
         except Exception as e:
             print(f"[orchestrator] JSON INVALID: {e}")
 
