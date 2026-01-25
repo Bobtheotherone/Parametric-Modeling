@@ -23,6 +23,18 @@ from formula_foundry.coupongen.resolve import resolve
 from formula_foundry.coupongen.spec import CouponSpec
 
 
+def _get_segment_net(seg: list) -> int:
+    for elem in seg:
+        if isinstance(elem, list) and elem[0] == "net":
+            return elem[1]
+    return -1
+
+
+def _get_segments_by_net(board: list, net_id: int) -> list:
+    segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+    return [seg for seg in segments if _get_segment_net(seg) == net_id]
+
+
 @pytest.fixture
 def f0_spec_data() -> dict:
     """Minimal F0 calibration spec data."""
@@ -247,11 +259,12 @@ class TestBoardWriter:
         writer = BoardWriter(f0_spec, resolved)
         board = writer.build_board()
 
-        # Find segment elements
-        segments = [e for e in board if isinstance(e, list) and e[0] == "segment"]
+        signal_segments = _get_segments_by_net(board, 1)
+        ground_segments = _get_segments_by_net(board, 2)
         # F0 (calibration through-line) has a single continuous trace from
-        # left to right connector. This is correct per LayoutPlan model.
-        assert len(segments) == 1  # single through-line track for F0
+        # left to right connector, plus two CPWG ground rails.
+        assert len(signal_segments) == 1
+        assert len(ground_segments) == 2
 
     def test_writer_f1_includes_vias(self, f1_spec: CouponSpec) -> None:
         """F1 board should include signal and return vias."""
@@ -532,12 +545,13 @@ class TestF1RequirementCoverageInBoardWriter:
         footprint_matches = re.findall(r"\(footprint\s+[\w:]+", content)
         assert len(footprint_matches) == 2  # Left and right connectors
 
-        # 3. Transmission line tracks (2 signal traces + 8 ground ring traces)
+        # 3. Transmission line tracks (2 signal traces + 8 ground ring + 4 CPWG rails)
         # Signal traces: left on F.Cu, right on B.Cu (for via transition)
         # Ground ring: 4 return vias × 2 layers (F.Cu, B.Cu) = 8 traces
+        # CPWG rails: 2 per signal segment = 4 traces
         assert "(segment" in content
         segment_count = content.count("(segment")
-        assert segment_count == 10, f"Expected 10 segments (2 signal + 8 ground ring), got {segment_count}"
+        assert segment_count == 14, f"Expected 14 segments (2 signal + 12 ground), got {segment_count}"
 
         # 4. Signal via
         assert "(via" in content

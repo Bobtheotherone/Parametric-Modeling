@@ -27,8 +27,10 @@ from typing import TYPE_CHECKING
 from ..builders.f1_builder import F1CouponComposition, build_f1_coupon
 from ..constraints.core import resolve_fab_limits
 from ..families import FAMILY_F1
+from ..geom.cpwg import CPWGSpec, generate_cpwg_ground_tracks
 from ..geom.footprint_meta import load_footprint_meta
 from ..geom.layout import LayoutPlan
+from ..geom.primitives import PositionNM
 from ..resolve import ResolvedDesign
 from ..spec import CouponSpec
 from . import sexpr
@@ -706,13 +708,16 @@ class BoardWriter:
         """
         tracks: list[SExprList] = []
         lp = self._layout_plan
+        tl_spec = self.spec.transmission_line
+        use_cpwg = tl_spec.type.upper() == "CPWG"
+        gap_nm = int(tl_spec.gap_nm)
+        net_map = {"SIG": 1, "GND": 2}
 
         # Iterate over all segments in the LayoutPlan
         for segment in lp.segments:
             track_uuid = self._next_uuid(f"track.{segment.label}")
 
-            # Net ID: SIG net is 1
-            net_id = 1 if segment.net_name == "SIG" else 0
+            net_id = net_map.get(segment.net_name, 0)
 
             tracks.append(
                 [
@@ -725,6 +730,34 @@ class BoardWriter:
                     ["tstamp", track_uuid],
                 ]
             )
+
+            if use_cpwg and segment.net_name == "SIG":
+                cpwg_spec = CPWGSpec(
+                    w_nm=segment.width_nm,
+                    gap_nm=gap_nm,
+                    length_nm=segment.length_nm,
+                    layer=segment.layer,
+                    net_id=net_map["SIG"],
+                    ground_net_id=net_map["GND"],
+                )
+                start = PositionNM(segment.x_start_nm, segment.y_nm)
+                end = PositionNM(segment.x_end_nm, segment.y_nm)
+                ground_tracks = generate_cpwg_ground_tracks(start, end, cpwg_spec)
+
+                for idx, ground_track in enumerate(ground_tracks):
+                    suffix = "gnd_pos" if idx == 0 else "gnd_neg"
+                    ground_uuid = self._next_uuid(f"track.{segment.label}.{suffix}")
+                    tracks.append(
+                        [
+                            "segment",
+                            ["start", nm_to_mm(ground_track.start.x), nm_to_mm(ground_track.start.y)],
+                            ["end", nm_to_mm(ground_track.end.x), nm_to_mm(ground_track.end.y)],
+                            ["width", nm_to_mm(ground_track.width_nm)],
+                            ["layer", ground_track.layer],
+                            ["net", ground_track.net_id],
+                            ["tstamp", ground_uuid],
+                        ]
+                    )
 
         return tracks
 
