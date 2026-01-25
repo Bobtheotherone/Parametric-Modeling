@@ -25,7 +25,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Iterator, Literal
 
-from .runners.protocol import DEFAULT_ZONE_POLICY, ZonePolicy
+from .policy import DEFAULT_ZONE_POLICY, ZonePolicy
 
 def _get_host_uid_gid() -> tuple[int, int]:
     """Get the current host user's UID and GID.

@@ -21,7 +21,7 @@ from .board_writer import (
     deterministic_uuid_indexed,
     write_board,
 )
-from .runners.protocol import DEFAULT_ZONE_POLICY, ZonePolicy
+from .policy import DEFAULT_ZONE_POLICY, ZonePolicy
 
 
 class IKiCadBackend(abc.ABC):

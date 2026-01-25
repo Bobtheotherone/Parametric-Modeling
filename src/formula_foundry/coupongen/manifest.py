@@ -55,7 +55,7 @@ from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_
 from .constraints import ConstraintProof, resolve_fab_limits
 from .geom.footprint_meta import FootprintMeta, load_footprint_meta
 from .kicad.canonicalize import canonical_hash_drc_json
-from .kicad.runners.protocol import ZonePolicy
+from .kicad.policy import ZonePolicy
 from .layer_validation import LayerValidationResult, layer_validation_payload
 from .resolve import ResolvedDesign
 from .spec import CouponSpec
@@ -176,7 +176,7 @@ def build_manifest(
     )
 
     # REQ-M1-013: Build zone policy record if not explicitly provided
-    from .kicad.runners.protocol import DEFAULT_ZONE_POLICY
+    from .kicad.policy import DEFAULT_ZONE_POLICY
     zp_record = zone_policy.to_dict() if zone_policy is not None else DEFAULT_ZONE_POLICY.to_dict()
 
     manifest = {

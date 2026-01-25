@@ -6,8 +6,10 @@ This module provides:
 - Silkscreen annotations for provenance (annotations)
 - Artifact canonicalization for hashing (canonicalize)
 - KiCad CLI runner (cli)
+- Zone policy for DRC/export (policy) - REQ-M1-006
+- CLI flag builders (cli_flags) - REQ-M1-006
 
-Satisfies REQ-M1-010, REQ-M1-012 and REQ-M1-013.
+Satisfies REQ-M1-006, REQ-M1-010, REQ-M1-012 and REQ-M1-013.
 """
 
 from __future__ import annotations
@@ -55,6 +57,20 @@ from .cli import (
     build_drc_args,
     get_kicad_cli_version,
     parse_kicad_error,
+    zone_policy_record,
+)
+from .cli_flags import (
+    SeverityLevel,
+    build_drc_flags,
+    build_export_drill_flags,
+    build_export_gerber_flags,
+    get_drc_refill_flag,
+    get_export_check_flag,
+)
+from .policy import (
+    DEFAULT_ZONE_POLICY,
+    ZonePolicy,
+    get_zone_policy_record,
 )
 from .runners import (
     DEFAULT_DOCKER_TIMEOUT_SEC,
@@ -101,6 +117,7 @@ __all__ = [
     # CLI - Types and Enums
     "KicadCliMode",
     "KicadErrorCode",
+    "SeverityLevel",
     # CLI - Exceptions
     "KicadCliError",
     "KicadCliTimeoutError",
@@ -112,6 +129,17 @@ __all__ = [
     "build_drc_args",
     "get_kicad_cli_version",
     "parse_kicad_error",
+    "zone_policy_record",
+    # CLI Flags - Functions (REQ-M1-006)
+    "build_drc_flags",
+    "build_export_drill_flags",
+    "build_export_gerber_flags",
+    "get_drc_refill_flag",
+    "get_export_check_flag",
+    # Policy - Classes and Constants (REQ-M1-006)
+    "DEFAULT_ZONE_POLICY",
+    "ZonePolicy",
+    "get_zone_policy_record",
     # Runners - Constants
     "DEFAULT_DOCKER_TIMEOUT_SEC",
     # Runners - Exceptions
