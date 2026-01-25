@@ -7,7 +7,7 @@ units: nm
 toolchain:
   kicad:
     version: "9.0.7"
-    docker_image: "kicad/kicad:9.0.7@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+    docker_image: "kicad/kicad:9.0.7@sha256:4ddaa54d9ead1f1b453e10a8420e0fcfba693e2143ee14b8b9c3b3c63b2a320f"
 
 fab_profile:
   id: generic

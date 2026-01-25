@@ -1,363 +1,623 @@
 {
   "$schema_comment": "Expected canonical export hashes per golden spec (G5 gate verification). Hashes are SHA-256 of canonicalized export files. PLACEHOLDER values must be replaced after first authoritative KiCad build in CI.",
   "f0_cal_001": {
-    "design_hash": "b366011a8c72800f852590ec71f4714345f67fe4dc10c787b9aea162b355634e",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "5f716c3757a9dbc1a9c40a8da8ec75f0d435692d0f3a1fa7f662fe82c096bc8b"
   },
   "f0_cal_002": {
-    "design_hash": "72868679e09ac68bb51e1e98c93598a3c6134f845024869d24ddf19f19bb0b0a",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "1b9427022c71f80525188951e61cf10b5f2a353257cf39d27621f63b5d441ef2"
   },
   "f0_cal_003": {
-    "design_hash": "6e03fcca622fd4058cab4d24fb261872b01a3332ea8603cd23bd6a0207bd3df6",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "95abcf61fc3fd99a649ba4f6e7833eb1ea358371e5a5613cfa7f80491cb4df89"
   },
   "f0_cal_004": {
-    "design_hash": "9fbe86b9db3531bd269ba9caf9055444beb3c3a24868750e8518d7e462993c7b",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "c49added005fdf539a50863a7be2ba7efc86c9268b7cb2a02af1a85cf184eb70"
   },
   "f0_cal_005": {
-    "design_hash": "16cf5234991979b36c815c347e5e9ed4a2b6d602b1f6eab8d89bf1dceff9b972",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "5a302fc3badec1f467a708a64181e22bfac4e604f66ab4b817c3400c2908c8ae"
   },
   "f0_cal_006": {
-    "design_hash": "0abdf3f6286b03582de99a476c1f7298f160740d0d50f3493354b0f6963d999d",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "f3ca33cc578e4edc7eca3f21a149b96be342fc7ae4e369d3718bbe7ae9940762"
   },
   "f0_cal_007": {
-    "design_hash": "9c2f3c56f9a7b4b9e656a516aa611f46e84b13f395fea6f3d20ed3751ca8d49c",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "babec11e4c73cf3fc85abb3bd8819b08f7a49a3d649e3650ee634f162cd82487"
   },
   "f0_cal_008": {
-    "design_hash": "5f15bbb767e1bbde352ce7c80deec9a624c557bf501387b701f26f8ae3390522",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "c34ca36bb009c1bd6f4b411876f68de0190b3fb30a9598735cb4d6aac6c9ba97"
   },
   "f0_cal_009": {
-    "design_hash": "42c33ee2dcc1aa155b4a2ec113b2aee2532160e497129b0aa7fe426c9cefe7bc",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "476f6d4ec9fa3c12ee8fa164d0ba6f2e08b592490b8308a49acbc0b63ce6f2b1"
   },
   "f0_cal_010": {
-    "design_hash": "c87d8806abd7c2b14d76f8f5eb30f3eae4e30ad10c58daeab8b9ffcad7b224c4",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "a7efd588dc0ad1eadf82a92b13e5f2ce308183de709f5aa879f97b392bc35707"
   },
   "f1_via_001": {
-    "design_hash": "298e7fb619182b6fbf40dbbf3e415b9cdd40091b3531b496f795ab1f3babe18d",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "08818ac6873f95f8325929e2ed2af1aca0e161aa0f023b709a43e5e79de83bcc"
   },
   "f1_via_002": {
-    "design_hash": "aaf2d31cb0d2882993e30b07c2924559299d61ed60529bea523f4b35e0bdee7b",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "c4da2faa41fb3d7a6e68e90adbacf4f730cc828f8345edfdeac26f761105cfb7"
   },
   "f1_via_003": {
-    "design_hash": "b634ab7286805876ca3b0681b7eb828ffbece5fb107a31f69be539934d826fd1",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "0aa9d9e478ca13a25b4e795c78490082783990843478c8179715e41cac66c6b3"
   },
   "f1_via_004": {
-    "design_hash": "1b6f2feb251b74687d32b680f4668481b6956d688a17ebf720bc0fe98ec7d85b",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "af051afd40fef76afd37cc7157f0ee6cf72328914d5ab5b55499e0f2a3effbce"
   },
   "f1_via_005": {
-    "design_hash": "bcecb04c78f5cca682de2080ea369084f985f2381b8cb1a7596c99d253d6bf38",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "2dff8167e851d26f71e65fd4e9b8022241c7502ee166c981de0e3699e5886e88"
   },
   "f1_via_006": {
-    "design_hash": "3671813e0518180e96a3dcf1b77199b81176383d4c406b2b0d6b7a3a19a54661",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "6dddf81886c868a1411c410ed27c899ee2256cc200f804dce977af198bd20c0f"
   },
   "f1_via_007": {
-    "design_hash": "6f7cccb869cfc8296a94fc12c82fd3943db4ca544369acbfe7a2f4c3a05c43cb",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "9623991b1eeb0baf0864fe9aa949c53ebef4d5e3b27057f40a04a3af7763b9ef"
   },
   "f1_via_008": {
-    "design_hash": "1fcd83be58204fca8b302e14c396c95b210afbc5fd9bb4cddc69add2f46ac87a",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "0cc468e679badbe615292c9c9c77a81327478d45460a96e93763c881502c1754"
   },
   "f1_via_009": {
-    "design_hash": "c2d56ba29ebd93d111997f80ebd219bcbd2527937f68c1eecae68d9512209a80",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "25f2c56697f6948c9641228e114fdc18db1e10c08ef4b0cff9cb97ebffee48ca"
   },
   "f1_via_010": {
-    "design_hash": "b9a7e76d4ce41b6bcedf26609143bdb5fbc8dba285e4f57c78257119102828ba",
-    "canonical_gerber_hashes": {
-      "F.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In1.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "In2.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Cu.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.Mask.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "F.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "B.SilkS.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "Edge.Cuts.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    },
     "canonical_drill_hashes": {
-      "drill.drl": "PLACEHOLDER_PENDING_KICAD_BUILD",
-      "drill-NPTH.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
-    }
+      "coupon.drl": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "canonical_gerber_hashes": {
+      "coupon-B_Adhesive.gba": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Cu.gbl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Mask.gbs": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Paste.gbp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-B_Silkscreen.gbo": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Edge_Cuts.gm1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Adhesive.gta": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Courtyard.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Cu.gtl": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Fab.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Mask.gts": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Paste.gtp": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-F_Silkscreen.gto": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In1_Cu.g1": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-In2_Cu.g2": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-Margin.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Comments.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Drawings.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco1.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-User_Eco2.gbr": "PLACEHOLDER_PENDING_KICAD_BUILD",
+      "coupon-job.gbrjob": "PLACEHOLDER_PENDING_KICAD_BUILD"
+    },
+    "design_hash": "aa009f5a8524ce52b6edf813b91972a1c664541fbea1db0c2ef023290b16762b"
   }
 }
