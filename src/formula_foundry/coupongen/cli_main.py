@@ -1,4 +1,4 @@
-"""CLI for coupon generation (CP-4.3).
+"""CLI for coupon generation (CP-4.3, REQ-M1-018).
 
 This module provides the command-line interface for coupon generation:
 - validate: Validate spec using ConstraintEngine (Tier 0-3)
@@ -8,6 +8,8 @@ This module provides the command-line interface for coupon generation:
 - build: Full build pipeline (validate/repair -> resolve -> generate -> DRC -> export -> manifest)
 - batch-filter: Filter batch of normalized design vectors using GPU prefilter
 - build-batch: Build multiple coupons from spec template and u vectors
+- lint-spec-coverage: Check spec coverage (REQ-M1-018)
+- explain: Human-readable resolved design + tightest-constraint summary (REQ-M1-018)
 
 CP-3.5: Pipeline Integration
 - The validate command now uses ConstraintEngine by default for full tiered validation
@@ -17,6 +19,10 @@ CP-4.3: GPU Pipeline Integration
 - build-batch integrates GPU Tier0-2 filter on candidates by default
 - Falls back to NumPy if CuPy is unavailable
 - Records CuPy/CUDA versions in manifest when GPU is used
+
+REQ-M1-018: CLI Commands
+- lint-spec-coverage: Non-zero exit on coverage failures (unused provided or unconsumed expected paths)
+- explain: Human-readable resolved + tightest-constraint summary using canonical pipeline outputs
 """
 
 from __future__ import annotations
@@ -198,6 +204,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="GPU filter constraint mode (default: REPAIR)",
     )
 
+    # REQ-M1-018: lint-spec-coverage command
+    lint_spec = subparsers.add_parser(
+        "lint-spec-coverage",
+        help="Check spec coverage: non-zero exit on unused provided or unconsumed expected paths",
+    )
+    lint_spec.add_argument("spec", type=Path, help="Spec file to lint (YAML or JSON)")
+    lint_spec.add_argument(
+        "--strict",
+        action="store_true",
+        default=True,
+        help="Strict mode: fail on any unused provided or unconsumed expected paths (default: True)",
+    )
+    lint_spec.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output in JSON format instead of human-readable",
+    )
+
+    # REQ-M1-018: explain command
+    explain = subparsers.add_parser(
+        "explain",
+        help="Human-readable resolved design + tightest-constraint summary",
+    )
+    explain.add_argument("spec", type=Path, help="Spec file to explain (YAML or JSON)")
+    explain.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output file for explain report (default: stdout)",
+    )
+    explain.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output in JSON format instead of human-readable",
+    )
+    explain.add_argument(
+        "--constraint-mode",
+        choices=["REJECT", "REPAIR"],
+        default=None,
+        help="Override constraint mode (default: use spec.constraints.mode)",
+    )
+
     return parser
 
 
@@ -312,6 +362,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "build-batch":
         return _run_build_batch(args)
+
+    if args.command == "lint-spec-coverage":
+        return _run_lint_spec_coverage(args)
+
+    if args.command == "explain":
+        return _run_explain(args)
 
     parser.error(f"Unknown command: {args.command}")
     return 2
@@ -727,6 +783,286 @@ def _add_gpu_metadata_to_manifest(
     except Exception:
         # Don't fail the build if we can't update the manifest
         pass
+
+
+def _run_lint_spec_coverage(args: argparse.Namespace) -> int:
+    """Run lint-spec-coverage command: check spec coverage for unused/unconsumed paths.
+
+    Per REQ-M1-018, this command provides a lint check for spec coverage:
+    - Non-zero exit on unused provided paths (paths in spec but not consumed)
+    - Non-zero exit on unconsumed expected paths (expected for family but not consumed)
+
+    Args:
+        args: Parsed command-line arguments with:
+            - spec: Path to spec file
+            - strict: Whether to fail on coverage issues (default: True)
+            - json: Output in JSON format
+
+    Returns:
+        0 if coverage is complete, 1 if coverage failures
+    """
+    from formula_foundry.resolve.consumption import build_spec_consumption
+
+    spec_path: Path = args.spec
+    if not spec_path.exists():
+        sys.stderr.write(f"Error: Spec file not found: {spec_path}\n")
+        return 1
+
+    try:
+        spec = load_spec(spec_path)
+    except Exception as e:
+        sys.stderr.write(f"Error: Failed to load spec: {e}\n")
+        return 1
+
+    # Build spec consumption summary
+    consumption = build_spec_consumption(spec)
+
+    # Gather coverage info
+    unused_provided = sorted(consumption.unused_provided_paths)
+    unconsumed_expected = sorted(consumption.unconsumed_expected_paths)
+    coverage_ratio = consumption.coverage_ratio
+    is_complete = consumption.is_fully_covered
+
+    if args.json:
+        # JSON output
+        result = {
+            "spec_path": str(spec_path),
+            "coupon_family": spec.coupon_family,
+            "coverage_ratio": coverage_ratio,
+            "is_complete": is_complete,
+            "consumed_count": len(consumption.consumed_paths),
+            "expected_count": len(consumption.expected_paths),
+            "provided_count": len(consumption.provided_paths),
+            "unused_provided_paths": unused_provided,
+            "unconsumed_expected_paths": unconsumed_expected,
+        }
+        sys.stdout.write(canonical_json_dumps(result) + "\n")
+    else:
+        # Human-readable output
+        sys.stdout.write(f"Spec Coverage Lint: {spec_path}\n")
+        sys.stdout.write(f"  Coupon Family: {spec.coupon_family}\n")
+        sys.stdout.write(f"  Coverage: {coverage_ratio:.1%}\n")
+        sys.stdout.write(f"  Consumed: {len(consumption.consumed_paths)} paths\n")
+        sys.stdout.write(f"  Expected: {len(consumption.expected_paths)} paths\n")
+        sys.stdout.write(f"  Provided: {len(consumption.provided_paths)} paths\n")
+
+        if unused_provided:
+            sys.stdout.write(f"\n  UNUSED PROVIDED PATHS ({len(unused_provided)}):\n")
+            for path in unused_provided:
+                sys.stdout.write(f"    - {path}\n")
+
+        if unconsumed_expected:
+            sys.stdout.write(f"\n  UNCONSUMED EXPECTED PATHS ({len(unconsumed_expected)}):\n")
+            for path in unconsumed_expected:
+                sys.stdout.write(f"    - {path}\n")
+
+        if is_complete:
+            sys.stdout.write("\n  Status: PASS (coverage complete)\n")
+        else:
+            sys.stdout.write("\n  Status: FAIL (coverage incomplete)\n")
+
+    # Return non-zero if coverage is incomplete (per REQ-M1-018)
+    return 0 if is_complete else 1
+
+
+def _run_explain(args: argparse.Namespace) -> int:
+    """Run explain command: human-readable resolved design + tightest-constraint summary.
+
+    Per REQ-M1-018, this command provides a human-readable summary of:
+    - Resolved design parameters
+    - Tightest (minimum margin) constraints per category
+    - Overall constraint status
+
+    Uses the canonical pipeline outputs (ConstraintEngine).
+
+    Args:
+        args: Parsed command-line arguments with:
+            - spec: Path to spec file
+            - out: Optional output file path
+            - json: Output in JSON format
+            - constraint_mode: Override constraint mode
+
+    Returns:
+        0 on success, 1 on validation errors
+    """
+    from .constraints.engine import create_constraint_engine
+    from .constraints.repair import CategoryMarginSummary, generate_constraint_proof
+
+    spec_path: Path = args.spec
+    if not spec_path.exists():
+        sys.stderr.write(f"Error: Spec file not found: {spec_path}\n")
+        return 1
+
+    try:
+        spec = load_spec(spec_path)
+    except Exception as e:
+        sys.stderr.write(f"Error: Failed to load spec: {e}\n")
+        return 1
+
+    # Resolve fab limits
+    try:
+        profile = load_fab_profile(spec.fab_profile.id)
+        fab_limits = get_fab_limits(profile)
+    except FileNotFoundError:
+        fab_limits = {
+            "min_trace_width_nm": 100_000,
+            "min_gap_nm": 100_000,
+            "min_drill_nm": 200_000,
+            "min_annular_ring_nm": 100_000,
+            "min_via_diameter_nm": 300_000,
+            "min_edge_clearance_nm": 200_000,
+            "min_via_to_via_nm": 200_000,
+            "min_board_width_nm": 5_000_000,
+        }
+
+    # Determine constraint mode
+    constraint_mode: Literal["REJECT", "REPAIR"] = args.constraint_mode or spec.constraints.mode  # type: ignore[assignment]
+
+    # Create engine and validate
+    engine = create_constraint_engine(fab_limits=fab_limits)
+    try:
+        result = engine.validate_or_repair(spec, mode=constraint_mode)
+    except ConstraintViolationError as e:
+        # Even if validation fails in REJECT mode, we still want to explain
+        sys.stderr.write(f"Constraint violations in tier {e.tier}:\n")
+        for v in e.violations:
+            sys.stderr.write(f"  - {v.constraint_id}: {v.description}\n")
+        return 1
+
+    # Generate constraint proof document with margin summaries
+    proof_doc = generate_constraint_proof(result.proof, result.repair_result)
+
+    # Extract key information for the explain output
+    resolved = result.resolved
+    proof = result.proof
+
+    # Find tightest constraints per category
+    tightest_by_category: dict[str, dict[str, Any]] = {}
+    for category, summary in proof_doc.min_margin_by_category.items():
+        tightest_by_category[category] = {
+            "min_margin_nm": summary.min_margin_nm,
+            "constraint_id": summary.min_margin_constraint_id,
+            "constraint_count": summary.constraint_count,
+            "failed_count": summary.failed_count,
+            "passed_count": summary.passed_count,
+        }
+
+    # Build output
+    output_file = args.out if args.out else None
+
+    if args.json:
+        # JSON output
+        explain_result = {
+            "spec_path": str(spec_path),
+            "coupon_family": spec.coupon_family,
+            "constraint_mode": constraint_mode,
+            "was_repaired": result.was_repaired,
+            "constraints_passed": proof.passed,
+            "total_constraints": len(proof.constraints),
+            "failed_constraints": len(proof.get_failures()),
+            "first_failure_tier": proof.first_failure_tier,
+            "resolved_design": {
+                "schema_version": resolved.schema_version,
+                "coupon_family": resolved.coupon_family,
+                "parameters_nm": dict(sorted(resolved.parameters_nm.items())),
+                "derived_features": dict(sorted(resolved.derived_features.items())),
+                "dimensionless_groups": dict(sorted(resolved.dimensionless_groups.items())),
+                "length_right_nm": resolved.length_right_nm,
+            },
+            "tightest_constraints_by_category": tightest_by_category,
+            "repair_summary": proof_doc.repair_summary.to_dict() if proof_doc.repair_summary else None,
+        }
+        output_text = canonical_json_dumps(explain_result) + "\n"
+    else:
+        # Human-readable output
+        lines: list[str] = []
+        lines.append("=" * 72)
+        lines.append(f"EXPLAIN: {spec_path}")
+        lines.append("=" * 72)
+        lines.append("")
+
+        lines.append("SPEC SUMMARY")
+        lines.append("-" * 40)
+        lines.append(f"  Coupon Family: {spec.coupon_family}")
+        lines.append(f"  Constraint Mode: {constraint_mode}")
+        lines.append(f"  Fab Profile: {spec.fab_profile.id}")
+        lines.append("")
+
+        lines.append("RESOLVED DESIGN")
+        lines.append("-" * 40)
+        lines.append(f"  Schema Version: {resolved.schema_version}")
+        if resolved.length_right_nm is not None:
+            lines.append(f"  Derived length_right_nm: {resolved.length_right_nm:,} nm")
+        lines.append("")
+
+        lines.append("  Key Parameters (nm):")
+        key_params = [
+            ("board.outline.width_nm", resolved.parameters_nm.get("board.outline.width_nm")),
+            ("board.outline.length_nm", resolved.parameters_nm.get("board.outline.length_nm")),
+            ("transmission_line.w_nm", resolved.parameters_nm.get("transmission_line.w_nm")),
+            ("transmission_line.gap_nm", resolved.parameters_nm.get("transmission_line.gap_nm")),
+            ("transmission_line.length_left_nm", resolved.parameters_nm.get("transmission_line.length_left_nm")),
+        ]
+        for name, value in key_params:
+            if value is not None:
+                lines.append(f"    {name}: {value:,}")
+        lines.append("")
+
+        lines.append("  Derived Features (nm):")
+        for name, value in sorted(resolved.derived_features.items())[:10]:
+            lines.append(f"    {name}: {value:,}")
+        if len(resolved.derived_features) > 10:
+            lines.append(f"    ... and {len(resolved.derived_features) - 10} more")
+        lines.append("")
+
+        lines.append("CONSTRAINT STATUS")
+        lines.append("-" * 40)
+        status = "PASS" if proof.passed else "FAIL"
+        lines.append(f"  Overall: {status}")
+        lines.append(f"  Total Constraints: {len(proof.constraints)}")
+        lines.append(f"  Failed: {len(proof.get_failures())}")
+        if result.was_repaired:
+            lines.append(f"  Was Repaired: Yes")
+        if proof.first_failure_tier:
+            lines.append(f"  First Failure Tier: {proof.first_failure_tier}")
+        lines.append("")
+
+        lines.append("TIGHTEST CONSTRAINTS BY CATEGORY")
+        lines.append("-" * 40)
+        for category, info in sorted(tightest_by_category.items()):
+            margin = info["min_margin_nm"]
+            constraint_id = info["constraint_id"]
+            if margin is not None:
+                margin_str = f"{margin:,} nm" if margin >= 0 else f"{margin:,} nm (FAILING)"
+                lines.append(f"  {category}:")
+                lines.append(f"    Tightest: {constraint_id}")
+                lines.append(f"    Margin: {margin_str}")
+                lines.append(f"    ({info['passed_count']} passed, {info['failed_count']} failed)")
+        lines.append("")
+
+        if proof_doc.repair_summary and proof_doc.repair_summary.repair_applied:
+            lines.append("REPAIR SUMMARY")
+            lines.append("-" * 40)
+            rs = proof_doc.repair_summary
+            lines.append(f"  Total Repairs: {rs.total_repairs}")
+            lines.append(f"  Max Single Repair: {rs.max_single_repair_nm:,} nm")
+            lines.append(f"  L2 Distance (normalized): {rs.normalized_repair_distance:.4f}")
+            lines.append(f"  Original Failures: {rs.original_failures}")
+            lines.append(f"  Remaining Failures: {rs.remaining_failures}")
+            lines.append("")
+
+        lines.append("=" * 72)
+
+        output_text = "\n".join(lines) + "\n"
+
+    # Write output
+    if output_file:
+        output_file.write_text(output_text, encoding="utf-8")
+        sys.stdout.write(f"Explain report written to: {output_file}\n")
+    else:
+        sys.stdout.write(output_text)
+
+    return 0
 
 
 if __name__ == "__main__":
