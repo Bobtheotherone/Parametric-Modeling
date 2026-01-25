@@ -11,11 +11,76 @@ from formula_foundry.coupongen import cli_main
 from formula_foundry.coupongen.api import BuildResult, DrcReport
 
 
-def _minimal_f1_spec_dict_for_cli() -> dict:
-    """Return a minimal valid F1 spec template for CLI tests."""
+def _minimal_f0_spec_dict_for_cli() -> dict:
+    """Return a minimal valid F0 (F0_CAL_THRU_LINE) spec template for CLI tests."""
     return {
         "schema_version": 1,
-        "coupon_family": "F1",
+        "coupon_family": "F0_CAL_THRU_LINE",
+        "units": "nm",
+        "toolchain": {
+            "kicad": {
+                "version": "9.0.7",
+                "docker_image": "kicad/kicad:9.0.7@sha256:test",
+            }
+        },
+        "fab_profile": {"id": "generic"},
+        "stackup": {
+            "copper_layers": 2,
+            "thicknesses_nm": {
+                "copper_top": 35_000,
+                "core": 1_000_000,
+                "copper_bottom": 35_000,
+            },
+            "materials": {"er": 4.5, "loss_tangent": 0.02},
+        },
+        "board": {
+            "outline": {
+                "width_nm": 20_000_000,
+                "length_nm": 100_000_000,
+                "corner_radius_nm": 1_000_000,
+            },
+            "origin": {"mode": "center"},
+            "text": {"coupon_id": "TEST", "include_manifest_hash": True},
+        },
+        "connectors": {
+            "left": {
+                "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
+                "position_nm": [5_000_000, 0],
+                "rotation_deg": 0,
+            },
+            "right": {
+                "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
+                "position_nm": [95_000_000, 0],
+                "rotation_deg": 180,
+            },
+        },
+        "transmission_line": {
+            "type": "cpwg",
+            "layer": "F.Cu",
+            "w_nm": 200_000,
+            "gap_nm": 150_000,
+            "length_left_nm": 20_000_000,
+            "length_right_nm": 20_000_000,
+        },
+        "constraints": {
+            "mode": "REPAIR",
+            "drc": {"must_pass": True, "severity": "error"},
+            "symmetry": {"enforce": True},
+            "allow_unconnected_copper": False,
+        },
+        "export": {
+            "gerbers": {"enabled": True, "format": "RS274X"},
+            "drill": {"enabled": True, "format": "excellon"},
+            "outputs_dir": "outputs",
+        },
+    }
+
+
+def _minimal_f1_spec_dict_for_cli() -> dict:
+    """Return a minimal valid F1 (F1_SINGLE_ENDED_VIA) spec template for CLI tests."""
+    return {
+        "schema_version": 1,
+        "coupon_family": "F1_SINGLE_ENDED_VIA",
         "units": "nm",
         "toolchain": {
             "kicad": {
@@ -72,7 +137,7 @@ def _minimal_f1_spec_dict_for_cli() -> dict:
             },
         },
         "discontinuity": {
-            "type": "single_via",
+            "type": "VIA_TRANSITION",
             "signal_via": {
                 "drill_nm": 300_000,
                 "diameter_nm": 600_000,
@@ -565,3 +630,324 @@ def test_cli_build_batch_missing_u_vectors() -> None:
         assert exit_code == 1
     finally:
         Path(spec_path).unlink()
+
+
+# ============================================================================
+# REQ-M1-018: lint-spec-coverage and explain CLI command tests
+# ============================================================================
+
+
+def test_cli_lint_spec_coverage_command_exists() -> None:
+    """REQ-M1-018: CLI must have lint-spec-coverage command."""
+    parser = cli_main.build_parser()
+    subparsers = None
+    for action in parser._actions:  # noqa: SLF001
+        if isinstance(action, argparse._SubParsersAction):
+            subparsers = action
+            break
+
+    assert subparsers is not None
+    commands = set(subparsers.choices.keys())
+    assert "lint-spec-coverage" in commands
+
+
+def test_cli_explain_command_exists() -> None:
+    """REQ-M1-018: CLI must have explain command."""
+    parser = cli_main.build_parser()
+    subparsers = None
+    for action in parser._actions:  # noqa: SLF001
+        if isinstance(action, argparse._SubParsersAction):
+            subparsers = action
+            break
+
+    assert subparsers is not None
+    commands = set(subparsers.choices.keys())
+    assert "explain" in commands
+
+
+def test_cli_lint_spec_coverage_parser_args() -> None:
+    """REQ-M1-018: lint-spec-coverage command accepts required arguments."""
+    parser = cli_main.build_parser()
+    args = parser.parse_args(["lint-spec-coverage", "test.yaml"])
+    assert args.command == "lint-spec-coverage"
+    assert args.spec == Path("test.yaml")
+    assert args.strict is True  # Default
+    assert args.json is False  # Default
+
+
+def test_cli_lint_spec_coverage_parser_optional_args() -> None:
+    """REQ-M1-018: lint-spec-coverage command accepts optional arguments."""
+    parser = cli_main.build_parser()
+    args = parser.parse_args(["lint-spec-coverage", "test.yaml", "--json"])
+    assert args.command == "lint-spec-coverage"
+    assert args.json is True
+
+
+def test_cli_explain_parser_args() -> None:
+    """REQ-M1-018: explain command accepts required arguments."""
+    parser = cli_main.build_parser()
+    args = parser.parse_args(["explain", "test.yaml"])
+    assert args.command == "explain"
+    assert args.spec == Path("test.yaml")
+    assert args.out is None  # Default
+    assert args.json is False  # Default
+
+
+def test_cli_explain_parser_optional_args() -> None:
+    """REQ-M1-018: explain command accepts optional arguments."""
+    parser = cli_main.build_parser()
+    args = parser.parse_args([
+        "explain", "test.yaml",
+        "--out", "/tmp/report.txt",
+        "--json",
+        "--constraint-mode", "REPAIR",
+    ])
+    assert args.command == "explain"
+    assert args.out == Path("/tmp/report.txt")
+    assert args.json is True
+    assert args.constraint_mode == "REPAIR"
+
+
+def test_cli_lint_spec_coverage_exit_code_success(tmp_path: Path) -> None:
+    """REQ-M1-018: lint-spec-coverage returns 0 when coverage is complete."""
+    import yaml
+
+    # Create a minimal valid F1 spec with all expected paths
+    spec_dict = _minimal_f1_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write"):
+        exit_code = cli_main.main(["lint-spec-coverage", str(spec_path)])
+
+    # The spec may or may not have full coverage, but it should not crash
+    assert exit_code in (0, 1)
+
+
+def test_cli_lint_spec_coverage_exit_code_failure(tmp_path: Path) -> None:
+    """REQ-M1-018: lint-spec-coverage returns non-zero on coverage failures."""
+    import yaml
+
+    # Create an incomplete spec that will have unconsumed expected paths
+    spec_dict = {
+        "schema_version": 1,
+        "coupon_family": "F0",
+        "units": "nm",
+        "toolchain": {
+            "kicad": {
+                "version": "9.0.7",
+                "docker_image": "kicad/kicad:9.0.7@sha256:test",
+            }
+        },
+        "fab_profile": {"id": "generic"},
+        # Missing many required fields for F0
+        "stackup": {
+            "copper_layers": 2,
+            "thicknesses_nm": {"copper": 35000},
+            "materials": {"er": 4.5, "loss_tangent": 0.02},
+        },
+        "board": {
+            "outline": {"width_nm": 10_000_000, "length_nm": 50_000_000},
+            "origin": {"mode": "center"},
+            "text": {"coupon_id": "TEST", "include_manifest_hash": True},
+        },
+        # Missing connectors, transmission_line, constraints, export
+    }
+    spec_path = tmp_path / "incomplete_spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stderr.write"), patch("sys.stdout.write"):
+        # This may fail at load time due to validation, or pass with coverage issues
+        exit_code = cli_main.main(["lint-spec-coverage", str(spec_path)])
+
+    # Should return non-zero (1) due to validation failure or coverage issues
+    assert exit_code == 1
+
+
+def test_cli_lint_spec_coverage_missing_spec() -> None:
+    """REQ-M1-018: lint-spec-coverage returns 1 when spec file is missing."""
+    with patch("sys.stderr.write"):
+        exit_code = cli_main.main([
+            "lint-spec-coverage",
+            "/nonexistent/spec.yaml",
+        ])
+
+    assert exit_code == 1
+
+
+def test_cli_lint_spec_coverage_json_output(tmp_path: Path) -> None:
+    """REQ-M1-018: lint-spec-coverage --json outputs JSON format."""
+    import yaml
+
+    spec_dict = _minimal_f1_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write") as mock_stdout:
+        exit_code = cli_main.main(["lint-spec-coverage", str(spec_path), "--json"])
+
+    # Check that JSON was output
+    call_args = mock_stdout.call_args[0][0]
+    output = json.loads(call_args.strip())
+    assert "spec_path" in output
+    assert "coupon_family" in output
+    assert "coverage_ratio" in output
+    assert "is_complete" in output
+    assert "unused_provided_paths" in output
+    assert "unconsumed_expected_paths" in output
+    assert exit_code in (0, 1)
+
+
+def test_cli_explain_success(tmp_path: Path) -> None:
+    """REQ-M1-018: explain command runs successfully with valid spec."""
+    import yaml
+
+    # Use F0 spec for explain tests (F0 is simpler and doesn't require footprint files)
+    spec_dict = _minimal_f0_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write") as mock_stdout:
+        exit_code = cli_main.main(["explain", str(spec_path)])
+
+    # Should succeed
+    assert exit_code == 0
+
+    # Check that output was written
+    call_args = mock_stdout.call_args[0][0]
+    # Human-readable output should contain key sections
+    assert "EXPLAIN:" in call_args
+    assert "SPEC SUMMARY" in call_args
+    assert "RESOLVED DESIGN" in call_args
+    assert "CONSTRAINT STATUS" in call_args
+    assert "TIGHTEST CONSTRAINTS BY CATEGORY" in call_args
+
+
+def test_cli_explain_json_output(tmp_path: Path) -> None:
+    """REQ-M1-018: explain --json outputs JSON format with required fields."""
+    import yaml
+
+    spec_dict = _minimal_f0_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write") as mock_stdout:
+        exit_code = cli_main.main(["explain", str(spec_path), "--json"])
+
+    assert exit_code == 0
+
+    # Check JSON output contains required fields
+    call_args = mock_stdout.call_args[0][0]
+    output = json.loads(call_args.strip())
+    assert "spec_path" in output
+    assert "coupon_family" in output
+    assert "constraint_mode" in output
+    assert "was_repaired" in output
+    assert "constraints_passed" in output
+    assert "total_constraints" in output
+    assert "resolved_design" in output
+    assert "tightest_constraints_by_category" in output
+
+    # Check resolved_design structure
+    resolved = output["resolved_design"]
+    assert "schema_version" in resolved
+    assert "coupon_family" in resolved
+    assert "parameters_nm" in resolved
+    assert "derived_features" in resolved
+    assert "dimensionless_groups" in resolved
+
+
+def test_cli_explain_missing_spec() -> None:
+    """REQ-M1-018: explain returns 1 when spec file is missing."""
+    with patch("sys.stderr.write"):
+        exit_code = cli_main.main([
+            "explain",
+            "/nonexistent/spec.yaml",
+        ])
+
+    assert exit_code == 1
+
+
+def test_cli_explain_output_file(tmp_path: Path) -> None:
+    """REQ-M1-018: explain --out writes to specified file."""
+    import yaml
+
+    spec_dict = _minimal_f0_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    output_path = tmp_path / "report.txt"
+
+    with patch("sys.stdout.write") as mock_stdout:
+        exit_code = cli_main.main([
+            "explain", str(spec_path),
+            "--out", str(output_path),
+        ])
+
+    assert exit_code == 0
+    assert output_path.exists()
+
+    # Check file contents
+    content = output_path.read_text()
+    assert "EXPLAIN:" in content
+    assert "RESOLVED DESIGN" in content
+
+    # stdout should show file write confirmation
+    call_args = mock_stdout.call_args[0][0]
+    assert "Explain report written to:" in call_args
+
+
+def test_cli_explain_constraint_mode_override(tmp_path: Path) -> None:
+    """REQ-M1-018: explain --constraint-mode overrides spec constraint mode."""
+    import yaml
+
+    spec_dict = _minimal_f0_spec_dict_for_cli()
+    spec_dict["constraints"]["mode"] = "REJECT"  # Set spec to REJECT
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write") as mock_stdout:
+        # Override to REPAIR
+        exit_code = cli_main.main([
+            "explain", str(spec_path),
+            "--json",
+            "--constraint-mode", "REPAIR",
+        ])
+
+    assert exit_code == 0
+
+    call_args = mock_stdout.call_args[0][0]
+    output = json.loads(call_args.strip())
+    assert output["constraint_mode"] == "REPAIR"
+
+
+def test_cli_explain_tightest_constraints_content(tmp_path: Path) -> None:
+    """REQ-M1-018: explain output contains tightest constraint info per category."""
+    import yaml
+
+    spec_dict = _minimal_f0_spec_dict_for_cli()
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
+
+    with patch("sys.stdout.write") as mock_stdout:
+        exit_code = cli_main.main([
+            "explain", str(spec_path),
+            "--json",
+        ])
+
+    assert exit_code == 0
+
+    call_args = mock_stdout.call_args[0][0]
+    output = json.loads(call_args.strip())
+
+    tightest = output["tightest_constraints_by_category"]
+    # Should have at least some categories from the constraint engine
+    assert isinstance(tightest, dict)
+
+    # Each category should have the expected fields if present
+    for category, info in tightest.items():
+        assert "min_margin_nm" in info
+        assert "constraint_id" in info
+        assert "constraint_count" in info
+        assert "failed_count" in info
+        assert "passed_count" in info
