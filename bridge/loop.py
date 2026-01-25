@@ -3205,6 +3205,12 @@ def _write_escalation_file(runs_dir: Path, summary: dict[str, Any]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--planner-profile",
+        default=None,
+        help="Planner tuning preset (e.g. throughput/balanced/quality). Compatibility flag for run_live.sh.",
+    )
+
     ap.add_argument("--project-root", default=".")
     ap.add_argument("--config", default="bridge/config.json")
     ap.add_argument("--schema", default="bridge/turn.schema.json")
