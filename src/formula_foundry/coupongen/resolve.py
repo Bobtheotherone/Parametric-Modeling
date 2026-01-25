@@ -203,8 +203,14 @@ def _build_derived_features(
 ) -> dict[str, int]:
     """Build derived features using LayoutPlan as the source of truth.
 
+    Combines the comprehensive derived features from formula_foundry.derive
+    with LayoutPlan-derived values to ensure geometry math is not duplicated.
+
     For F1 coupons, uses the derived length_right_nm from the LayoutPlan
     to compute total trace length, ensuring geometry math is not duplicated.
+
+    Satisfies REQ-M1-015: Derived features include CPWG/via/fence/launch-relevant
+    features and emit deterministically in manifest.json.
 
     Args:
         spec: The coupon specification.
@@ -212,48 +218,36 @@ def _build_derived_features(
         derived_length_right_nm: The derived right length for F1 coupons, or None.
 
     Returns:
-        Dictionary of derived features.
+        Dictionary of derived features, sorted by key for deterministic output.
     """
-    width = int(spec.board.outline.width_nm)
-    length = int(spec.board.outline.length_nm)
+    from formula_foundry.derive import compute_derived_features
 
-    # Use LayoutPlan's total_trace_length_nm as the source of truth
+    # Get comprehensive derived features from the derive module
+    derived = compute_derived_features(spec, derived_length_right_nm)
+
+    # Override trace_total_length_nm with LayoutPlan's value (source of truth)
     # This ensures no geometry math is duplicated (CP-2.1)
-    trace_total_length_nm = layout_plan.total_trace_length_nm
+    derived["trace_total_length_nm"] = layout_plan.total_trace_length_nm
 
-    derived: dict[str, int] = {
-        "board_area_nm2": width * length,
-        "trace_total_length_nm": trace_total_length_nm,
-    }
-
-    # For F1 coupons, store the derived length_right_nm as a derived feature
-    if derived_length_right_nm is not None:
-        derived["length_right_nm"] = derived_length_right_nm
-
-    if spec.discontinuity is not None:
-        pad = int(spec.discontinuity.signal_via.pad_diameter_nm)
-        drill = int(spec.discontinuity.signal_via.drill_nm)
-        derived["signal_via_annular_ring_nm"] = pad - drill
-    return derived
+    # Ensure sorted output for deterministic JSON emission
+    return dict(sorted(derived.items()))
 
 
 def _build_dimensionless_groups(spec: CouponSpec) -> dict[str, float]:
-    width = int(spec.board.outline.width_nm)
-    length = int(spec.board.outline.length_nm)
-    w_nm = int(spec.transmission_line.w_nm)
-    gap_nm = int(spec.transmission_line.gap_nm)
-    groups: dict[str, float] = {
-        "board_aspect_ratio": _safe_ratio(length, width),
-        "cpwg_w_over_gap": _safe_ratio(w_nm, gap_nm),
-    }
-    if spec.discontinuity is not None:
-        pad = int(spec.discontinuity.signal_via.pad_diameter_nm)
-        drill = int(spec.discontinuity.signal_via.drill_nm)
-        groups["signal_via_pad_over_drill"] = _safe_ratio(pad, drill)
-    return groups
+    """Build comprehensive dimensionless groups for equation discovery.
 
+    Delegates to formula_foundry.derive.compute_dimensionless_groups which
+    provides CPWG/via/fence/launch-relevant dimensionless groups.
 
-def _safe_ratio(numerator: int, denominator: int) -> float:
-    if denominator == 0:
-        return 0.0
-    return numerator / denominator
+    Satisfies REQ-M1-015: Derived groups include CPWG/via/fence/launch-relevant
+    dimensionless groups and emit deterministically in manifest.json.
+
+    Args:
+        spec: The coupon specification.
+
+    Returns:
+        Dictionary of dimensionless groups, sorted by key for deterministic output.
+    """
+    from formula_foundry.derive import compute_dimensionless_groups
+
+    return compute_dimensionless_groups(spec)
