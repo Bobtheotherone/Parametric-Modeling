@@ -1,0 +1,100 @@
+{
+  "agents": {
+    "codex": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "codex",
+          "milestone_id": "M4",
+          "phase": "plan",
+          "work_completed": true,
+          "project_complete": false,
+          "summary": "Smoke-route mock: codex step 1.",
+          "gates_passed": [],
+          "requirement_progress": {
+            "covered_req_ids": [],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "claude",
+          "next_prompt": "Smoke-route handoff to Claude.",
+          "delegate_rationale": "Continue smoke-route sequence.",
+          "stats_refs": ["CX-1"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      },
+      {
+        "type": "ok",
+        "response": {
+          "agent": "codex",
+          "milestone_id": "M4",
+          "phase": "verify",
+          "work_completed": true,
+          "project_complete": false,
+          "summary": "Smoke-route mock: codex step 2.",
+          "gates_passed": [],
+          "requirement_progress": {
+            "covered_req_ids": [],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "claude",
+          "next_prompt": "Smoke-route follow-up to Claude.",
+          "delegate_rationale": "Complete second smoke-route cycle.",
+          "stats_refs": ["CX-1"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ],
+    "claude": [
+      {
+        "type": "ok",
+        "response": {
+          "agent": "claude",
+          "milestone_id": "M4",
+          "phase": "implement",
+          "work_completed": true,
+          "project_complete": false,
+          "summary": "Smoke-route mock: claude step 1.",
+          "gates_passed": [],
+          "requirement_progress": {
+            "covered_req_ids": [],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "codex",
+          "next_prompt": "Smoke-route handoff to Codex.",
+          "delegate_rationale": "Continue smoke-route sequence.",
+          "stats_refs": ["CL-1"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      },
+      {
+        "type": "ok",
+        "response": {
+          "agent": "claude",
+          "milestone_id": "M4",
+          "phase": "finalize",
+          "work_completed": true,
+          "project_complete": false,
+          "summary": "Smoke-route mock: claude step 2.",
+          "gates_passed": [],
+          "requirement_progress": {
+            "covered_req_ids": [],
+            "tests_added_or_modified": [],
+            "commands_run": []
+          },
+          "next_agent": "codex",
+          "next_prompt": "Smoke-route follow-up to Codex.",
+          "delegate_rationale": "Complete second smoke-route cycle.",
+          "stats_refs": ["CL-1"],
+          "needs_write_access": false,
+          "artifacts": []
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "agents": {
+    "codex": [
+      {
+        "type": "error",
+        "exit_code": 0,
+        "stdout": "{\n  \"agent\": \"codex\",\n  \"milestone_id\": \"M4\",\n  \"phase\": \"implement\",\n  \"work_completed\": true,\n  \"project_complete\": false,\n  \"summary\": \"Mock streaming demo: stdout/stderr lines for manual inspection.\",\n  \"gates_passed\": [\"mock_stream\"],\n  \"requirement_progress\": {\n    \"covered_req_ids\": [],\n    \"tests_added_or_modified\": [],\n    \"commands_run\": []\n  },\n  \"next_agent\": \"claude\",\n  \"next_prompt\": \"Verify streaming output and close out the demo.\",\n  \"delegate_rationale\": \"Handing off after streaming output.\",\n  \"stats_refs\": [\"CX-1\"],\n  \"needs_write_access\": false,\n  \"artifacts\": []\n}\n",
+        "stderr": "stderr: stream line 1\nstderr: stream line 2\n"
+      }
+    ],
+    "claude": [
+      {
+        "type": "error",
+        "exit_code": 0,
+        "stdout": "{\n  \"agent\": \"claude\",\n  \"milestone_id\": \"M4\",\n  \"phase\": \"finalize\",\n  \"work_completed\": true,\n  \"project_complete\": true,\n  \"summary\": \"Mock streaming demo complete; stdout/stderr captured.\",\n  \"gates_passed\": [\"mock_stream\"],\n  \"requirement_progress\": {\n    \"covered_req_ids\": [],\n    \"tests_added_or_modified\": [],\n    \"commands_run\": []\n  },\n  \"next_agent\": \"codex\",\n  \"next_prompt\": \"(mock run complete)\",\n  \"delegate_rationale\": \"Completion reached; end demo.\",\n  \"stats_refs\": [\"CL-1\"],\n  \"needs_write_access\": false,\n  \"artifacts\": []\n}\n",
+        "stderr": "stderr: stream line 1\nstderr: stream line 2\n"
+      }
+    ]
+  }
+}

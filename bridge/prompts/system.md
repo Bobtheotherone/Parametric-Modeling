@@ -49,8 +49,10 @@ When working in sequential mode, hand off to the other agent unless completing t
    - The orchestrator state may include `runner_mode`.
    - If `runner_mode` is **"sequential"** (default): unless `project_complete=true`, you should hand off to the *other* agent (`codex` <-> `claude`) and provide a concrete `next_prompt`.
    - If `runner_mode` is **"parallel-worker"** (or state includes a `worker_id`): you may set `next_agent` to yourself and `next_prompt` to `""` once your assigned task is complete.
-5. **Resource-intensive commands**:
+5. **Routing override note**: `next_agent` may be overridden by smoke-route; still populate it with your best handoff choice.
+6. **Streaming logging note**: streaming model output is logged during runs; only the final JSON turn is the contract.
+7. **Resource-intensive commands**:
    - Assume multiple agents may be running concurrently.
    - If the next step requires a potentially resource-intensive local command (likely to exceed ~40% CPU or RAM), **do not run it automatically**.
    - Instead: explain in `summary` what should be run and why, and provide a *manual command/prompt* the user can run later in a single-agent setting.
-6. Keep `summary` and `delegate_rationale` concise but specific.
+8. Keep `summary` and `delegate_rationale` concise but specific.
