@@ -366,14 +366,21 @@ def _validate_turn_minimal(
 ) -> tuple[bool, str]:
     if not isinstance(obj, dict):
         return False, "turn is not an object"
+    expected_keys = set(REQUIRED_KEYS)
     for key in REQUIRED_KEYS:
         if key not in obj:
             return False, f"missing key: {key}"
+    extra_keys = set(obj.keys()) - expected_keys
+    if extra_keys:
+        return False, f"unexpected keys: {', '.join(sorted(extra_keys))}"
     if allowed_agents:
         if obj.get("agent") not in allowed_agents:
             return False, "invalid agent"
         if obj.get("next_agent") not in allowed_agents:
             return False, "invalid next_agent"
+    milestone_id = obj.get("milestone_id")
+    if not isinstance(milestone_id, str) or not milestone_id.strip():
+        return False, "milestone_id must be non-empty string"
     if allowed_phases and obj.get("phase") not in allowed_phases:
         return False, "invalid phase"
     if not isinstance(obj.get("work_completed"), bool) or not isinstance(obj.get("project_complete"), bool):
@@ -391,6 +398,9 @@ def _validate_turn_minimal(
     rp = obj.get("requirement_progress")
     if not isinstance(rp, dict):
         return False, "requirement_progress must be object"
+    rp_keys = set(rp.keys())
+    if rp_keys != {"covered_req_ids", "tests_added_or_modified", "commands_run"}:
+        return False, "requirement_progress must only contain required keys"
     for key in ("covered_req_ids", "tests_added_or_modified", "commands_run"):
         items = rp.get(key)
         if not isinstance(items, list) or not all(isinstance(x, str) for x in items):

@@ -31,7 +31,8 @@ def build_error_turn(
     artifacts: Sequence[Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Build a schema-valid error turn with safe defaults."""
-    agent_id = agent if agent in AGENTS else str(agent).strip() or "codex"
+    agent_val = str(agent).strip().lower()
+    agent_id = agent_val if agent_val in AGENTS else "codex"
     phase_val = phase if phase in VALID_PHASES else DEFAULT_ERROR_PHASE
     next_agent_val = next_agent if next_agent in AGENTS else ("claude" if agent_id == "codex" else "codex")
     stats = normalize_stats_refs(agent_id, stats_refs, stats_id_set)
