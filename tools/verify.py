@@ -157,14 +157,14 @@ def _detect_milestone_id(project_root: Path) -> str | None:
 
 
 def _gate_m0_smoke(project_root: Path, *, timeout_s: int) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.m0", "smoke"]
+    cmd = [sys.executable, "-m", "tools.m0", "smoke", "--mode", "strict"]
     res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_smoke"
     return res
 
 
 def _gate_m0_repro_check(project_root: Path, *, timeout_s: int) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.m0", "repro-check"]
+    cmd = [sys.executable, "-m", "tools.m0", "repro-check", "--mode", "strict"]
     res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_repro_check"
     return res
