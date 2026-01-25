@@ -42,8 +42,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-<<<<<<< HEAD
-=======
 # Atomic I/O for robust file operations
 from bridge.atomic_io import atomic_write_json, validate_json_file
 
@@ -68,7 +66,6 @@ from bridge.verify_repair import (
     write_repair_report,
 )
 
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
 AGENTS: tuple[str, ...] = ("codex", "claude")
 
 
@@ -1048,8 +1045,6 @@ def _validate_turn(
 
 
 # -----------------------------
-<<<<<<< HEAD
-=======
 # Contract hardening for agent outputs
 # -----------------------------
 
@@ -1193,7 +1188,6 @@ def _is_noncompliant_and_should_use_stricter_prompt(text: str) -> tuple[bool, li
 
 
 # -----------------------------
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
 # Agent selection + quota
 # -----------------------------
 
@@ -2346,8 +2340,6 @@ def run_parallel(
     machine_info = _collect_machine_info()
     selftest_mode = getattr(args, "selftest_parallel", False)
 
-<<<<<<< HEAD
-=======
     # Preflight check: detect dirty repo before spending credits
     # Skip in selftest mode since we're not doing real work
     if not selftest_mode:
@@ -2406,7 +2398,6 @@ def run_parallel(
             print(f"[orchestrator] WARNING: Bootstrap failed: {bootstrap_result.stderr[:200]}")
             print("[orchestrator] Continuing anyway - verify will catch any missing dependencies")
 
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     # In selftest mode, we use synthetic tasks
     if selftest_mode:
         print("[orchestrator] SELFTEST MODE: using synthetic tasks (no real agents)")
@@ -2902,19 +2893,11 @@ def run_parallel(
                 # Nothing running and nothing started, wait a bit before retrying
                 time.sleep(0.5)
 
-<<<<<<< HEAD
-    # Final verification (skip in selftest mode)
-=======
     # Final verification with auto-repair loop (skip in selftest mode; respect verify_mode)
     # STALL PREVENTION: The repair callback ensures verify failures trigger automatic
     # repair actions instead of waiting for manual intervention.
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     if not selftest_mode:
         verify_json = state.runs_dir / "final_verify.json"
-<<<<<<< HEAD
-        print("[orchestrator] parallel: running tools.verify (strict)")
-        rc_v, _, _ = _run_verify(state.project_root, verify_json, strict_git=True)
-=======
         repair_report_path = state.runs_dir / "verify_repair_report.json"
         max_repair_attempts = getattr(args, "max_repair_attempts", 5)
 
@@ -2964,7 +2947,6 @@ def run_parallel(
                 out_of_scope_path = state.runs_dir / "out_of_scope_repairs.json"
                 if out_of_scope_path.exists():
                     print(f"[orchestrator] parallel: out-of-scope repairs (need manual): {out_of_scope_path}")
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     else:
         rc_v = 0
 
@@ -3287,8 +3269,6 @@ def main() -> int:
         "--only-claude", action="store_true", help="ONLY use Claude agent for ALL operations (planner, workers, fallbacks)"
     )
 
-<<<<<<< HEAD
-=======
     # Robustness flags for unattended runs
     ap.add_argument(
         "--auto-stash",
@@ -3313,7 +3293,6 @@ def main() -> int:
         help="Maximum verify auto-repair attempts before giving up (default: 3)",
     )
 
->>>>>>> f63cbac (orchestrator: verify auto-repair + scope guard; add verify_repair package; M4/M5 bench + backend fixes)
     args = ap.parse_args()
 
     # Validate mutually exclusive agent flags
