@@ -919,7 +919,7 @@ class TestSpecConsumption:
 
     def test_spec_consumption_model_creation(self) -> None:
         """SpecConsumption model can be created with path sets."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a", "b"}),
@@ -932,7 +932,7 @@ class TestSpecConsumption:
 
     def test_unused_provided_paths_calculation(self) -> None:
         """unused_provided_paths returns provided but not consumed paths."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a", "b"}),
@@ -943,7 +943,7 @@ class TestSpecConsumption:
 
     def test_unconsumed_expected_paths_calculation(self) -> None:
         """unconsumed_expected_paths returns expected but not consumed paths."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a"}),
@@ -954,7 +954,7 @@ class TestSpecConsumption:
 
     def test_consumption_summary_dict(self) -> None:
         """to_summary_dict returns sorted lists for manifest emission."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"b", "a"}),
@@ -962,11 +962,11 @@ class TestSpecConsumption:
             provided_paths=frozenset({"d", "b", "a"}),
         )
         summary = consumption.to_summary_dict()
-        assert summary["consumed"] == ["a", "b"]
-        assert summary["expected"] == ["a", "b", "c"]
-        assert summary["provided"] == ["a", "b", "d"]
-        assert summary["unused_provided"] == ["d"]
-        assert summary["unconsumed_expected"] == ["c"]
+        assert summary["consumed_paths"] == ["a", "b"]
+        assert summary["expected_paths"] == ["a", "b", "c"]
+        assert summary["provided_paths"] == ["a", "b", "d"]
+        assert summary["unused_provided_paths"] == ["d"]
+        assert summary["unconsumed_expected_paths"] == ["c"]
 
     def test_collect_provided_paths_from_spec(
         self, minimal_spec_data: dict[str, Any]
@@ -1025,7 +1025,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_passes_on_valid(self) -> None:
         """enforce_spec_consumption does not raise for valid consumption."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
 
         # All paths consumed, no unused or unconsumed
@@ -1039,7 +1039,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unused_provided(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if provided field is unused."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1057,7 +1057,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unconsumed_expected(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if expected field is unconsumed."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1106,7 +1106,7 @@ class TestLintSpecCoverageCLI:
         there are unconsumed expected paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1134,7 +1134,7 @@ class TestLintSpecCoverageCLI:
         there are unused provided paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1162,7 +1162,7 @@ class TestLintSpecCoverageCLI:
         all expected paths are consumed and no provided paths are unused by directly
         testing the SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
 
         # Create a consumption with complete coverage (no issues)

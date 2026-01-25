@@ -25,7 +25,7 @@ def test_spec_lint_detects_missing_sections(tmp_path: Path) -> None:
 
 def test_spec_consumption_model_computes_unused_provided() -> None:
     """REQ-M1-018: SpecConsumption computes unused_provided_paths correctly."""
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a", "b"}),
@@ -40,7 +40,7 @@ def test_spec_consumption_model_computes_unused_provided() -> None:
 
 def test_spec_consumption_model_computes_unconsumed_expected() -> None:
     """REQ-M1-018: SpecConsumption computes unconsumed_expected_paths correctly."""
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a"}),
@@ -55,7 +55,7 @@ def test_spec_consumption_model_computes_unconsumed_expected() -> None:
 
 def test_spec_consumption_model_fully_covered() -> None:
     """REQ-M1-018: SpecConsumption reports is_fully_covered when complete."""
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a", "b", "c"}),
@@ -71,7 +71,7 @@ def test_spec_consumption_model_fully_covered() -> None:
 
 def test_spec_consumption_model_coverage_ratio() -> None:
     """REQ-M1-018: SpecConsumption computes coverage_ratio correctly."""
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     # 2 out of 4 expected paths are consumed
     consumption = SpecConsumption(
@@ -85,7 +85,7 @@ def test_spec_consumption_model_coverage_ratio() -> None:
 
 def test_spec_consumption_model_empty_expected() -> None:
     """REQ-M1-018: SpecConsumption handles empty expected_paths."""
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a"}),
@@ -208,7 +208,7 @@ def test_enforce_spec_consumption_raises_on_failure() -> None:
         SpecConsumptionError,
         enforce_spec_consumption,
     )
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a"}),
@@ -227,7 +227,7 @@ def test_enforce_spec_consumption_raises_on_failure() -> None:
 def test_enforce_spec_consumption_passes_when_valid() -> None:
     """REQ-M1-018: enforce_spec_consumption does not raise when valid."""
     from formula_foundry.resolve.consumption import enforce_spec_consumption
-    from formula_foundry.spec.consumption import SpecConsumption
+    from formula_foundry.resolve.types import SpecConsumption
 
     consumption = SpecConsumption(
         consumed_paths=frozenset({"a", "b"}),

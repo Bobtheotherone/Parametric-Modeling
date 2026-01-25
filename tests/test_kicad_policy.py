@@ -12,27 +12,13 @@ record (refill/check behavior and toolchain versioning).
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
-# Direct import to avoid broken import chain in formula_foundry.__init__
-_SRC_DIR = Path(__file__).resolve().parent.parent / "src"
-
-# Load policy module directly - register in sys.modules before exec
-_policy_spec = importlib.util.spec_from_file_location(
-    "formula_foundry.coupongen.kicad.policy",
-    _SRC_DIR / "formula_foundry" / "coupongen" / "kicad" / "policy.py"
+from formula_foundry.coupongen.kicad import (
+    DEFAULT_ZONE_POLICY,
+    ZonePolicy,
+    get_zone_policy_record,
 )
-_policy = importlib.util.module_from_spec(_policy_spec)  # type: ignore[arg-type]
-sys.modules["formula_foundry.coupongen.kicad.policy"] = _policy
-_policy_spec.loader.exec_module(_policy)  # type: ignore[union-attr]
-
-DEFAULT_ZONE_POLICY = _policy.DEFAULT_ZONE_POLICY
-ZonePolicy = _policy.ZonePolicy
-get_zone_policy_record = _policy.get_zone_policy_record
 
 
 class TestZonePolicyDataclass:

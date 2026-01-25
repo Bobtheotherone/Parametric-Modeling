@@ -10,50 +10,10 @@ and appear in silkscreen exports.
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-import types
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import pytest
-
-# Set up module paths
-_src_path = Path(__file__).parent.parent / "src"
-_kicad_path = _src_path / "formula_foundry" / "coupongen" / "kicad"
-
-# First, load sexpr module and register it under the full package path
-_sexpr_spec = importlib.util.spec_from_file_location(
-    "formula_foundry.coupongen.kicad.sexpr",
-    _kicad_path / "sexpr.py"
-)
-_sexpr_module = importlib.util.module_from_spec(_sexpr_spec)
-
-# Create fake parent packages to satisfy relative imports
-sys.modules["formula_foundry"] = types.ModuleType("formula_foundry")
-sys.modules["formula_foundry.coupongen"] = types.ModuleType("formula_foundry.coupongen")
-_kicad_pkg = types.ModuleType("formula_foundry.coupongen.kicad")
-_kicad_pkg.__path__ = [str(_kicad_path)]
-sys.modules["formula_foundry.coupongen.kicad"] = _kicad_pkg
-sys.modules["formula_foundry.coupongen.kicad.sexpr"] = _sexpr_module
-
-# Execute sexpr module
-_sexpr_spec.loader.exec_module(_sexpr_module)
-
-# Add sexpr to the kicad package
-_kicad_pkg.sexpr = _sexpr_module
-
-# Now load annotations module with proper package context
-_annotations_spec = importlib.util.spec_from_file_location(
-    "formula_foundry.coupongen.kicad.annotations",
-    _kicad_path / "annotations.py",
-    submodule_search_locations=[str(_kicad_path)]
-)
-annotations = importlib.util.module_from_spec(_annotations_spec)
-annotations.__package__ = "formula_foundry.coupongen.kicad"
-sys.modules["formula_foundry.coupongen.kicad.annotations"] = annotations
-_annotations_spec.loader.exec_module(annotations)
 
 
 @dataclass
