@@ -40,6 +40,48 @@ _SIG_NET_NAME = "SIG"
 _GND_NET_NAME = "GND"
 
 
+def _extract_pad_numbers_from_kicad_mod(footprint_path: Path) -> set[str]:
+    """Extract all pad numbers from a .kicad_mod file.
+
+    Parses the footprint S-expression to find all pad definitions and returns
+    the set of unique pad numbers. This is used for validating that all pads
+    in the footprint are accounted for in the metadata.
+
+    Args:
+        footprint_path: Path to the .kicad_mod file.
+
+    Returns:
+        Set of normalized pad number strings found in the footprint.
+
+    Raises:
+        ValueError: If the file cannot be parsed or contains no pads.
+    """
+    import re
+
+    text = footprint_path.read_text(encoding="utf-8", errors="replace")
+
+    # Parse pad numbers using regex pattern matching
+    # Matches (pad "number" ...) or (pad number ...) patterns
+    # KiCad pad numbers can be quoted strings or bare identifiers
+    pad_pattern = re.compile(r'\(\s*pad\s+(?:"([^"]+)"|(\S+))\s+')
+    matches = pad_pattern.findall(text)
+
+    pad_numbers: set[str] = set()
+    for quoted, bare in matches:
+        pad_num = quoted if quoted else bare
+        if pad_num:
+            normalized = _normalize_pad_number(pad_num)
+            pad_numbers.add(normalized)
+
+    if not pad_numbers:
+        raise ValueError(
+            f"No pads found in footprint file: {footprint_path}. "
+            "A valid KiCad footprint must have at least one pad definition."
+        )
+
+    return pad_numbers
+
+
 def _normalize_pad_number(pad_number: str) -> str:
     """Normalize pad numbers for deterministic comparisons."""
     normalized = str(pad_number).strip()
@@ -230,8 +272,19 @@ class FootprintMeta:
         return self._build_pad_map()
 
     def _validate_pad_map(self) -> None:
-        """Validate pad map conventions against metadata."""
-        self._build_pad_map()
+        """Validate pad map conventions against metadata and footprint file.
+
+        This method validates:
+        1. Signal pad has correct net_name (SIG)
+        2. Ground pads have correct net_name (GND)
+        3. No pad maps to both signal and ground nets
+        4. All pads in the actual footprint file are accounted for (REQ-M1-004)
+
+        Raises:
+            ValueError: If any validation fails.
+        """
+        pad_map = self._build_pad_map()
+        self._validate_footprint_pads_coverage(pad_map)
 
     def _build_pad_map(self) -> dict[str, str]:
         pad_map: dict[str, str] = {}
@@ -258,6 +311,46 @@ class FootprintMeta:
                 )
             pad_map[ground_pad_number] = _GND_NET_NAME
         return pad_map
+
+    def _validate_footprint_pads_coverage(self, pad_map: dict[str, str]) -> None:
+        """Validate that all pads in the footprint file are mapped.
+
+        REQ-M1-004: Footprint-to-net and anchor-pad mapping MUST be deterministic
+        and explicit (via `pad_map` or documented conventions) so the launch
+        connects to the true signal pad and GND pads/nets are correctly assigned.
+
+        This validation ensures no pads in the actual .kicad_mod file are missing
+        from the metadata, which would leave them with undefined net assignments.
+
+        Args:
+            pad_map: The pad-to-net mapping built from metadata.
+
+        Raises:
+            ValueError: If any footprint pads are missing from the metadata.
+        """
+        # Extract actual pad numbers from the footprint file
+        actual_pads = _extract_pad_numbers_from_kicad_mod(self.footprint_file)
+        mapped_pads = set(pad_map.keys())
+
+        # Check for missing pads (in footprint but not in metadata)
+        missing_pads = actual_pads - mapped_pads
+        if missing_pads:
+            raise ValueError(
+                f"Missing pad mapping for footprint {self.id!r}: "
+                f"pads {sorted(missing_pads)} exist in {self.footprint_file.name} "
+                f"but are not defined in metadata (signal_pad or ground_pads). "
+                f"REQ-M1-004 requires explicit mapping for all pads."
+            )
+
+        # Check for extra pads (in metadata but not in footprint)
+        extra_pads = mapped_pads - actual_pads
+        if extra_pads:
+            raise ValueError(
+                f"Extraneous pad mapping for footprint {self.id!r}: "
+                f"pads {sorted(extra_pads)} are defined in metadata "
+                f"but do not exist in {self.footprint_file.name}. "
+                f"Metadata must match actual footprint pads exactly."
+            )
 
 
 def get_footprint_meta_path(footprint_id: str) -> Path:
