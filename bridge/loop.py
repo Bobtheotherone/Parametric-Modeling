@@ -68,6 +68,14 @@ from bridge.verify_repair import (
     write_repair_report,
 )
 
+# Design document parsing - modular adapter layer
+from bridge.design_doc import (
+    ContractMode,
+    DesignDocSpec,
+    parse_design_doc,
+    parse_design_doc_text,
+)
+
 AGENTS: tuple[str, ...] = ("codex", "claude")
 
 
@@ -3958,12 +3966,52 @@ def run_parallel(
         max_workers = 2
         safe_cap = 2
     else:
-        design_doc_text = _read_text(state.design_doc_path) if state.design_doc_path.exists() else ""
+        # Parse design document using modular adapter layer
+        # This supports arbitrary markdown formats without rigid heading assumptions
+        contract_mode: ContractMode = getattr(args, "design_doc_contract", "loose")
+        milestone_override = getattr(args, "milestone_id", None)
+
+        design_spec = parse_design_doc(
+            state.design_doc_path,
+            contract_mode=contract_mode,
+            milestone_override=milestone_override,
+        )
+
+        # Log design doc parsing results
+        print(f"[orchestrator] design_doc: path={state.design_doc_path}, hash={design_spec.doc_hash[:12]}")
+        print(f"[orchestrator] design_doc: milestone={design_spec.milestone_id or '(not found)'}, "
+              f"requirements={len(design_spec.requirements)}, contract_mode={contract_mode}")
+
+        if design_spec.warnings:
+            for warning in design_spec.warnings[:5]:
+                print(f"[orchestrator] design_doc WARNING: {warning}")
+            if len(design_spec.warnings) > 5:
+                print(f"[orchestrator] design_doc: ... and {len(design_spec.warnings) - 5} more warnings")
+
+        # Check for errors based on contract mode
+        if design_spec.errors:
+            for error in design_spec.errors:
+                print(f"[orchestrator] design_doc ERROR: {error}")
+            if contract_mode != "off":
+                print(f"[orchestrator] ERROR: Design doc validation failed. Use --design-doc-contract=off to bypass.")
+                return 2
+
+        # Extract values for use in prompts
+        design_doc_text = design_spec.raw_text
         if not design_doc_text.strip():
-            print(f"[orchestrator] ERROR: design doc not found: {state.design_doc_path}")
+            print(f"[orchestrator] ERROR: design doc not found or empty: {state.design_doc_path}")
             return 2
 
-        milestone_id = _parse_milestone_id(design_doc_text)
+        # Use milestone from spec (may be CLI override or extracted)
+        milestone_id = design_spec.milestone_id or "M0"
+
+        # Save design spec artifact for debugging
+        design_spec_artifact = state.runs_dir / "design_doc_spec.json"
+        try:
+            import json
+            design_spec_artifact.write_text(json.dumps(design_spec.to_dict(), indent=2), encoding="utf-8")
+        except Exception:
+            pass  # Non-fatal if we can't write the artifact
 
         # Thresholds & stream limits
         cpu_thr = args.cpu_threshold if args.cpu_threshold > 0 else config.parallel.cpu_intensive_threshold_pct
@@ -5166,6 +5214,19 @@ def main() -> int:
     ap.add_argument("--schema", default="bridge/turn.schema.json")
     ap.add_argument("--system-prompt", default="bridge/prompts/system.md")
     ap.add_argument("--design-doc", default="DESIGN_DOCUMENT.md")
+    ap.add_argument(
+        "--design-doc-contract",
+        choices=["strict", "loose", "off"],
+        default="loose",
+        help="Design doc contract validation mode: strict (fail if missing fields), "
+        "loose (warn but continue), off (no validation)",
+    )
+    ap.add_argument(
+        "--milestone-id",
+        type=str,
+        default=None,
+        help="Override milestone ID from design doc (required if strict mode and parser can't infer)",
+    )
     ap.add_argument("--start-agent", choices=AGENTS, default="codex")
     ap.add_argument(
         "--smoke-route",

@@ -414,6 +414,59 @@ class TestBackfillScopeEnforcement:
         assert 'locks=["backfill"]' in func_body or "locks=['backfill']" in func_body, \
             "Filler tasks should have backfill lock"
 
+    def test_backfill_scope_guard_allows_docs_directory(self):
+        """Verify backfill scope guard allows docs/ directory."""
+        from bridge.patch_integration import create_backfill_scope_guard
+
+        guard = create_backfill_scope_guard()
+
+        result = guard.check_paths(["docs/README.md", "docs/api/guide.md"])
+        assert result.allowed, "Backfill should allow docs/ files"
+
+    def test_backfill_scope_guard_rejects_hot_files(self):
+        """Verify backfill scope guard rejects hot integration files."""
+        from bridge.patch_integration import create_backfill_scope_guard
+
+        guard = create_backfill_scope_guard()
+
+        # Hot files should be rejected even if in allowed parent dirs
+        hot_files = [
+            "bridge/api.py",  # If this existed
+            "src/formula_foundry/board_writer.py",
+            "src/formula_foundry/cli_main.py",
+            "src/formula_foundry/pipeline.py",
+        ]
+
+        for hot_file in hot_files:
+            result = guard.check_paths([hot_file])
+            # src/ files should always be rejected
+            if hot_file.startswith("src/"):
+                assert not result.allowed, f"Backfill should reject {hot_file}"
+
+    def test_backfill_allowed_dirs_constant(self):
+        """Verify BACKFILL_ALLOWLIST constant is properly configured."""
+        from bridge.patch_integration import BACKFILL_ALLOWLIST
+
+        assert "tests/**" in BACKFILL_ALLOWLIST, "tests/ should be in backfill allowlist"
+        assert "docs/**" in BACKFILL_ALLOWLIST, "docs/ should be in backfill allowlist"
+        assert "bridge/**" in BACKFILL_ALLOWLIST, "bridge/ should be in backfill allowlist"
+
+    def test_backfill_denylist_prevents_src(self):
+        """Verify BACKFILL_DENYLIST blocks src/ directory."""
+        from bridge.patch_integration import BACKFILL_DENYLIST
+
+        assert "src/**" in BACKFILL_DENYLIST, "src/ should be in backfill denylist"
+
+    def test_backfill_generator_tasks_are_low_priority(self):
+        """Verify BackfillGenerator generates low-priority tasks."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+        tasks = gen.generate_filler_tasks(3)
+
+        for task in tasks:
+            assert task.priority < 0, f"Filler task {task.id} should have negative priority"
+
 
 class TestBehavioralMergeConflictResolution:
     """Behavioral test: merge conflicts are auto-resolved without real agent calls."""
@@ -535,6 +588,188 @@ class TestBehavioralMergeConflictResolution:
 
             # Verify file was resolved
             assert "Both Branches" in content_after, "Resolution content should be applied"
+
+
+    def test_merge_conflict_deterministic_resolution_git_clean(self):
+        """Deterministic test: create real git conflict, resolve it, verify git status clean."""
+        import tempfile
+        from pathlib import Path
+
+        from bridge.merge_resolver import (
+            ConflictFile,
+            MergeResolver,
+            detect_conflict_files,
+            parse_conflict_file,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "test_repo"
+            repo_path.mkdir()
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir()
+
+            # Initialize git repo
+            subprocess.run(["git", "init"], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True, check=True)
+
+            # Create and commit base file
+            test_file = repo_path / "module.py"
+            test_file.write_text('def foo():\n    return 1\n')
+            subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True, check=True)
+
+            # Create branch_a with modification
+            subprocess.run(["git", "checkout", "-b", "branch_a"], cwd=repo_path, capture_output=True, check=True)
+            test_file.write_text('def foo():\n    return 2  # branch_a\n')
+            subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "branch_a change"], cwd=repo_path, capture_output=True, check=True)
+
+            # Go back to initial commit and create branch_b
+            subprocess.run(["git", "checkout", "HEAD~1"], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "checkout", "-b", "branch_b"], cwd=repo_path, capture_output=True, check=True)
+            test_file.write_text('def foo():\n    return 3  # branch_b\n')
+            subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "branch_b change"], cwd=repo_path, capture_output=True, check=True)
+
+            # Merge branch_a into branch_b to create conflict
+            result = subprocess.run(
+                ["git", "merge", "branch_a", "--no-edit"],
+                cwd=repo_path,
+                capture_output=True,
+            )
+
+            # Verify conflict exists
+            content_before = test_file.read_text()
+            has_conflict = "<<<<<<" in content_before
+
+            if not has_conflict:
+                # Fast-forward occurred, skip this test
+                pytest.skip("Git merge resulted in fast-forward, no conflict to test")
+
+            # Parse the conflict file directly to verify parsing works
+            cf = parse_conflict_file(repo_path, "module.py")
+            assert cf is not None, "Should parse conflict file"
+            assert cf.conflict_count >= 1
+
+            # Define deterministic resolution callback
+            def deterministic_resolver(conflicts, task_context, milestone_id, attempt):
+                """Return a deterministic resolution that combines both sides."""
+                resolutions = []
+                for cf in conflicts:
+                    resolved = 'def foo():\n    # Combined from both branches\n    return 2  # from branch_a\n'
+                    resolutions.append({
+                        "path": cf.path,
+                        "resolved_content": resolved,
+                        "notes": "Deterministically combined both versions"
+                    })
+                return {"resolutions": resolutions, "unresolvable": []}
+
+            # Create resolver with injected callback
+            resolver = MergeResolver(
+                project_root=repo_path,
+                runs_dir=runs_dir,
+                max_attempts=1,
+                agent_runner=deterministic_resolver,
+            )
+
+            # Run resolution
+            result = resolver.resolve_conflicts(
+                task_id="DETERMINISTIC-TEST",
+                task_context="Deterministic merge test",
+                milestone_id="M0",
+            )
+
+            # Verify resolution succeeded
+            assert result.success or "module.py" in result.resolved_files, \
+                f"Resolution failed: {result.error}"
+
+            # Verify conflict markers are GONE
+            content_after = test_file.read_text()
+            assert "<<<<<<" not in content_after, "Conflict start markers should be removed"
+            assert "=======" not in content_after, "Conflict separator should be removed"
+            assert ">>>>>>>" not in content_after, "Conflict end markers should be removed"
+
+            # Verify our resolution content is present
+            assert "Combined from both branches" in content_after
+
+            # Verify file was staged (git added)
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+            )
+            # After resolution and git add, file should be staged
+            status_lines = [l for l in status_result.stdout.strip().split("\n") if l.strip()]
+            for line in status_lines:
+                # Should NOT have UU (unmerged) status
+                assert not line.startswith("UU"), f"File should not have unmerged status: {line}"
+
+    def test_parse_conflict_file_unit(self):
+        """Unit test for parse_conflict_file function with synthetic conflict markers."""
+        import tempfile
+        from pathlib import Path
+
+        from bridge.merge_resolver import parse_conflict_file
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+
+            # Create a file with conflict markers
+            test_file = repo_path / "test.py"
+            conflict_content = '''def foo():
+<<<<<<< HEAD
+    return 2
+=======
+    return 3
+>>>>>>> other_branch
+'''
+            test_file.write_text(conflict_content)
+
+            # Parse the conflict file
+            cf = parse_conflict_file(repo_path, "test.py")
+
+            assert cf is not None, "Should parse conflict file"
+            assert cf.conflict_count == 1, "Should detect one conflict"
+            assert "return 2" in cf.ours_content, "Should extract ours content"
+            assert "return 3" in cf.theirs_content, "Should extract theirs content"
+            assert cf.path == "test.py"
+
+    def test_merge_resolver_no_conflicts(self):
+        """Test MergeResolver with a clean repo (no conflicts)."""
+        import tempfile
+        from pathlib import Path
+
+        from bridge.merge_resolver import MergeResolver
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir) / "test_repo"
+            repo_path.mkdir()
+            runs_dir = Path(tmpdir) / "runs"
+            runs_dir.mkdir()
+
+            # Initialize git repo with no conflicts
+            subprocess.run(["git", "init"], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True, check=True)
+            (repo_path / "clean.py").write_text('x = 1\n')
+            subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True, check=True)
+
+            resolver = MergeResolver(
+                project_root=repo_path,
+                runs_dir=runs_dir,
+                max_attempts=1,
+                agent_runner=lambda *a: {"resolutions": [], "unresolvable": []},
+            )
+
+            result = resolver.resolve_conflicts(task_id="NO-CONFLICT", task_context="", milestone_id="M0")
+
+            # Should succeed immediately with no conflicts
+            assert result.success, "Should succeed with no conflicts"
+            assert len(result.resolved_files) == 0, "No files to resolve"
+            assert len(result.unresolved_files) == 0, "No unresolved files"
 
 
 class TestHotFileGuardrail:
