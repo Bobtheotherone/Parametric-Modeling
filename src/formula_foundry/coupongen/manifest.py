@@ -142,8 +142,10 @@ def build_manifest(
             "timestamp_utc": timestamp,
         },
     }
-    if resolved.spec_consumption is not None:
-        manifest["spec_consumption"] = resolved.spec_consumption.to_dict()
+    # REQ-M1-013: Include spec-consumption summary in manifest
+    consumption_summary = resolved.get_spec_consumption_summary()
+    if consumption_summary is not None:
+        manifest["spec_consumption"] = consumption_summary
     return manifest
 
 

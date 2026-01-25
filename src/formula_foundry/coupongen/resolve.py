@@ -68,6 +68,20 @@ class ResolvedDesign(BaseModel):
         object.__setattr__(new_obj, "_layout_plan", layout_plan)
         return new_obj
 
+    def get_spec_consumption_summary(self) -> dict[str, list[str]] | None:
+        """Get the spec consumption summary for manifest emission.
+
+        Returns:
+            Dictionary with sorted lists of consumed/expected/unused paths,
+            or None if spec_consumption was not computed.
+
+        Satisfies REQ-M1-001 and REQ-M1-013: Spec consumption summary
+        emitted in resolved outputs and manifest.
+        """
+        if self.spec_consumption is None:
+            return None
+        return self.spec_consumption.to_summary_dict()
+
 
 def resolve(spec: CouponSpec, *, strict: bool = False) -> ResolvedDesign:
     """Resolve a CouponSpec to a ResolvedDesign with computed geometry.
