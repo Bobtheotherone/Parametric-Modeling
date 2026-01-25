@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formula-foundry.dev/schemas/coupon.v1.json",
+  "$ref": "../coupongen/schemas/coupon_spec.schema.json",
+  "title": "CouponSpec",
+  "description": "Reference to the canonical CouponSpec schema. See coupongen/schemas/coupon_spec.schema.json for the full schema definition."
+}
