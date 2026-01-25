@@ -13,8 +13,11 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from formula_foundry.geometry.via_fence import (
+    generate_ground_via_fence as _generate_ground_via_fence,
+)
+
 from .primitives import PositionNM, TrackSegment, Via, half_width_nm
-from .via_patterns import scale_component_nm, segment_length_nm, symmetric_offsets_nm
 
 if TYPE_CHECKING:
     pass
@@ -53,7 +56,7 @@ class GroundViaFenceSpec:
         drill_nm: Via drill diameter in nanometers.
         diameter_nm: Via pad diameter in nanometers.
         layers: Tuple of layer names the vias connect.
-        net_id: Net ID for the ground vias (typically 0 or ground net).
+        net_id: Net ID for the ground vias (defaults to ground net when <= 0).
     """
 
     pitch_nm: int
@@ -215,85 +218,7 @@ def generate_ground_via_fence(
     Returns:
         Tuple of (positive_y_vias, negative_y_vias).
     """
-    # Calculate segment vector and length
-    dx = end.x - start.x
-    dy = end.y - start.y
-    segment_length = segment_length_nm(dx, dy)
-
-    if segment_length == 0:
-        return ((), ())
-
-    # Validate fence parameters and compute deterministic offsets.
-    if fence_spec.pitch_nm <= 0:
-        raise ValueError("pitch_nm must be positive")
-
-    if fence_spec.offset_from_gap_nm < 0:
-        raise ValueError("offset_from_gap_nm must be non-negative")
-
-    if fence_spec.pitch_nm < fence_spec.diameter_nm:
-        raise ValueError("pitch_nm must be at least the via diameter to avoid overlap")
-
-    via_radius_nm = fence_spec.diameter_nm // 2
-    if fence_spec.offset_from_gap_nm < via_radius_nm:
-        raise ValueError("offset_from_gap_nm must be at least the via radius")
-
-    # Use via radius as minimum end clearance to keep pads within segment bounds.
-    offsets = symmetric_offsets_nm(
-        segment_length,
-        fence_spec.pitch_nm,
-        end_clearance_nm=via_radius_nm,
-    )
-    if not offsets:
-        return ((), ())
-
-    # Perpendicular vector derived from segment direction; orient toward +y for consistency.
-    perp_dx = -dy
-    perp_dy = dx
-    if perp_dy < 0 or (perp_dy == 0 and perp_dx < 0):
-        perp_dx = -perp_dx
-        perp_dy = -perp_dy
-
-    # Distance from centerline to via center:
-    # signal_trace_half_width + gap + offset_from_gap
-    via_offset_from_center = cpwg_spec.w_nm // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
-    perp_offset_x = scale_component_nm(perp_dx, via_offset_from_center, segment_length)
-    perp_offset_y = scale_component_nm(perp_dy, via_offset_from_center, segment_length)
-
-    positive_y_vias: list[Via] = []
-    negative_y_vias: list[Via] = []
-
-    for t in offsets:
-        # Base position on the centerline
-        base_x = start.x + scale_component_nm(dx, t, segment_length)
-        base_y = start.y + scale_component_nm(dy, t, segment_length)
-
-        # Positive Y side via
-        pos_y_via = Via(
-            position=PositionNM(
-                base_x + perp_offset_x,
-                base_y + perp_offset_y,
-            ),
-            diameter_nm=fence_spec.diameter_nm,
-            drill_nm=fence_spec.drill_nm,
-            layers=fence_spec.layers,
-            net_id=fence_spec.net_id,
-        )
-        positive_y_vias.append(pos_y_via)
-
-        # Negative Y side via
-        neg_y_via = Via(
-            position=PositionNM(
-                base_x - perp_offset_x,
-                base_y - perp_offset_y,
-            ),
-            diameter_nm=fence_spec.diameter_nm,
-            drill_nm=fence_spec.drill_nm,
-            layers=fence_spec.layers,
-            net_id=fence_spec.net_id,
-        )
-        negative_y_vias.append(neg_y_via)
-
-    return (tuple(positive_y_vias), tuple(negative_y_vias))
+    return _generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
 
 
 def generate_cpwg_with_fence(
