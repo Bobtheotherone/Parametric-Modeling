@@ -36,6 +36,17 @@ __all__ = [
     "list_available_footprint_meta",
 ]
 
+_SIG_NET_NAME = "SIG"
+_GND_NET_NAME = "GND"
+
+
+def _normalize_pad_number(pad_number: str) -> str:
+    """Normalize pad numbers for deterministic comparisons."""
+    normalized = str(pad_number).strip()
+    if not normalized:
+        raise ValueError("Pad number must be non-empty")
+    return normalized
+
 
 @dataclass(frozen=True, slots=True)
 class PointMeta:
@@ -202,6 +213,7 @@ class FootprintMeta:
             )
         if len(self.ground_pads) == 0:
             raise ValueError("At least one ground pad is required")
+        self._validate_pad_map()
 
     @property
     def footprint_path(self) -> str:
@@ -212,6 +224,40 @@ class FootprintMeta:
     def signal_pad_center_nm(self) -> tuple[int, int]:
         """Signal pad center in nanometers."""
         return self.signal_pad.center
+
+    def pad_net_map(self) -> dict[str, str]:
+        """Return deterministic pad->net mapping for this footprint."""
+        return self._build_pad_map()
+
+    def _validate_pad_map(self) -> None:
+        """Validate pad map conventions against metadata."""
+        self._build_pad_map()
+
+    def _build_pad_map(self) -> dict[str, str]:
+        pad_map: dict[str, str] = {}
+        signal_pad_number = _normalize_pad_number(self.signal_pad.pad_number)
+        signal_net = self.signal_pad.net_name or _SIG_NET_NAME
+        if signal_net != _SIG_NET_NAME:
+            raise ValueError(
+                f"Signal pad net_name must be '{_SIG_NET_NAME}', got {signal_net!r}"
+            )
+        pad_map[signal_pad_number] = _SIG_NET_NAME
+
+        for ground_pad in self.ground_pads:
+            ground_pad_number = _normalize_pad_number(ground_pad.pad_number)
+            ground_net = ground_pad.net_name or _GND_NET_NAME
+            if ground_net != _GND_NET_NAME:
+                raise ValueError(
+                    f"Ground pad net_name must be '{_GND_NET_NAME}', got {ground_net!r}"
+                )
+            existing = pad_map.get(ground_pad_number)
+            if existing is not None and existing != _GND_NET_NAME:
+                raise ValueError(
+                    "Pad number cannot map to both signal and ground nets: "
+                    f"{ground_pad_number!r}"
+                )
+            pad_map[ground_pad_number] = _GND_NET_NAME
+        return pad_map
 
 
 def get_footprint_meta_path(footprint_id: str) -> Path:
@@ -327,11 +373,11 @@ def load_footprint_meta(footprint_id: str) -> FootprintMeta:
     )
 
     # Parse signal pad
-    signal_pad = _parse_pad_meta(data["signal_pad"], default_net="SIG")
+    signal_pad = _parse_pad_meta(data["signal_pad"], default_net=_SIG_NET_NAME)
 
     # Parse ground pads
     ground_pads = tuple(
-        _parse_pad_meta(gp, default_net="GND") for gp in data["ground_pads"]
+        _parse_pad_meta(gp, default_net=_GND_NET_NAME) for gp in data["ground_pads"]
     )
 
     # Parse launch reference

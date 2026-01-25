@@ -47,12 +47,12 @@ def _minimal_f1_spec_dict_for_cli() -> dict:
         },
         "connectors": {
             "left": {
-                "footprint": "test:SMA",
+                "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
                 "position_nm": [5_000_000, 0],
                 "rotation_deg": 0,
             },
             "right": {
-                "footprint": "test:SMA",
+                "footprint": "Coupongen_Connectors:SMA_EndLaunch_Generic",
                 "position_nm": [95_000_000, 0],
                 "rotation_deg": 180,
             },
