@@ -91,11 +91,15 @@ def test_thirds_rule_inserts_lines() -> None:
         z_min_nm=0,
         z_max_nm=900,
     )
+    # Feature: center=450, radius=300 => feature region is [150, 750]
+    # Thirds rule inserts lines at 1/3 and 2/3 into feature region:
+    # 1/3: 150 + 600/3 = 150 + 200 = 350
+    # 2/3: 150 + 2*600/3 = 150 + 400 = 550
     features = [MeshFeature(axis="x", center_nm=450, radius_nm=300)]
     plan = plan_mesh(domain, policy, frequency_hz=1_000_000_000, features=features)
 
-    assert 250 in plan.lines_x_nm
-    assert 650 in plan.lines_x_nm
+    assert 350 in plan.lines_x_nm
+    assert 550 in plan.lines_x_nm
 
     policy_no_thirds = MeshPolicy(
         lambda_divisor_max_cell=50,
@@ -105,7 +109,7 @@ def test_thirds_rule_inserts_lines() -> None:
         base_cell_nm=450,
     )
     plan_no_thirds = plan_mesh(domain, policy_no_thirds, frequency_hz=1_000_000_000, features=features)
-    assert 250 not in plan_no_thirds.lines_x_nm
+    assert 350 not in plan_no_thirds.lines_x_nm
 
 
 def test_max_ratio_enforced() -> None:
