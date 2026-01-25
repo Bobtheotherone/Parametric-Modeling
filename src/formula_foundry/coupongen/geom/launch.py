@@ -124,9 +124,11 @@ def build_launch_plan(
     transition_length_nm = abs(dx_total)
     segments: list[LaunchSegment] = []
 
-    width_delta = abs(pad_width_nm - trace_width_nm)
-    if transition_length_nm > 0 and width_delta > 0:
-        if transition_length_nm >= 3 * min_step_length_nm and width_delta >= trace_width_nm:
+    if transition_length_nm > 0:
+        width_delta = abs(pad_width_nm - trace_width_nm)
+        if width_delta == 0:
+            step_count = 1
+        elif transition_length_nm >= 3 * min_step_length_nm and width_delta >= trace_width_nm:
             step_count = 3
         elif transition_length_nm >= 2 * min_step_length_nm:
             step_count = 2
@@ -142,11 +144,11 @@ def build_launch_plan(
             seg_len = base_len + (1 if i < remainder else 0)
             next_x = current_x + direction_sign * seg_len
             if step_count == 1:
-                width_nm = max(pad_width_nm, min_trace_width_nm)
+                width_nm = trace_width_nm if pad_width_nm >= trace_width_nm else pad_width_nm
             else:
                 frac = i / (step_count - 1)
                 width_nm = int(round(pad_width_nm + (trace_width_nm - pad_width_nm) * frac))
-                width_nm = max(width_nm, min_trace_width_nm)
+            width_nm = max(width_nm, min_trace_width_nm)
 
             segments.append(
                 LaunchSegment(
