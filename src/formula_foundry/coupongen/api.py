@@ -199,17 +199,8 @@ def validate_spec_with_engine(
     # Write validation outputs
     _write_engine_validation_outputs(result, out_dir)
 
-    # Determine the spec to use (original or repaired)
-    # For REPAIR mode, we need to reconstruct the spec from the result
-    if result.was_repaired and result.repair_result is not None:
-        # Re-resolve to get the spec that was used
-        validated_spec = spec  # The original spec is modified in place during repair
-        # Actually, we need the repaired spec from the repair result
-        # The ConstraintEngine returns the resolved design, but we need the spec
-        # For now, use the original spec (the resolved design reflects the repairs)
-        validated_spec = spec
-    else:
-        validated_spec = spec
+    # Use the spec from the engine result (repaired if REPAIR mode changed anything)
+    validated_spec = result.spec
 
     return ValidationResult(
         spec=validated_spec,
@@ -564,6 +555,7 @@ def build_coupon_with_engine(
     # Create engine and validate/repair
     engine = create_constraint_engine(fab_limits=fab_limits)
     engine_result = engine.validate_or_repair(spec, mode=mode)
+    spec = engine_result.spec
 
     resolved = engine_result.resolved
     design_hash_value = design_hash(resolved)
@@ -739,6 +731,7 @@ def _write_engine_validation_outputs(result: ConstraintEngineResult, out_dir: Pa
     - resolved_design.json: Resolved design parameters
     - constraint_proof.json: Per-constraint evaluations with signed margins
     - repair_map.json: Repair details if REPAIR mode was used (optional)
+    - repaired_spec.json: Canonical repaired spec if REPAIR mode changed parameters
 
     Args:
         result: The ConstraintEngineResult from validation
@@ -761,3 +754,6 @@ def _write_engine_validation_outputs(result: ConstraintEngineResult, out_dir: Pa
     if result.was_repaired and result.repair_result is not None:
         repair_map_path = out_dir / "repair_map.json"
         write_repair_map(repair_map_path, result.repair_result)
+        repaired_spec_path = out_dir / "repaired_spec.json"
+        repaired_payload = canonical_json_dumps(result.spec.model_dump(mode="json"))
+        repaired_spec_path.write_text(repaired_payload, encoding="utf-8")

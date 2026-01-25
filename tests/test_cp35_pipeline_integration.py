@@ -209,6 +209,7 @@ class TestValidateSpecWithEngine:
         validate_spec_with_engine(spec, out_dir=tmp_path, mode="REPAIR")
 
         assert (tmp_path / "repair_map.json").exists()
+        assert (tmp_path / "repaired_spec.json").exists()
 
     def test_proof_includes_all_tiers(self, tmp_path: Path) -> None:
         """CP-3.5: Proof includes constraints from all tiers (T0-T3)."""
@@ -301,6 +302,36 @@ class TestBuildCouponWithEngine:
 
         assert isinstance(result, BuildResult)
         assert result.output_dir.exists()
+
+    def test_repaired_spec_rebuild_is_deterministic(self, tmp_path: Path) -> None:
+        """REPAIR mode should emit repaired_spec.json that rebuilds deterministically."""
+        data = _invalid_spec_data()
+        data["constraints"]["mode"] = "REPAIR"
+        spec = CouponSpec.model_validate(data)
+
+        first_root = tmp_path / "first"
+        second_root = tmp_path / "second"
+
+        first_result = build_coupon_with_engine(
+            spec,
+            out_root=first_root,
+            constraint_mode="REPAIR",
+            runner=_FakeRunner(),
+        )
+
+        repaired_spec_path = first_result.output_dir / "repaired_spec.json"
+        assert repaired_spec_path.exists()
+        repaired_payload = json.loads(repaired_spec_path.read_text(encoding="utf-8"))
+        repaired_spec = CouponSpec.model_validate(repaired_payload)
+
+        second_result = build_coupon_with_engine(
+            repaired_spec,
+            out_root=second_root,
+            constraint_mode="REPAIR",
+            runner=_FakeRunner(),
+        )
+
+        assert second_result.design_hash == first_result.design_hash
 
 
 class TestCLIValidateCommand:
