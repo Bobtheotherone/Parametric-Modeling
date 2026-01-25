@@ -82,20 +82,25 @@ _EXPECTED_PATHS_F0 = frozenset(
 )
 
 # Expected paths for F1 family (via discontinuity)
-_EXPECTED_PATHS_F1 = _EXPECTED_PATHS_F0 | frozenset(
-    {
-        # Discontinuity is required for F1
-        "discontinuity.type",
-        "discontinuity.signal_via.drill_nm",
-        "discontinuity.signal_via.diameter_nm",
-        "discontinuity.signal_via.pad_diameter_nm",
-        # Return vias are optional but if present, these are expected
-        "discontinuity.return_vias.pattern",
-        "discontinuity.return_vias.count",
-        "discontinuity.return_vias.radius_nm",
-        "discontinuity.return_vias.via.drill_nm",
-        "discontinuity.return_vias.via.diameter_nm",
-    }
+# Note: Use explicit parentheses to ensure correct operator precedence
+# (| has higher precedence than - for frozenset)
+_EXPECTED_PATHS_F1 = (
+    _EXPECTED_PATHS_F0
+    | frozenset(
+        {
+            # Discontinuity is required for F1
+            "discontinuity.type",
+            "discontinuity.signal_via.drill_nm",
+            "discontinuity.signal_via.diameter_nm",
+            "discontinuity.signal_via.pad_diameter_nm",
+            # Return vias are optional but if present, these are expected
+            "discontinuity.return_vias.pattern",
+            "discontinuity.return_vias.count",
+            "discontinuity.return_vias.radius_nm",
+            "discontinuity.return_vias.via.drill_nm",
+            "discontinuity.return_vias.via.diameter_nm",
+        }
+    )
 ) - frozenset(
     {
         # F1 derives length_right_nm, so it's not expected to be provided

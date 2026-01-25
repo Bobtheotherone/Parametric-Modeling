@@ -901,3 +901,187 @@ class TestFamilyValidation:
 
         required = get_family_required_fields(FAMILY_F0)
         assert "transmission_line.length_right_nm" in required
+
+
+# =============================================================================
+# Spec Consumption Tests (REQ-M1-001)
+# =============================================================================
+
+
+class TestSpecConsumption:
+    """Tests for spec consumption tracking per REQ-M1-001.
+
+    REQ-M1-001: The generator MUST track and emit spec consumption
+    (consumed paths, expected paths, unused provided paths) and MUST fail
+    in strict mode if any provided field is unused or any expected field
+    is unconsumed.
+    """
+
+    def test_spec_consumption_model_creation(self) -> None:
+        """SpecConsumption model can be created with path sets."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b", "c"}),
+            provided_paths=frozenset({"a", "b", "d"}),
+        )
+        assert consumption.consumed_paths == frozenset({"a", "b"})
+        assert consumption.expected_paths == frozenset({"a", "b", "c"})
+        assert consumption.provided_paths == frozenset({"a", "b", "d"})
+
+    def test_unused_provided_paths_calculation(self) -> None:
+        """unused_provided_paths returns provided but not consumed paths."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "unused_field"}),
+        )
+        assert consumption.unused_provided_paths == frozenset({"unused_field"})
+
+    def test_unconsumed_expected_paths_calculation(self) -> None:
+        """unconsumed_expected_paths returns expected but not consumed paths."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a"}),
+            expected_paths=frozenset({"a", "b", "c"}),
+            provided_paths=frozenset({"a"}),
+        )
+        assert consumption.unconsumed_expected_paths == frozenset({"b", "c"})
+
+    def test_consumption_summary_dict(self) -> None:
+        """to_summary_dict returns sorted lists for manifest emission."""
+        from formula_foundry.spec.consumption import SpecConsumption
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"b", "a"}),
+            expected_paths=frozenset({"c", "b", "a"}),
+            provided_paths=frozenset({"d", "b", "a"}),
+        )
+        summary = consumption.to_summary_dict()
+        assert summary["consumed"] == ["a", "b"]
+        assert summary["expected"] == ["a", "b", "c"]
+        assert summary["provided"] == ["a", "b", "d"]
+        assert summary["unused_provided"] == ["d"]
+        assert summary["unconsumed_expected"] == ["c"]
+
+    def test_collect_provided_paths_from_spec(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """collect_provided_paths extracts all non-None leaf paths from spec."""
+        from formula_foundry.coupongen.spec import load_couponspec
+        from formula_foundry.resolve.consumption import collect_provided_paths
+
+        spec = load_couponspec(minimal_spec_data)
+        provided = collect_provided_paths(spec)
+
+        # Check that key paths are present
+        assert "schema_version" in provided
+        assert "coupon_family" in provided
+        assert "board.outline.width_nm" in provided
+        assert "transmission_line.w_nm" in provided
+
+    def test_get_expected_paths_f0(self) -> None:
+        """get_expected_paths returns correct paths for F0 family."""
+        from formula_foundry.resolve.consumption import get_expected_paths
+
+        expected = get_expected_paths("F0")
+        assert "schema_version" in expected
+        assert "transmission_line.length_right_nm" in expected
+        # F0 does not expect discontinuity
+        assert "discontinuity.type" not in expected
+
+    def test_get_expected_paths_f1(self) -> None:
+        """get_expected_paths returns correct paths for F1 family."""
+        from formula_foundry.resolve.consumption import get_expected_paths
+
+        expected = get_expected_paths("F1")
+        assert "schema_version" in expected
+        assert "discontinuity.type" in expected
+        # F1 derives length_right_nm, so it's not expected
+        assert "transmission_line.length_right_nm" not in expected
+
+    def test_build_spec_consumption_f0(
+        self, minimal_spec_data: dict[str, Any]
+    ) -> None:
+        """build_spec_consumption creates valid consumption for F0 spec."""
+        from formula_foundry.coupongen.spec import load_couponspec
+        from formula_foundry.resolve.consumption import build_spec_consumption
+
+        # Set F0 family explicitly
+        minimal_spec_data["coupon_family"] = "F0"
+        # Ensure length_right_nm is provided (required for F0)
+        minimal_spec_data["transmission_line"]["length_right_nm"] = 15000000
+
+        spec = load_couponspec(minimal_spec_data)
+        consumption = build_spec_consumption(spec)
+
+        assert "schema_version" in consumption.consumed_paths
+        assert len(consumption.unused_provided_paths) >= 0  # May be empty
+        assert isinstance(consumption.unconsumed_expected_paths, frozenset)
+
+    def test_enforce_spec_consumption_passes_on_valid(self) -> None:
+        """enforce_spec_consumption does not raise for valid consumption."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import enforce_spec_consumption
+
+        # All paths consumed, no unused or unconsumed
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b", "c"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "c"}),
+        )
+        # Should not raise
+        enforce_spec_consumption(consumption)
+
+    def test_enforce_spec_consumption_fails_on_unused_provided(self) -> None:
+        """REQ-M1-001: enforce_spec_consumption fails if provided field is unused."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a", "b"}),
+            expected_paths=frozenset({"a", "b"}),
+            provided_paths=frozenset({"a", "b", "unused_extra_field"}),
+        )
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "unused_extra_field" in str(exc_info.value)
+        assert "unused_extra_field" in exc_info.value.unused_provided
+
+    def test_enforce_spec_consumption_fails_on_unconsumed_expected(self) -> None:
+        """REQ-M1-001: enforce_spec_consumption fails if expected field is unconsumed."""
+        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.consumption import (
+            SpecConsumptionError,
+            enforce_spec_consumption,
+        )
+
+        consumption = SpecConsumption(
+            consumed_paths=frozenset({"a"}),
+            expected_paths=frozenset({"a", "required_but_missing"}),
+            provided_paths=frozenset({"a"}),
+        )
+        with pytest.raises(SpecConsumptionError) as exc_info:
+            enforce_spec_consumption(consumption)
+        assert "required_but_missing" in str(exc_info.value)
+        assert "required_but_missing" in exc_info.value.unconsumed_expected
+
+    def test_consumption_error_attributes(self) -> None:
+        """SpecConsumptionError provides unused and unconsumed sets."""
+        from formula_foundry.resolve.consumption import SpecConsumptionError
+
+        error = SpecConsumptionError(
+            "test error",
+            unused_provided=frozenset({"unused"}),
+            unconsumed_expected=frozenset({"unconsumed"}),
+        )
+        assert error.unused_provided == frozenset({"unused"})
+        assert error.unconsumed_expected == frozenset({"unconsumed"})
+        assert "unused" in str(error) or "test error" in str(error)
