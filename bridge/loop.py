@@ -4595,11 +4595,45 @@ def run_parallel(
             if success:
                 if commit_sha:
                     t.commit_sha = commit_sha
+                    # Record successful result for backfill cooldown tracking
+                    if t.id.startswith("FILLER-"):
+                        backfill_generator.record_successful_result(t.id)
+                elif "No changes to commit" in msg:
+                    # No-op result - track for backfill cooldown
+                    if t.id.startswith("FILLER-"):
+                        backfill_generator.record_noop_result(t.id)
+                        print(f"[orchestrator] FILLER NO-OP: {t.id} produced no changes")
                 print(f"[orchestrator] PATCH INTEGRATED: {t.id} - {msg}")
                 return True
-            elif "needs_manual_resolution" not in msg:
-                # Non-fatal issue, try git merge fallback
-                print(f"[orchestrator] Patch integration issue for {t.id}: {msg}, trying git merge...")
+
+            # Handle SCOPE_REJECTED - do NOT fall back to git merge
+            if "SCOPE_REJECTED" in msg:
+                print(f"[orchestrator] SCOPE_REJECTED for {t.id}: {msg}")
+                if t.id.startswith("FILLER-"):
+                    backfill_generator.record_rejection(t.id)
+                t.status = "failed"
+                t.error = msg
+                return False
+
+            # Only fall back to git merge if:
+            # 1. Not needs_manual_resolution
+            # 2. Worker actually created a commit (has commit_sha or branch differs from base)
+            if "needs_manual_resolution" in msg:
+                print(f"[orchestrator] Patch integration needs manual resolution for {t.id}: {msg}")
+                t.status = "manual"
+                t.error = msg
+                return False
+
+            # Check if there's actually a commit to merge
+            # If worker only produced a patch artifact without committing, git merge would be a no-op
+            if not getattr(t, 'commit_sha', None):
+                # No commit SHA means no actual commit to merge - treat as integration failure
+                print(f"[orchestrator] Patch integration failed for {t.id} (no commit to merge): {msg}")
+                t.status = "failed"
+                t.error = f"Patch integration failed (no commit): {msg}"
+                return False
+
+            print(f"[orchestrator] Patch integration issue for {t.id}: {msg}, trying git merge...")
 
         # Fall back to git merge (for legacy commits or when patch integration fails)
         with git_lock:

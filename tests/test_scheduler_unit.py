@@ -490,6 +490,176 @@ class TestBackfillGeneratorExtended:
         gen.generate_filler_tasks(2)
         assert gen.generated_count == 5
 
+    def test_backfill_rotation_single_task_calls(self):
+        """Test task types rotate when calling generate_filler_tasks(1) multiple times.
+
+        This is the critical fix for the bug where count=1 always returned lint.
+        The task types should cycle: lint, test, type_hints, docs, schema_lint
+        """
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Call generate_filler_tasks(1) five times
+        task_types_seen = []
+        for _ in range(5):
+            tasks = gen.generate_filler_tasks(1)
+            assert len(tasks) == 1
+            task_types_seen.append(tasks[0].task_type)
+
+        # Verify we see different types, not always "lint"
+        # The expected order is: lint, test, type_hints, docs, schema_lint
+        expected_types = ["lint", "test", "type_hints", "docs", "schema_lint"]
+        assert task_types_seen == expected_types, f"Expected types to rotate: {expected_types}, got: {task_types_seen}"
+
+        # Verify it cycles - call 5 more times
+        task_types_round2 = []
+        for _ in range(5):
+            tasks = gen.generate_filler_tasks(1)
+            task_types_round2.append(tasks[0].task_type)
+
+        # Should see the same rotation again
+        assert task_types_round2 == expected_types, f"Expected second round to match: {expected_types}, got: {task_types_round2}"
+
+    def test_backfill_rotation_not_always_lint(self):
+        """Verify the rotation fix: should NOT always return lint when count=1."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Generate 10 tasks one at a time
+        lint_count = 0
+        for _ in range(10):
+            tasks = gen.generate_filler_tasks(1)
+            if tasks[0].task_type == "lint":
+                lint_count += 1
+
+        # With 5 task types, we should see lint only 2 times in 10 calls
+        # If the bug were present, lint_count would be 10
+        assert lint_count == 2, f"Expected lint 2 times in 10 calls, got {lint_count} (bug: always lint)"
+
+
+class TestBackfillCooldown:
+    """Tests for no-op streak cooldown suppression."""
+
+    def test_noop_streak_tracking(self):
+        """Test no-op result tracking increments streak."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Record a no-op for a lint task
+        gen.record_noop_result("FILLER-LINT-001")
+        assert gen._noop_streaks.get("lint") == 1
+
+        # Record another no-op
+        gen.record_noop_result("FILLER-LINT-002")
+        assert gen._noop_streaks.get("lint") == 2
+
+    def test_successful_result_resets_streak(self):
+        """Test successful result resets no-op streak."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Build up a streak
+        gen.record_noop_result("FILLER-LINT-001")
+        gen.record_noop_result("FILLER-LINT-002")
+        assert gen._noop_streaks.get("lint") == 2
+
+        # Successful result resets it
+        gen.record_successful_result("FILLER-LINT-003")
+        assert gen._noop_streaks.get("lint") == 0
+
+    def test_cooldown_after_streak_threshold(self):
+        """Test type goes on cooldown after reaching streak threshold."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # First generate to set up the cycle
+        gen.generate_filler_tasks(1)  # This sets _generation_cycle to 1
+
+        # Record enough no-ops to trigger cooldown
+        for i in range(gen.NOOP_STREAK_THRESHOLD):
+            gen.record_noop_result(f"FILLER-LINT-{i:03d}")
+
+        # Should now be on cooldown
+        assert gen.is_type_on_cooldown("lint")
+        assert "lint" in gen._cooldown_start
+
+    def test_cooldown_skips_type_in_generation(self):
+        """Test that cooldown types are skipped during generation."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Put lint on cooldown manually
+        gen._cooldown_start["lint"] = 0
+        gen._generation_cycle = 1
+
+        # Generate tasks - should skip lint
+        tasks = gen.generate_filler_tasks(5)
+        task_types = [t.task_type for t in tasks]
+
+        # lint should not appear (it's on cooldown)
+        assert "lint" not in task_types, f"lint should be skipped, but got types: {task_types}"
+
+    def test_cooldown_expires(self):
+        """Test that cooldown expires after COOLDOWN_CYCLES."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Put lint on cooldown at cycle 0
+        gen._cooldown_start["lint"] = 0
+        gen._generation_cycle = gen.COOLDOWN_CYCLES  # Advance past cooldown
+
+        # Should no longer be on cooldown
+        assert not gen.is_type_on_cooldown("lint")
+        # Should have been removed from cooldown tracking
+        assert "lint" not in gen._cooldown_start
+
+    def test_get_cooldown_status(self):
+        """Test get_cooldown_status returns remaining cycles."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # Put lint on cooldown at cycle 0
+        gen._cooldown_start["lint"] = 0
+        gen._generation_cycle = 2
+
+        status = gen.get_cooldown_status()
+        expected_remaining = gen.COOLDOWN_CYCLES - 2
+        assert status.get("lint") == expected_remaining
+
+    def test_rejection_counts_as_noop(self):
+        """Test record_rejection increments no-op streak."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        gen.record_rejection("FILLER-LINT-001")
+        assert gen._noop_streaks.get("lint") == 1
+
+        gen.record_rejection("FILLER-LINT-002")
+        assert gen._noop_streaks.get("lint") == 2
+
+    def test_non_filler_tasks_ignored(self):
+        """Test non-FILLER tasks are ignored for cooldown tracking."""
+        from bridge.scheduler import BackfillGenerator
+
+        gen = BackfillGenerator(project_root="/tmp")
+
+        # These should be no-ops
+        gen.record_noop_result("M1-TASK-001")
+        gen.record_successful_result("M1-TASK-002")
+        gen.record_rejection("M1-TASK-003")
+
+        # No streaks should be recorded
+        assert len(gen._noop_streaks) == 0
+
 
 # -----------------------------------------------------------------------------
 # create_scheduler Helper Tests
