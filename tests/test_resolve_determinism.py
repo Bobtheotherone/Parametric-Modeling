@@ -1,6 +1,8 @@
 """Determinism tests for resolve hashing against committed golden hashes.
 
 REQ-M1-024: CI must prove deterministic resolve hashing against committed golden hashes.
+REQ-M1-014/015: Mutation tests prove that changing key fields (gap_nm, fence pitch,
+connector footprint id, corner radius) changes resolved design or artifact hashes.
 
 This module verifies that:
 1. All golden specs produce deterministic design hashes
@@ -8,12 +10,15 @@ This module verifies that:
 3. Hashing is stable across multiple resolves
 4. Key ordering in specs does not affect the hash
 5. All F0 and F1 golden specs are covered
+6. Mutations to key fields produce different hashes (no identical board for distinct specs)
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -319,3 +324,289 @@ class TestGoldenHashIntegrity:
         spec_names = {p.name for p in _golden_spec_files()}
         for key in hashes:
             assert key in spec_names, f"Orphan hash: {key}"
+
+
+def _deep_set(data: dict[str, Any], path: str, value: Any) -> None:
+    """Set a nested value using dot-separated path notation.
+
+    Args:
+        data: Dictionary to modify (mutated in place).
+        path: Dot-separated path to the key (e.g., "transmission_line.gap_nm").
+        value: Value to set.
+    """
+    keys = path.split(".")
+    current = data
+    for key in keys[:-1]:
+        current = current[key]
+    current[keys[-1]] = value
+
+
+def _deep_get(data: dict[str, Any], path: str) -> Any:
+    """Get a nested value using dot-separated path notation.
+
+    Args:
+        data: Dictionary to read from.
+        path: Dot-separated path to the key (e.g., "transmission_line.gap_nm").
+
+    Returns:
+        The value at the specified path.
+    """
+    keys = path.split(".")
+    current = data
+    for key in keys:
+        current = current[key]
+    return current
+
+
+class TestMutationDetection:
+    """REQ-M1-015: Mutation tests proving key field changes affect design/artifact hashes.
+
+    These tests verify that changing key fields (gap_nm, fence pitch, connector footprint id,
+    corner radius) results in different resolved design hashes, ensuring no identical board
+    is produced for distinct specs.
+    """
+
+    def _get_baseline_spec_data(self) -> dict[str, Any]:
+        """Load baseline spec data from first golden spec for mutation testing."""
+        spec_path = _golden_spec_files()[0]
+        return json.loads(spec_path.read_text(encoding="utf-8"))
+
+    def test_gap_nm_mutation_changes_hash(self) -> None:
+        """Changing transmission_line.gap_nm must change the design hash.
+
+        REQ-M1-015: gap_nm is a key CPWG parameter that affects physical geometry.
+        A different gap results in a different board design.
+        """
+        baseline_data = self._get_baseline_spec_data()
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Mutate gap_nm
+        mutated_data = copy.deepcopy(baseline_data)
+        original_gap = _deep_get(mutated_data, "transmission_line.gap_nm")
+        new_gap = original_gap + 10000  # Add 10um
+        _deep_set(mutated_data, "transmission_line.gap_nm", new_gap)
+
+        mutated_spec = CouponSpec.model_validate(mutated_data)
+        mutated_resolved = resolve(mutated_spec)
+        mutated_hash = design_hash(mutated_resolved)
+
+        assert baseline_hash != mutated_hash, (
+            f"gap_nm mutation ({original_gap} -> {new_gap}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_corner_radius_mutation_changes_hash(self) -> None:
+        """Changing board.outline.corner_radius_nm must change the design hash.
+
+        REQ-M1-015: corner_radius_nm affects board outline geometry.
+        A different radius results in a different board design.
+        """
+        baseline_data = self._get_baseline_spec_data()
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Mutate corner_radius_nm
+        mutated_data = copy.deepcopy(baseline_data)
+        original_radius = _deep_get(mutated_data, "board.outline.corner_radius_nm")
+        new_radius = original_radius + 500000  # Add 0.5mm
+        _deep_set(mutated_data, "board.outline.corner_radius_nm", new_radius)
+
+        mutated_spec = CouponSpec.model_validate(mutated_data)
+        mutated_resolved = resolve(mutated_spec)
+        mutated_hash = design_hash(mutated_resolved)
+
+        assert baseline_hash != mutated_hash, (
+            f"corner_radius_nm mutation ({original_radius} -> {new_radius}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_connector_footprint_mutation_changes_hash(self) -> None:
+        """Changing connector footprint identifier must change the design hash.
+
+        REQ-M1-015: connector footprint ID affects physical layout and pad positions.
+        A different footprint results in a different board design.
+        """
+        baseline_data = self._get_baseline_spec_data()
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Mutate left connector footprint to alternative SMA connector with different pad dimensions
+        mutated_data = copy.deepcopy(baseline_data)
+        original_footprint = _deep_get(mutated_data, "connectors.left.footprint")
+        new_footprint = "Coupongen_Connectors:SMA_EndLaunch_Alt"
+        _deep_set(mutated_data, "connectors.left.footprint", new_footprint)
+
+        mutated_spec = CouponSpec.model_validate(mutated_data)
+        mutated_resolved = resolve(mutated_spec)
+        mutated_hash = design_hash(mutated_resolved)
+
+        assert baseline_hash != mutated_hash, (
+            f"connector footprint mutation ({original_footprint} -> {new_footprint}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_ground_via_fence_pitch_mutation_changes_hash(self) -> None:
+        """Changing ground_via_fence.pitch_nm must change the design hash.
+
+        REQ-M1-015: fence pitch affects via placement geometry.
+        Different pitch values result in different board designs.
+        """
+        baseline_data = self._get_baseline_spec_data()
+
+        # Create spec with ground_via_fence enabled
+        fence_spec_data = copy.deepcopy(baseline_data)
+        _deep_set(fence_spec_data, "transmission_line.ground_via_fence", {
+            "enabled": True,
+            "pitch_nm": 1000000,  # 1mm pitch
+            "offset_from_gap_nm": 200000,  # 0.2mm offset
+            "via": {
+                "drill_nm": 300000,
+                "diameter_nm": 600000,
+            }
+        })
+
+        fence_spec = CouponSpec.model_validate(fence_spec_data)
+        fence_resolved = resolve(fence_spec)
+        fence_hash = design_hash(fence_resolved)
+
+        # Mutate pitch_nm
+        mutated_fence_data = copy.deepcopy(fence_spec_data)
+        original_pitch = 1000000
+        new_pitch = 1500000  # Change to 1.5mm pitch
+        _deep_set(mutated_fence_data, "transmission_line.ground_via_fence.pitch_nm", new_pitch)
+
+        mutated_fence_spec = CouponSpec.model_validate(mutated_fence_data)
+        mutated_fence_resolved = resolve(mutated_fence_spec)
+        mutated_fence_hash = design_hash(mutated_fence_resolved)
+
+        assert fence_hash != mutated_fence_hash, (
+            f"fence pitch mutation ({original_pitch} -> {new_pitch}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_enabling_ground_via_fence_changes_hash(self) -> None:
+        """Enabling ground_via_fence must change the design hash vs null/disabled.
+
+        REQ-M1-015: presence/absence of via fence affects physical layout.
+        """
+        baseline_data = self._get_baseline_spec_data()
+
+        # Ensure baseline has no via fence
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        assert baseline_spec.transmission_line.ground_via_fence is None, (
+            "Baseline spec should have ground_via_fence=null for this test"
+        )
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Create spec with ground_via_fence enabled
+        fence_spec_data = copy.deepcopy(baseline_data)
+        _deep_set(fence_spec_data, "transmission_line.ground_via_fence", {
+            "enabled": True,
+            "pitch_nm": 1000000,
+            "offset_from_gap_nm": 200000,
+            "via": {
+                "drill_nm": 300000,
+                "diameter_nm": 600000,
+            }
+        })
+
+        fence_spec = CouponSpec.model_validate(fence_spec_data)
+        fence_resolved = resolve(fence_spec)
+        fence_hash = design_hash(fence_resolved)
+
+        assert baseline_hash != fence_hash, (
+            "Enabling ground_via_fence did not change design hash. "
+            "REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    @pytest.mark.parametrize("field_path,delta", [
+        ("transmission_line.w_nm", 10000),  # trace width
+        ("transmission_line.length_left_nm", 1000000),  # trace length
+        ("board.outline.width_nm", 1000000),  # board width
+        ("board.outline.length_nm", 1000000),  # board length
+    ])
+    def test_additional_nm_mutations_change_hash(self, field_path: str, delta: int) -> None:
+        """Verify other key _nm fields also produce distinct hashes when changed.
+
+        REQ-M1-015: Any dimensional parameter change should affect the design hash.
+        """
+        baseline_data = self._get_baseline_spec_data()
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Mutate the field
+        mutated_data = copy.deepcopy(baseline_data)
+        original_value = _deep_get(mutated_data, field_path)
+        new_value = original_value + delta
+        _deep_set(mutated_data, field_path, new_value)
+
+        mutated_spec = CouponSpec.model_validate(mutated_data)
+        mutated_resolved = resolve(mutated_spec)
+        mutated_hash = design_hash(mutated_resolved)
+
+        assert baseline_hash != mutated_hash, (
+            f"{field_path} mutation ({original_value} -> {new_value}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_multiple_mutations_compound(self) -> None:
+        """Multiple mutations should produce hashes distinct from single mutations.
+
+        REQ-M1-015: Compound changes should not accidentally cancel out.
+        """
+        baseline_data = self._get_baseline_spec_data()
+
+        # Single mutation: gap_nm
+        single_data = copy.deepcopy(baseline_data)
+        original_gap = _deep_get(single_data, "transmission_line.gap_nm")
+        _deep_set(single_data, "transmission_line.gap_nm", original_gap + 10000)
+        single_spec = CouponSpec.model_validate(single_data)
+        single_hash = design_hash(resolve(single_spec))
+
+        # Compound mutation: gap_nm + corner_radius_nm
+        compound_data = copy.deepcopy(baseline_data)
+        _deep_set(compound_data, "transmission_line.gap_nm", original_gap + 10000)
+        original_radius = _deep_get(compound_data, "board.outline.corner_radius_nm")
+        _deep_set(compound_data, "board.outline.corner_radius_nm", original_radius + 500000)
+        compound_spec = CouponSpec.model_validate(compound_data)
+        compound_hash = design_hash(resolve(compound_spec))
+
+        assert single_hash != compound_hash, (
+            "Compound mutation produced same hash as single mutation. "
+            "REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )
+
+    def test_f1_mutation_via_parameters_change_hash(self) -> None:
+        """F1 specs: changing discontinuity via parameters must change hash.
+
+        REQ-M1-015: Via diameter/drill affects physical geometry.
+        """
+        f1_specs = _f1_golden_specs()
+        if not f1_specs:
+            pytest.skip("No F1 golden specs available")
+
+        baseline_data = json.loads(f1_specs[0].read_text(encoding="utf-8"))
+        baseline_spec = CouponSpec.model_validate(baseline_data)
+        baseline_resolved = resolve(baseline_spec)
+        baseline_hash = design_hash(baseline_resolved)
+
+        # Mutate signal_via diameter
+        mutated_data = copy.deepcopy(baseline_data)
+        original_diameter = _deep_get(mutated_data, "discontinuity.signal_via.diameter_nm")
+        new_diameter = original_diameter + 50000  # Add 50um
+        _deep_set(mutated_data, "discontinuity.signal_via.diameter_nm", new_diameter)
+
+        mutated_spec = CouponSpec.model_validate(mutated_data)
+        mutated_resolved = resolve(mutated_spec)
+        mutated_hash = design_hash(mutated_resolved)
+
+        assert baseline_hash != mutated_hash, (
+            f"signal_via.diameter_nm mutation ({original_diameter} -> {new_diameter}) did not change design hash. "
+            f"REQ-M1-015 requires distinct specs to produce distinct hashes."
+        )

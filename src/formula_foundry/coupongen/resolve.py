@@ -43,6 +43,10 @@ class ResolvedDesign(BaseModel):
     parameters_nm: dict[str, int]
     derived_features: dict[str, int]
     dimensionless_groups: dict[str, float]
+    # Connector footprint provenance - included in design hash per REQ-M1-015
+    # Keys are connector positions (e.g., "left", "right"), values are
+    # dicts with "footprint_id" and "metadata_hash" for deterministic hashing
+    connector_footprints: dict[str, dict[str, str]] = Field(default_factory=dict)
     # Derived length_right_nm for F1 coupons (ensures continuity per CP-2.2)
     # This IS serialized and included in the design hash
     length_right_nm: int | None = Field(default=None)
@@ -138,6 +142,9 @@ def resolve(spec: CouponSpec, *, strict: bool = False) -> ResolvedDesign:
     derived_features = _build_derived_features(spec, layout_plan, length_right_nm)
     dimensionless_groups = _build_dimensionless_groups(spec)
 
+    # Build connector footprint provenance for design hash (REQ-M1-015)
+    connector_footprints = _build_connector_footprints(spec)
+
     spec_consumption = build_spec_consumption(spec)
     if strict:
         enforce_spec_consumption(spec_consumption)
@@ -149,6 +156,7 @@ def resolve(spec: CouponSpec, *, strict: bool = False) -> ResolvedDesign:
         parameters_nm=parameters_nm,
         derived_features=derived_features,
         dimensionless_groups=dimensionless_groups,
+        connector_footprints=connector_footprints,
         length_right_nm=length_right_nm,
         spec_consumption=spec_consumption,
     )
@@ -277,3 +285,42 @@ def _build_dimensionless_groups(spec: CouponSpec) -> dict[str, float]:
     from formula_foundry.derive import compute_dimensionless_groups
 
     return compute_dimensionless_groups(spec)
+
+
+def _build_connector_footprints(spec: CouponSpec) -> dict[str, dict[str, str]]:
+    """Build connector footprint provenance for design hash.
+
+    Extracts footprint IDs and their metadata hashes for all connectors
+    in the spec. This ensures that changing the connector footprint
+    produces a different design hash per REQ-M1-015.
+
+    Args:
+        spec: The coupon specification.
+
+    Returns:
+        Dictionary mapping connector positions (e.g., "left", "right") to
+        dicts containing "footprint_id" and "metadata_hash".
+    """
+    from .geom.footprint_meta import load_footprint_meta
+
+    result: dict[str, dict[str, str]] = {}
+
+    # Process left connector
+    if spec.connectors.left is not None:
+        footprint_path = spec.connectors.left.footprint
+        meta = load_footprint_meta(footprint_path)
+        result["left"] = {
+            "footprint_id": footprint_path,
+            "metadata_hash": meta.metadata_hash,
+        }
+
+    # Process right connector
+    if spec.connectors.right is not None:
+        footprint_path = spec.connectors.right.footprint
+        meta = load_footprint_meta(footprint_path)
+        result["right"] = {
+            "footprint_id": footprint_path,
+            "metadata_hash": meta.metadata_hash,
+        }
+
+    return result
