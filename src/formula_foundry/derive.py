@@ -116,9 +116,25 @@ def compute_derived_features(spec: CouponSpec, length_right_nm: int | None = Non
             features["return_via_annular_ring_nm"] = int(ret_via.diameter_nm) - int(ret_via.drill_nm)
 
     # Connector derived features (launch geometry)
-    left_x = int(spec.connectors.left.position_nm[0])
-    right_x = int(spec.connectors.right.position_nm[0])
-    features["connector_span_nm"] = abs(right_x - left_x)
+    left_pos = spec.connectors.left.position_nm
+    right_pos = spec.connectors.right.position_nm
+    left_x = int(left_pos[0])
+    left_y = int(left_pos[1])
+    right_x = int(right_pos[0])
+    right_y = int(right_pos[1])
+
+    connector_span = abs(right_x - left_x)
+    features["connector_span_nm"] = connector_span
+    features["launch_span_nm"] = connector_span
+
+    board_center_y = width_nm // 2
+    left_edge_clearance = left_x
+    right_edge_clearance = length_nm - right_x
+    features["launch_left_edge_clearance_nm"] = left_edge_clearance
+    features["launch_right_edge_clearance_nm"] = right_edge_clearance
+    features["launch_edge_symmetry_error_nm"] = abs(left_edge_clearance - right_edge_clearance)
+    features["launch_left_y_offset_nm"] = abs(left_y - board_center_y)
+    features["launch_right_y_offset_nm"] = abs(right_y - board_center_y)
 
     # Stackup derived features
     if "core" in spec.stackup.thicknesses_nm:

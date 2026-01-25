@@ -356,7 +356,7 @@ class TestComputeDerivedFeatures:
     def test_connector_derived_features(
         self, valid_f1_spec_data: dict[str, Any]
     ) -> None:
-        """Connector span is correctly computed."""
+        """Connector span and launch offsets are correctly computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
 
@@ -365,6 +365,14 @@ class TestComputeDerivedFeatures:
 
         # left_x=5mm, right_x=75mm -> span=70mm
         assert features["connector_span_nm"] == 70_000_000
+        assert features["launch_span_nm"] == 70_000_000
+        # board width=20mm, center_y=10mm, left/right y=0 -> offset=10mm
+        assert features["launch_left_y_offset_nm"] == 10_000_000
+        assert features["launch_right_y_offset_nm"] == 10_000_000
+        # left/right edge clearance should match for symmetric placement
+        assert features["launch_left_edge_clearance_nm"] == 5_000_000
+        assert features["launch_right_edge_clearance_nm"] == 5_000_000
+        assert features["launch_edge_symmetry_error_nm"] == 0
 
     def test_stackup_derived_features(
         self, valid_f1_spec_data: dict[str, Any]
