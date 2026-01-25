@@ -797,7 +797,7 @@ def _run_lint_spec_coverage(args: argparse.Namespace) -> int:
     Returns:
         0 if coverage is complete, 1 if coverage failures
     """
-    from formula_foundry.commands.lint_spec_coverage import run_lint_spec_coverage
+    from formula_foundry.cli import run_lint_spec_coverage
 
     return run_lint_spec_coverage(args)
 
@@ -814,7 +814,7 @@ def _run_explain(args: argparse.Namespace) -> int:
     Returns:
         0 on success, 1 on validation errors
     """
-    from formula_foundry.commands.explain import run_explain
+    from formula_foundry.cli import run_explain
 
     return run_explain(args)
 
