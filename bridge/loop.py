@@ -23,6 +23,7 @@ import concurrent.futures
 import contextlib
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -1301,11 +1302,84 @@ def _git_init_if_needed(project_root: Path) -> None:
         _run_cmd(["git", "commit", "-m", "chore: initial state"], cwd=project_root, env=os.environ.copy())
 
 
+# Protected file that must never be reverted by auto-stash or checkout
+_PROTECTED_FILE = "DESIGN_DOCUMENT.md"
+
+
+def _capture_protected_file(project_root: Path) -> tuple[bytes | None, str | None]:
+    """Capture current bytes and SHA256 of DESIGN_DOCUMENT.md before git operations.
+
+    Returns (content_bytes, sha256_hex) or (None, None) if file doesn't exist.
+    """
+    protected_path = project_root / _PROTECTED_FILE
+    if not protected_path.exists():
+        return None, None
+    try:
+        content = protected_path.read_bytes()
+        sha256_hex = hashlib.sha256(content).hexdigest()
+        return content, sha256_hex
+    except OSError:
+        return None, None
+
+
+def _restore_protected_file_if_changed(
+    project_root: Path,
+    original_content: bytes | None,
+    original_hash: str | None,
+    operation_name: str,
+) -> bool:
+    """Restore DESIGN_DOCUMENT.md if it was changed by a git operation.
+
+    Returns True if file was restored, False otherwise.
+    """
+    if original_content is None:
+        # File didn't exist before, nothing to restore
+        return False
+
+    protected_path = project_root / _PROTECTED_FILE
+
+    # Check current state
+    if not protected_path.exists():
+        # File was deleted by git operation - restore it
+        try:
+            protected_path.write_bytes(original_content)
+            print(f"[orchestrator] Restored {_PROTECTED_FILE} after {operation_name} (file was deleted)")
+            return True
+        except OSError as e:
+            print(f"[orchestrator] WARNING: Failed to restore {_PROTECTED_FILE}: {e}")
+            return False
+
+    try:
+        current_content = protected_path.read_bytes()
+        current_hash = hashlib.sha256(current_content).hexdigest()
+    except OSError:
+        current_hash = None
+
+    if current_hash != original_hash:
+        # Content changed - restore original
+        try:
+            protected_path.write_bytes(original_content)
+            print(f"[orchestrator] Restored {_PROTECTED_FILE} after {operation_name} to preserve local edits")
+            return True
+        except OSError as e:
+            print(f"[orchestrator] WARNING: Failed to restore {_PROTECTED_FILE}: {e}")
+            return False
+
+    return False
+
+
 def _checkout_agent_branch(project_root: Path, run_id: str) -> None:
     branch = f"agent-run/{run_id}"
+
+    # Capture protected file state before checkout
+    original_content, original_hash = _capture_protected_file(project_root)
+
     rc, _, _ = _run_cmd(["git", "checkout", "-b", branch], cwd=project_root, env=os.environ.copy())
     if rc != 0:
         _run_cmd(["git", "checkout", branch], cwd=project_root, env=os.environ.copy())
+
+    # Restore protected file if it was changed by checkout
+    _restore_protected_file_if_changed(project_root, original_content, original_hash, "checkout")
 
 
 def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[int, str, str]:
@@ -1376,7 +1450,11 @@ def _preflight_check_repo(
         return True, "WARNING: Proceeding with dirty repo (--force-dirty)", None
 
     if auto_stash:
+        # Capture protected file state BEFORE stash (pathspec excludes are unreliable)
+        original_content, original_hash = _capture_protected_file(project_root)
+
         # Stash all changes including untracked files
+        # Note: pathspec exclude kept for belt-and-suspenders, but we don't rely on it
         stash_msg = f"orchestrator-auto-stash-{dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}"
         rc_stash, out_stash, err_stash = _run_cmd(
             ["git", "stash", "push", "-u", "-m", stash_msg, "--", ":/", ":(exclude):/DESIGN_DOCUMENT.md"],
@@ -1385,6 +1463,9 @@ def _preflight_check_repo(
         )
         if rc_stash != 0:
             return False, f"Failed to auto-stash: {err_stash}", None
+
+        # CRITICAL: Restore protected file if stash reverted it (pathspec exclude unreliable)
+        _restore_protected_file_if_changed(project_root, original_content, original_hash, "auto-stash")
 
         # Get the stash ref
         rc_ref, stash_list, _ = _run_cmd(
