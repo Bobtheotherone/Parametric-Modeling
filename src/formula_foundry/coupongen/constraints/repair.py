@@ -573,6 +573,40 @@ def _extract_design_vector(payload: dict[str, Any]) -> DesignVector:
     return DesignVector(parameters=parameters, normalized=normalized)
 
 
+def _build_repair_map(
+    actions: list[RepairAction],
+    original_vector: DesignVector | None,
+    repaired_vector: DesignVector | None,
+) -> dict[str, dict[str, int]]:
+    """Build a deterministic repair map from original/repaired vectors when possible."""
+    merged: dict[str, dict[str, int]] = {}
+
+    if original_vector is not None and repaired_vector is not None:
+        original_params = original_vector.parameters
+        repaired_params = repaired_vector.parameters
+        for path in sorted(set(original_params) | set(repaired_params)):
+            before = original_params.get(path)
+            after = repaired_params.get(path)
+            if before is None or after is None:
+                continue
+            if before != after:
+                merged[path] = {"before": before, "after": after}
+
+    if actions:
+        action_map: dict[str, dict[str, int]] = {}
+        for action in actions:
+            entry = action_map.get(action.path)
+            if entry is None:
+                action_map[action.path] = {"before": action.before, "after": action.after}
+            else:
+                entry["after"] = action.after
+        for path, entry in action_map.items():
+            if path not in merged:
+                merged[path] = entry
+
+    return {path: merged[path] for path in sorted(merged)}
+
+
 def _get_nested_value(data: dict[str, Any], path: str) -> Any:
     """Get a nested value from a dictionary using dotted path notation."""
     parts = path.split(".")
@@ -1167,12 +1201,8 @@ class RepairEngine:
         Returns:
             RepairResult with full audit trail including hashes for rebuild verification
         """
-        repair_map: dict[str, dict[str, int]] = {}
-        repair_reason: list[str] = []
-
-        for action in self.actions:
-            repair_map[action.path] = {"before": action.before, "after": action.after}
-            repair_reason.append(action.reason)
+        repair_map = _build_repair_map(self.actions, original_vector, repaired_vector)
+        repair_reason = [action.reason for action in self.actions]
 
         repair_distance = _compute_repair_distance(self.actions)
 
