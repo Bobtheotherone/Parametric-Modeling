@@ -48,6 +48,15 @@ from formula_foundry.coupongen.constraints import (
     repair_spec_tiered,
     write_constraint_proof,
 )
+from formula_foundry.coupongen.geom import (
+    CPWGSpec,
+    GroundViaFenceSpec,
+    OutlineArc,
+    OutlineLine,
+    PositionNM,
+    generate_ground_via_fence,
+    generate_rounded_outline,
+)
 from formula_foundry.coupongen.spec import CouponSpec
 
 # ==============================================================================
@@ -1206,6 +1215,50 @@ class TestViaFenceDeterminism:
         ]
         assert len(fence_failures) == 0
 
+    def test_fence_geometry_generated_from_layout(self) -> None:
+        """Fence-enabled specs should generate deterministic via fence geometry."""
+        from formula_foundry.coupongen.resolve import resolve
+
+        spec = CouponSpec.model_validate(_valid_spec_data())
+        resolved = resolve(spec)
+        layout = resolved.layout_plan
+        assert layout is not None
+
+        fence = spec.transmission_line.ground_via_fence
+        assert fence is not None
+        assert fence.enabled
+
+        left_segment = next(seg for seg in layout.segments if seg.label == "left")
+        start = PositionNM(left_segment.x_start_nm, left_segment.y_nm)
+        end = PositionNM(left_segment.x_end_nm, left_segment.y_nm)
+
+        cpwg_spec = CPWGSpec(
+            w_nm=int(spec.transmission_line.w_nm),
+            gap_nm=int(spec.transmission_line.gap_nm),
+            length_nm=left_segment.length_nm,
+            layer=left_segment.layer,
+            net_id=1,
+        )
+        fence_spec = GroundViaFenceSpec(
+            pitch_nm=int(fence.pitch_nm),
+            offset_from_gap_nm=int(fence.offset_from_gap_nm),
+            drill_nm=int(fence.via.drill_nm),
+            diameter_nm=int(fence.via.diameter_nm),
+        )
+
+        pos_vias, neg_vias = generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
+
+        assert len(pos_vias) > 0
+        assert len(pos_vias) == len(neg_vias)
+
+        expected_offset = (
+            (cpwg_spec.w_nm + 1) // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
+        )
+        for pos_via, neg_via in zip(pos_vias, neg_vias, strict=True):
+            assert pos_via.position.x == neg_via.position.x
+            assert pos_via.position.y == expected_offset
+            assert neg_via.position.y == -expected_offset
+
 
 # ==============================================================================
 # REQ-M1-009: Rounded Outline Feasibility Tests
@@ -1252,6 +1305,23 @@ class TestRoundedOutlineFeasibility:
             if "CORNER_RADIUS" in c.constraint_id
         ]
         assert all(c.passed for c in corner_constraints)
+
+    def test_rounded_outline_contains_arcs(self) -> None:
+        """Rounded outline should emit arcs when corner_radius_nm > 0."""
+        spec = CouponSpec.model_validate(_valid_spec_data())
+        outline = generate_rounded_outline(
+            x_left_nm=0,
+            y_bottom_nm=-(spec.board.outline.width_nm // 2),
+            width_nm=int(spec.board.outline.length_nm),
+            height_nm=int(spec.board.outline.width_nm),
+            corner_radius_nm=int(spec.board.outline.corner_radius_nm),
+        )
+
+        arcs = [elem for elem in outline.elements if isinstance(elem, OutlineArc)]
+        lines = [elem for elem in outline.elements if isinstance(elem, OutlineLine)]
+
+        assert len(arcs) == 4
+        assert len(lines) == 4
 
     def test_corner_radius_exceeds_max_fails(self) -> None:
         """corner_radius_nm > half min(width, length) should fail."""
@@ -1396,6 +1466,29 @@ class TestRepairReproducibility:
         for _, repair_result in results[1:]:
             assert repair_result.repaired_spec_hash == first.repaired_spec_hash
             assert repair_result.repaired_design_hash == first.repaired_design_hash
+
+    def test_repair_layout_plan_deterministic(self) -> None:
+        """Repaired specs should resolve to deterministic geometry."""
+        from formula_foundry.coupongen.resolve import resolve
+
+        data = _valid_spec_data()
+        data["transmission_line"]["w_nm"] = 50_000
+        data["board"]["outline"]["corner_radius_nm"] = 15_000_000
+        spec = CouponSpec.model_validate(data)
+        limits = _default_fab_limits()
+
+        layouts = []
+        for _ in range(3):
+            repaired_spec, _ = repair_spec_tiered(spec, limits)
+            resolved = resolve(repaired_spec)
+            layout = resolved.layout_plan
+            assert layout is not None
+            assert len(layout.segments) > 0
+            layouts.append(layout)
+
+        first = layouts[0]
+        for layout in layouts[1:]:
+            assert layout == first
 
     def test_rebuild_from_repaired_spec_same_hash(self) -> None:
         """Rebuilding from repaired_spec should produce same design_hash."""
