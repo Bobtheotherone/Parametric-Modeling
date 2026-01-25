@@ -13,10 +13,6 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from formula_foundry.geometry.via_fence import (
-    generate_ground_via_fence as _generate_ground_via_fence,
-)
-
 from .primitives import PositionNM, TrackSegment, Via, half_width_nm
 
 if TYPE_CHECKING:
@@ -218,7 +214,76 @@ def generate_ground_via_fence(
     Returns:
         Tuple of (positive_y_vias, negative_y_vias).
     """
-    return _generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
+    # Validate pitch
+    if fence_spec.pitch_nm <= 0:
+        raise ValueError("pitch_nm must be positive")
+
+    # Calculate segment direction and length
+    dx = end.x - start.x
+    dy = end.y - start.y
+    segment_length = int(math.sqrt(dx * dx + dy * dy))
+
+    if segment_length == 0:
+        return ((), ())
+
+    # Unit vector along the segment
+    unit_dx = dx / segment_length
+    unit_dy = dy / segment_length
+
+    # Perpendicular unit vector (for offset from centerline)
+    perp_dx = -unit_dy
+    perp_dy = unit_dx
+
+    # Distance from centerline to via center:
+    # half_trace_width + gap + offset_from_gap
+    offset_from_center = (
+        half_width_nm(cpwg_spec.w_nm)
+        + cpwg_spec.gap_nm
+        + fence_spec.offset_from_gap_nm
+    )
+
+    # Calculate number of vias that fit
+    num_vias = segment_length // fence_spec.pitch_nm
+    if num_vias == 0:
+        return ((), ())
+
+    # Start vias half-pitch from the start to center them along the segment
+    start_offset = (segment_length - (num_vias - 1) * fence_spec.pitch_nm) // 2
+
+    positive_vias: list[Via] = []
+    negative_vias: list[Via] = []
+
+    net_id = fence_spec.net_id if fence_spec.net_id > 0 else cpwg_spec.ground_net_id
+
+    for i in range(num_vias):
+        # Position along the segment
+        along_dist = start_offset + i * fence_spec.pitch_nm
+        base_x = start.x + int(along_dist * unit_dx)
+        base_y = start.y + int(along_dist * unit_dy)
+
+        # Offset perpendicular to the segment
+        offset_dx = int(offset_from_center * perp_dx)
+        offset_dy = int(offset_from_center * perp_dy)
+
+        # Positive side via (e.g., +y for horizontal segment)
+        positive_vias.append(Via(
+            position=PositionNM(base_x + offset_dx, base_y + offset_dy),
+            drill_nm=fence_spec.drill_nm,
+            diameter_nm=fence_spec.diameter_nm,
+            layers=fence_spec.layers,
+            net_id=net_id,
+        ))
+
+        # Negative side via (e.g., -y for horizontal segment)
+        negative_vias.append(Via(
+            position=PositionNM(base_x - offset_dx, base_y - offset_dy),
+            drill_nm=fence_spec.drill_nm,
+            diameter_nm=fence_spec.diameter_nm,
+            layers=fence_spec.layers,
+            net_id=net_id,
+        ))
+
+    return (tuple(positive_vias), tuple(negative_vias))
 
 
 def generate_cpwg_with_fence(

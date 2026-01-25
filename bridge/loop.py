@@ -3120,6 +3120,11 @@ def _select_only_tasks(all_tasks: list[ParallelTask], only_ids: list[str]) -> li
     return [t for t in all_tasks if t.id in keep]
 
 
+def _is_backfill_task_id(task_id: str) -> bool:
+    """Check if a task ID represents an optional backfill task (FILLER-* prefix)."""
+    return task_id.startswith("FILLER-")
+
+
 def _write_manual_task_file(
     *,
     manual_dir: Path,
@@ -3171,17 +3176,50 @@ If you prefer rerunning through the orchestrator (single-worker):
     return path
 
 
+def _mark_task_manual(
+    *,
+    task: ParallelTask,
+    reason: str,
+    manual_dir: Path,
+    schema_path: Path,
+) -> None:
+    """Mark a task as manual and ensure manual_path is written.
+
+    Sets task.status to 'manual', task.error to the reason, and if task.manual_path
+    is None, writes a manual file using _write_manual_task_file.
+    """
+    task.status = "manual"
+    task.error = reason
+    if task.manual_path is None:
+        task.manual_path = _write_manual_task_file(
+            manual_dir=manual_dir,
+            task=task,
+            reason=reason,
+            agent_cmd=[],
+            schema_path=schema_path,
+            prompt_path=task.prompt_path or Path(""),
+            out_path=task.out_path or Path(""),
+            raw_log_path=task.raw_log_path or Path(""),
+        )
+
+
 def _generate_run_summary(
     *,
     tasks: list[ParallelTask],
     runs_dir: Path,
     verify_exit_code: int,
 ) -> dict[str, Any]:
-    """Generate a structured summary of the parallel run."""
+    """Generate a structured summary of the parallel run.
+
+    Backfill tasks (FILLER-* prefix) are optional and do NOT cause run failure.
+    They are tracked in 'optional_tasks' for visibility but excluded from
+    root_failures, blocked_tasks, and success calculation.
+    """
     root_failures = []
     blocked_tasks = []
     completed_tasks = []
     pending_rerun_tasks = []
+    optional_tasks = []
 
     # Root failure statuses: tasks that failed on their own (not due to dependencies)
     root_failure_statuses = ("failed", "manual", "pending_rerun", "resource_killed")
@@ -3200,6 +3238,17 @@ def _generate_run_summary(
             "turn_summary": t.turn_summary,
         }
 
+        is_backfill = _is_backfill_task_id(t.id)
+
+        # Backfill tasks are optional - track separately for visibility
+        if is_backfill:
+            optional_tasks.append(task_info)
+            # Still count done backfills as completed for stats
+            if t.status == "done":
+                completed_tasks.append(task_info)
+            continue
+
+        # Non-backfill task processing
         if t.status == "done":
             completed_tasks.append(task_info)
         elif t.status == "pending_rerun":
@@ -3211,18 +3260,25 @@ def _generate_run_summary(
             # Both "blocked" (new) and "skipped" (legacy) are transitively blocked
             blocked_tasks.append(task_info)
 
+    # Count non-backfill tasks only for failure stats
+    non_backfill_tasks = [t for t in tasks if not _is_backfill_task_id(t.id)]
+    failed_count = len([t for t in non_backfill_tasks if t.status in ("failed", "manual", "resource_killed")])
+    pending_rerun_count = len([t for t in non_backfill_tasks if t.status == "pending_rerun"])
+    blocked_count = len([t for t in non_backfill_tasks if t.status in ("blocked", "skipped")])
+
     summary = {
         "run_dir": str(runs_dir),
         "total_tasks": len(tasks),
         "completed": len(completed_tasks),
-        "failed": len([t for t in tasks if t.status in ("failed", "manual", "resource_killed")]),
-        "pending_rerun": len(pending_rerun_tasks),
-        "blocked": len(blocked_tasks),
+        "failed": failed_count,
+        "pending_rerun": pending_rerun_count,
+        "blocked": blocked_count,
         "verify_exit_code": verify_exit_code,
         "success": verify_exit_code == 0 and len(root_failures) == 0,
         "completed_tasks": completed_tasks,
         "root_failures": root_failures,
         "blocked_tasks": blocked_tasks,
+        "optional_tasks": optional_tasks,
     }
 
     return summary
@@ -4620,8 +4676,18 @@ def run_parallel(
             # 2. Worker actually created a commit (has commit_sha or branch differs from base)
             if "needs_manual_resolution" in msg:
                 print(f"[orchestrator] Patch integration needs manual resolution for {t.id}: {msg}")
-                t.status = "manual"
-                t.error = msg
+                # Backfill tasks are optional - don't mark manual, just log and return success
+                if _is_backfill_task_id(t.id):
+                    t.error = msg  # Record for visibility
+                    print(f"[orchestrator] FILLER OPTIONAL SKIP: {t.id} needs manual resolution but is optional")
+                    return True
+                # Non-backfill tasks: mark manual with proper manual_path
+                _mark_task_manual(
+                    task=t,
+                    reason=msg,
+                    manual_dir=manual_dir,
+                    schema_path=state.schema_path,
+                )
                 return False
 
             # Check if there's actually a commit to merge
@@ -5044,12 +5110,19 @@ def run_parallel(
     pending_rerun_count = 0
     blocked_count = 0
     for t in tasks:
+        is_backfill = _is_backfill_task_id(t.id)
         extra = ""
         if t.status in ("failed", "manual", "pending_rerun", "resource_killed") and t.manual_path:
             extra = f" (see {t.manual_path})"
         elif t.status in ("failed", "manual", "pending_rerun", "resource_killed", "blocked") and t.error:
             extra = f" ({t.error})"
-        print(f"- {t.id}: {t.status}{extra}")
+        # Mark backfill tasks as optional in printed output
+        optional_suffix = " (optional)" if is_backfill else ""
+        print(f"- {t.id}: {t.status}{extra}{optional_suffix}")
+
+        # Only count non-backfill tasks for needs_continuation calculation
+        if is_backfill:
+            continue
         if t.status == "done":
             done_count += 1
         elif t.status in ("failed", "manual", "resource_killed"):
@@ -5066,6 +5139,16 @@ def run_parallel(
         else:
             print(f"\n[orchestrator] SELFTEST FAILED: {failed_count} task(s) failed")
             return 1
+
+    # Safety net: ensure all manual tasks have manual_path written
+    for t in tasks:
+        if t.status == "manual" and t.manual_path is None:
+            _mark_task_manual(
+                task=t,
+                reason=t.error or "Task requires manual intervention",
+                manual_dir=manual_dir,
+                schema_path=state.schema_path,
+            )
 
     # Generate structured summary.json
     summary = _generate_run_summary(

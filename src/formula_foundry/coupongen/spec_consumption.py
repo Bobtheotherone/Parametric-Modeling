@@ -10,7 +10,7 @@ Satisfies REQ-M1-001:
       expected field is unconsumed.
 
 For implementation details, see:
-    - formula_foundry.spec.consumption: SpecConsumption model
+    - formula_foundry.resolve.types: SpecConsumption model
     - formula_foundry.resolve.consumption: Build and enforcement functions
 """
 
@@ -22,7 +22,7 @@ from formula_foundry.resolve.consumption import (
     get_consumed_paths,
     get_expected_paths,
 )
-from formula_foundry.spec.consumption import SpecConsumption
+from formula_foundry.resolve.types import SpecConsumption
 
 __all__ = [
     "SpecConsumption",

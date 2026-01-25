@@ -9,7 +9,7 @@ from formula_foundry.resolve.consumption import (
     build_spec_consumption,
     enforce_spec_consumption,
 )
-from formula_foundry.spec.consumption import SpecConsumption
+from formula_foundry.resolve.types import SpecConsumption
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .families import FAMILY_F1

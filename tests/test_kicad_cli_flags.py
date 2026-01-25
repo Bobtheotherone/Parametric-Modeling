@@ -8,43 +8,20 @@ checks enabled (KiCad CLI flags/policy pinned in code and recorded in manifest).
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
-# Direct import to avoid broken import chain in formula_foundry.__init__
-_SRC_DIR = Path(__file__).resolve().parent.parent / "src"
-
-# Load policy module directly (cli_flags depends on it)
-# Register in sys.modules before exec to fix dataclass issues
-_policy_spec = importlib.util.spec_from_file_location(
-    "formula_foundry.coupongen.kicad.policy",
-    _SRC_DIR / "formula_foundry" / "coupongen" / "kicad" / "policy.py"
+from formula_foundry.coupongen.kicad import (
+    DEFAULT_ZONE_POLICY,
+    ZonePolicy,
+    SeverityLevel,
+    build_drc_flags,
+    build_export_drill_flags,
+    build_export_gerber_flags,
+    get_drc_refill_flag,
+    get_export_check_flag,
 )
-_policy = importlib.util.module_from_spec(_policy_spec)  # type: ignore[arg-type]
-sys.modules["formula_foundry.coupongen.kicad.policy"] = _policy
-_policy_spec.loader.exec_module(_policy)  # type: ignore[union-attr]
-
-# Load cli_flags module directly
-_cli_flags_spec = importlib.util.spec_from_file_location(
-    "formula_foundry.coupongen.kicad.cli_flags",
-    _SRC_DIR / "formula_foundry" / "coupongen" / "kicad" / "cli_flags.py"
-)
-_cli_flags = importlib.util.module_from_spec(_cli_flags_spec)  # type: ignore[arg-type]
-sys.modules["formula_foundry.coupongen.kicad.cli_flags"] = _cli_flags
-_cli_flags_spec.loader.exec_module(_cli_flags)  # type: ignore[union-attr]
-
-SeverityLevel = _cli_flags.SeverityLevel
-build_drc_flags = _cli_flags.build_drc_flags
-build_export_drill_flags = _cli_flags.build_export_drill_flags
-build_export_gerber_flags = _cli_flags.build_export_gerber_flags
-get_drc_refill_flag = _cli_flags.get_drc_refill_flag
-get_export_check_flag = _cli_flags.get_export_check_flag
-
-DEFAULT_ZONE_POLICY = _policy.DEFAULT_ZONE_POLICY
-ZonePolicy = _policy.ZonePolicy
 
 
 class TestBuildDrcFlags:

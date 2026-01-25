@@ -919,7 +919,7 @@ class TestSpecConsumption:
 
     def test_spec_consumption_model_creation(self) -> None:
         """SpecConsumption model can be created with path sets."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a", "b"}),
@@ -932,7 +932,7 @@ class TestSpecConsumption:
 
     def test_unused_provided_paths_calculation(self) -> None:
         """unused_provided_paths returns provided but not consumed paths."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a", "b"}),
@@ -943,7 +943,7 @@ class TestSpecConsumption:
 
     def test_unconsumed_expected_paths_calculation(self) -> None:
         """unconsumed_expected_paths returns expected but not consumed paths."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a"}),
@@ -954,7 +954,7 @@ class TestSpecConsumption:
 
     def test_consumption_summary_dict(self) -> None:
         """to_summary_dict returns sorted lists for manifest emission."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"b", "a"}),
@@ -962,11 +962,11 @@ class TestSpecConsumption:
             provided_paths=frozenset({"d", "b", "a"}),
         )
         summary = consumption.to_summary_dict()
-        assert summary["consumed"] == ["a", "b"]
-        assert summary["expected"] == ["a", "b", "c"]
-        assert summary["provided"] == ["a", "b", "d"]
-        assert summary["unused_provided"] == ["d"]
-        assert summary["unconsumed_expected"] == ["c"]
+        assert summary["consumed_paths"] == ["a", "b"]
+        assert summary["expected_paths"] == ["a", "b", "c"]
+        assert summary["provided_paths"] == ["a", "b", "d"]
+        assert summary["unused_provided_paths"] == ["d"]
+        assert summary["unconsumed_expected_paths"] == ["c"]
 
     def test_collect_provided_paths_from_spec(
         self, minimal_spec_data: dict[str, Any]
@@ -1025,7 +1025,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_passes_on_valid(self) -> None:
         """enforce_spec_consumption does not raise for valid consumption."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
 
         # All paths consumed, no unused or unconsumed
@@ -1039,7 +1039,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unused_provided(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if provided field is unused."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1057,7 +1057,7 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unconsumed_expected(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if expected field is unconsumed."""
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1106,7 +1106,7 @@ class TestLintSpecCoverageCLI:
         there are unconsumed expected paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1134,7 +1134,7 @@ class TestLintSpecCoverageCLI:
         there are unused provided paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
@@ -1162,7 +1162,7 @@ class TestLintSpecCoverageCLI:
         all expected paths are consumed and no provided paths are unused by directly
         testing the SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.spec.consumption import SpecConsumption
+        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
 
         # Create a consumption with complete coverage (no issues)
@@ -1336,3 +1336,97 @@ class TestFamilyViolationRejection:
         with pytest.raises(FamilyValidationError) as exc_info:
             validate_family(spec)
         assert "via_transition" in str(exc_info.value).lower()
+
+
+# =============================================================================
+# Module-level wrapper test for DESIGN_DOCUMENT.md Test Matrix
+# =============================================================================
+
+
+def test_schema() -> None:
+    """Wrapper test for REQ-M1-001, REQ-M1-002, and REQ-M1-018.
+
+    This test aggregates key assertions for the requirements mapped to
+    tests/test_schema.py::test_schema in DESIGN_DOCUMENT.md Test Matrix.
+
+    REQ-M1-001: The generator MUST track and emit spec consumption.
+    REQ-M1-002: The spec validator MUST enforce family-specific correctness
+                and MUST reject unknown/extra fields under strict mode.
+    REQ-M1-018: The CLI MUST provide lint-spec-coverage (non-zero on coverage
+                failures) and explain commands.
+    """
+    from formula_foundry.coupongen.spec import (
+        COUPONSPEC_SCHEMA_PATH,
+        CouponSpec,
+        get_json_schema,
+        validate_strict,
+        StrictValidationError,
+    )
+    from formula_foundry.resolve.types import SpecConsumption
+    from formula_foundry.resolve.consumption import (
+        enforce_spec_consumption,
+        SpecConsumptionError,
+    )
+    from formula_foundry.coupongen.cli_main import build_parser
+
+    # REQ-M1-001: Schema file exists and is valid JSON
+    assert COUPONSPEC_SCHEMA_PATH.exists(), "Schema file must exist"
+    schema = get_json_schema()
+    assert isinstance(schema, dict), "Schema must be valid JSON"
+    assert "$schema" in schema, "Schema must have $schema property"
+
+    # REQ-M1-001: SpecConsumption tracks consumption correctly
+    consumption = SpecConsumption(
+        consumed_paths=frozenset({"a", "b"}),
+        expected_paths=frozenset({"a", "b"}),
+        provided_paths=frozenset({"a", "b", "unused"}),
+    )
+    assert consumption.unused_provided_paths == frozenset({"unused"})
+
+    # REQ-M1-001: enforce_spec_consumption fails on unused provided
+    with pytest.raises(SpecConsumptionError):
+        enforce_spec_consumption(consumption)
+
+    # REQ-M1-002: CouponSpec model forbids extra fields
+    assert CouponSpec.model_config.get("extra") == "forbid"
+
+    # REQ-M1-002: validate_strict rejects extra fields
+    spec_data = {
+        "schema_version": 1,
+        "coupon_family": "F0_CAL_THRU_LINE",
+        "units": "nm",
+        "unknown_extra_field": "should_fail",
+        "toolchain": {"kicad": {"version": "9.0.7", "docker_image": "test@sha256:abc"}},
+        "fab_profile": {"id": "generic"},
+        "stackup": {
+            "copper_layers": 4,
+            "thicknesses_nm": {"L1_to_L2": 180000, "L2_to_L3": 800000, "L3_to_L4": 180000},
+            "materials": {"er": 4.5, "loss_tangent": 0.015},
+        },
+        "board": {
+            "outline": {"width_nm": 10000000, "length_nm": 40000000, "corner_radius_nm": 1000000},
+            "origin": {"mode": "EDGE_L_CENTER"},
+            "text": {"coupon_id": "TEST", "include_manifest_hash": False},
+        },
+        "connectors": {
+            "left": {"footprint": "SMA:SMA_V", "position_nm": [2000000, 0], "rotation_deg": 0},
+            "right": {"footprint": "SMA:SMA_V", "position_nm": [38000000, 0], "rotation_deg": 180},
+        },
+        "transmission_line": {
+            "type": "CPWG", "layer": "F.Cu", "w_nm": 200000, "gap_nm": 150000,
+            "length_left_nm": 15000000, "length_right_nm": 15000000,
+        },
+        "constraints": {"mode": "REJECT", "drc": {"must_pass": True, "severity": "all"},
+                        "symmetry": {"enforce": True}, "allow_unconnected_copper": False},
+        "export": {"gerbers": {"enabled": True, "format": "gerbers"},
+                   "drill": {"enabled": True, "format": "excellon"}, "outputs_dir": "output/"},
+    }
+    with pytest.raises(StrictValidationError):
+        validate_strict(spec_data)
+
+    # REQ-M1-018: CLI has lint-spec-coverage and explain commands
+    parser = build_parser()
+    args_lint = parser.parse_args(["lint-spec-coverage", "/fake/path.yaml"])
+    assert args_lint.command == "lint-spec-coverage"
+    args_explain = parser.parse_args(["explain", "/fake/path.yaml"])
+    assert args_explain.command == "explain"

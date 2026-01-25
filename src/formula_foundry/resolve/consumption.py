@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from formula_foundry.spec.consumption import SpecConsumption
-from formula_foundry.spec.expectations import (
+from formula_foundry.resolve.types import SpecConsumption
+from formula_foundry.resolve.expectations import (
     expected_paths_for_family,
     is_optional_path,
 )

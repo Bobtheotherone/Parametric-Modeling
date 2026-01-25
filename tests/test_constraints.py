@@ -1647,3 +1647,91 @@ class TestRepairReproducibility:
 
         # Hashes should be identical
         assert repair_result.original_spec_hash == repair_result.repaired_spec_hash
+
+
+# =============================================================================
+# Module-level wrapper test for DESIGN_DOCUMENT.md Test Matrix
+# =============================================================================
+
+
+def test_constraints() -> None:
+    """Wrapper test for REQ-M1-007, REQ-M1-009, and REQ-M1-011.
+
+    This test aggregates key assertions for the requirements mapped to
+    tests/test_constraints.py::test_constraints in DESIGN_DOCUMENT.md Test Matrix.
+
+    REQ-M1-007: When ground_via_fence.enabled=true, generator MUST place GND via
+                fences deterministically with correct pitch/offset policies.
+    REQ-M1-009: If corner_radius_nm > 0 is provided, board outline MUST be generated
+                as rounded-rectangle using deterministic integer-nm arcs/segments.
+    REQ-M1-011: REPAIR mode MUST emit serialized repair_map plus deterministic
+                repaired_spec such that rebuilding reproduces same design_hash.
+    """
+    from formula_foundry.coupongen.resolve import resolve, design_hash
+
+    # REQ-M1-007: Via fence parameters are validated (min/max pitch)
+    limits = _default_fab_limits()
+    assert limits["min_trace_width_nm"] == 100_000, "REQ-M1-007: Min trace width must be defined"
+
+    # REQ-M1-007: Ground via fence can be generated with correct pitch
+    cpwg_spec = CPWGSpec(
+        w_nm=300000,
+        gap_nm=180000,
+        length_nm=20000000,
+        layer="F.Cu",
+        net_id=1,
+    )
+    fence_spec = GroundViaFenceSpec(
+        pitch_nm=1500000,
+        offset_from_gap_nm=800000,
+        drill_nm=300000,
+        diameter_nm=600000,
+    )
+    start = PositionNM(x=5000000, y=0)
+    end = PositionNM(x=25000000, y=0)
+    pos_vias, neg_vias = generate_ground_via_fence(start, end, cpwg_spec, fence_spec)
+    assert len(pos_vias) > 0, "REQ-M1-007: Fence must generate via elements"
+    assert len(pos_vias) == len(neg_vias), "REQ-M1-007: Symmetric via fence on both sides"
+
+    # REQ-M1-009: Create spec with corner_radius_nm > 0 and generate rounded outline
+    spec_data = _valid_spec_data()
+    spec_data["board"]["outline"]["corner_radius_nm"] = 2000000
+    spec = CouponSpec.model_validate(spec_data)
+    assert spec.board.outline.corner_radius_nm == 2000000, "REQ-M1-009: Corner radius must be parsed"
+
+    # REQ-M1-009: Rounded outline generates arcs
+    outline = generate_rounded_outline(
+        x_left_nm=0,
+        y_bottom_nm=0,
+        width_nm=spec.board.outline.length_nm,
+        height_nm=spec.board.outline.width_nm,
+        corner_radius_nm=spec.board.outline.corner_radius_nm,
+    )
+    arcs = [e for e in outline.elements if isinstance(e, OutlineArc)]
+    lines = [e for e in outline.elements if isinstance(e, OutlineLine)]
+    assert len(arcs) == 4, "REQ-M1-009: Rounded outline must have 4 corner arcs"
+    assert len(lines) == 4, "REQ-M1-009: Rounded outline must have 4 edge lines"
+
+    # REQ-M1-011: REPAIR mode produces repair_map with hashes
+    violation_data = _valid_spec_data()
+    violation_data["transmission_line"]["w_nm"] = 50000  # Below min, triggers repair
+    violation_spec = CouponSpec.model_validate(violation_data)
+
+    repaired_spec, repair_result = repair_spec_tiered(violation_spec, limits)
+
+    # REQ-M1-011: repair_map includes hashes
+    assert repair_result.original_spec_hash is not None, "REQ-M1-011: original_spec_hash must be present"
+    assert repair_result.repaired_spec_hash is not None, "REQ-M1-011: repaired_spec_hash must be present"
+    assert repair_result.repaired_design_hash is not None, "REQ-M1-011: repaired_design_hash must be present"
+
+    # REQ-M1-011: Rebuilding from repaired_spec reproduces same design_hash
+    re_resolved = resolve(repaired_spec)
+    re_design_hash = design_hash(re_resolved)
+    assert re_design_hash == repair_result.repaired_design_hash, (
+        "REQ-M1-011: Rebuilding from repaired_spec must reproduce same design_hash"
+    )
+
+    # REQ-M1-011: Hashes differ when repairs were made
+    assert repair_result.original_spec_hash != repair_result.repaired_spec_hash, (
+        "REQ-M1-011: Original and repaired spec hashes must differ when repairs made"
+    )

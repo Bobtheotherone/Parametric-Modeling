@@ -23,9 +23,11 @@ from formula_foundry.resolve.derived_groups import (
     compute_stackup_groups,
     compute_via_groups,
 )
+from formula_foundry.resolve.types import SpecConsumption
 
 __all__ = [
     # Spec consumption (REQ-M1-001)
+    "SpecConsumption",
     "SpecConsumptionError",
     "build_spec_consumption",
     "collect_provided_paths",
