@@ -3,14 +3,20 @@
 This module provides:
 - S-expression parsing and generation (sexpr)
 - Board file writing with deterministic UUIDs (board_writer, backend)
+- Silkscreen annotations for provenance (annotations)
 - Artifact canonicalization for hashing (canonicalize)
 - KiCad CLI runner (cli)
 
-Satisfies REQ-M1-012 and REQ-M1-013.
+Satisfies REQ-M1-010, REQ-M1-012 and REQ-M1-013.
 """
 
 from __future__ import annotations
 
+from .annotations import (
+    build_annotations_from_spec,
+    build_coupon_annotation,
+    build_silkscreen_text,
+)
 from .backend import (
     BackendA,
     BoardWriter,
@@ -78,6 +84,10 @@ from .sexpr import (
 )
 
 __all__ = [
+    # Annotations
+    "build_annotations_from_spec",
+    "build_coupon_annotation",
+    "build_silkscreen_text",
     # Backend and board writer
     "BackendA",
     "BoardWriter",

@@ -929,3 +929,136 @@ class TestReturnViasNetAssignment:
                 signal_via_found = True
 
         assert signal_via_found, "F1 board should have a signal via on net 1"
+
+
+class TestSilkscreenAnnotations:
+    """Tests for silkscreen annotations with coupon_id and hash (REQ-M1-010)."""
+
+    def test_board_includes_silkscreen_text(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Board should include gr_text elements on silkscreen layers."""
+        resolved = resolve(f0_spec)
+        board_path = write_board(f0_spec, resolved, tmp_path)
+
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have gr_text elements for silkscreen
+        assert "(gr_text" in content
+        # Should be on silkscreen layer
+        assert "F.SilkS" in content or "B.SilkS" in content
+
+    def test_silkscreen_text_deterministic(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Silkscreen text should be deterministic across runs."""
+        resolved = resolve(f0_spec)
+
+        board_path1 = write_board(f0_spec, resolved, tmp_path / "run1")
+        board_path2 = write_board(f0_spec, resolved, tmp_path / "run2")
+
+        content1 = board_path1.read_text(encoding="utf-8")
+        content2 = board_path2.read_text(encoding="utf-8")
+
+        # Files should be identical
+        assert content1 == content2
+
+    def test_silkscreen_with_design_hash(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
+        """Board with design_hash should include hash marker in silkscreen."""
+        resolved = resolve(f0_spec)
+        design_hash = "a1b2c3d4e5f6789012345678901234567890abcd1234567890abcdef12345678"
+
+        board_path = write_board(f0_spec, resolved, tmp_path, design_hash=design_hash)
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should include short hash (first 8 chars)
+        assert "a1b2c3d4" in content
+
+    def test_silkscreen_has_front_layer(self, f0_spec: CouponSpec) -> None:
+        """Silkscreen annotations should appear on F.SilkS layer."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
+
+        resolved = resolve(f0_spec)
+        design_hash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        coupon_id = coupon_id_from_design_hash(design_hash)
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template="${COUPON_ID}",
+            include_manifest_hash=True,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"test-uuid-{path}",
+        )
+
+        # Should have at least one annotation
+        assert len(annotations) >= 1
+
+        # Check for F.SilkS layer
+        layers = []
+        for ann in annotations:
+            for elem in ann:
+                if isinstance(elem, list) and elem[0] == "layer":
+                    layers.append(elem[1])
+
+        assert "F.SilkS" in layers, f"Expected F.SilkS layer, got {layers}"
+
+    def test_silkscreen_coupon_id_template_substitution(self, f0_spec: CouponSpec) -> None:
+        """${COUPON_ID} template should be substituted with actual coupon_id."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.kicad.sexpr import dump
+
+        resolved = resolve(f0_spec)
+        design_hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        coupon_id = "testcouponid"
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template="${COUPON_ID}",
+            include_manifest_hash=True,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"uuid-{path}",
+        )
+
+        # Dump to text and check for coupon_id
+        for ann in annotations:
+            text = dump(ann)
+            assert coupon_id in text, f"Expected coupon_id '{coupon_id}' in annotation"
+
+    def test_silkscreen_without_hash_when_disabled(self, f0_spec: CouponSpec) -> None:
+        """When include_manifest_hash is False, annotations should not include hash."""
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
+        from formula_foundry.coupongen.kicad.sexpr import dump
+
+        resolved = resolve(f0_spec)
+        design_hash = "1111111122222222333333334444444455555555666666667777777788888888"
+        short_hash = design_hash[:8]  # "11111111"
+        coupon_id = "nocoupon123"
+
+        annotations = build_annotations_from_spec(
+            coupon_id_template=coupon_id,
+            include_manifest_hash=False,
+            actual_coupon_id=coupon_id,
+            design_hash=design_hash,
+            layout_plan=resolved.layout_plan,
+            uuid_generator=lambda path: f"uuid-{path}",
+        )
+
+        # Should still have annotation
+        assert len(annotations) >= 1
+
+        # But should not have the full "coupon_id:hash" format
+        for ann in annotations:
+            text = dump(ann)
+            assert f":{short_hash}" not in text, "Hash should not appear when include_manifest_hash is False"
+
+    def test_f1_board_includes_silkscreen(self, f1_spec: CouponSpec, tmp_path: Path) -> None:
+        """F1 board should also include silkscreen annotations."""
+        resolved = resolve(f1_spec)
+        design_hash = "f1ae5bcd12345678901234567890123456789012345678901234567890abcdef"
+
+        board_path = write_board(f1_spec, resolved, tmp_path, design_hash=design_hash)
+        content = board_path.read_text(encoding="utf-8")
+
+        # Should have silkscreen text
+        assert "(gr_text" in content
+        # Should include short hash (first 8 hex chars)
+        assert "f1ae5bcd" in content
