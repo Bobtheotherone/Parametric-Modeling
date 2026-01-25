@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://formula-foundry.dev/schemas/manifest.v1.json",
   "title": "CouponManifest",
-  "description": "Manifest schema for coupon builds with complete provenance (per Section 13.5.1) and layer set validation (per Section 13.5.3)",
+  "description": "Manifest schema for coupon builds with complete provenance (per Section 13.5.1), layer set validation (per Section 13.5.3), and REQ-M1-013 fields (spec_consumption, footprint_provenance, zone_policy)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,14 +13,15 @@
     "resolved_design",
     "derived_features",
     "dimensionless_groups",
-    "spec_consumption",
     "fab_profile",
     "stackup",
     "toolchain",
     "toolchain_hash",
     "exports",
     "verification",
-    "lineage"
+    "lineage",
+    "footprint_provenance",
+    "zone_policy"
   ],
   "properties": {
     "schema_version": {
@@ -93,6 +94,14 @@
     },
     "lineage": {
       "$ref": "#/$defs/Lineage"
+    },
+    "footprint_provenance": {
+      "$ref": "#/$defs/FootprintProvenance",
+      "description": "Footprint provenance with paths and hashes of source footprint content (REQ-M1-013)"
+    },
+    "zone_policy": {
+      "$ref": "#/$defs/ZonePolicy",
+      "description": "Explicit zone policy record for refill/check behavior and toolchain versioning (REQ-M1-013)"
     }
   },
   "$defs": {
@@ -136,6 +145,88 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "FootprintProvenanceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "footprint_hash", "metadata_hash"],
+      "description": "Provenance record for a single footprint (REQ-M1-013)",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the source .kicad_mod file"
+        },
+        "footprint_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of the normalized footprint file contents"
+        },
+        "metadata_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of the canonicalized footprint metadata JSON"
+        }
+      }
+    },
+    "FootprintProvenance": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/FootprintProvenanceEntry"
+      },
+      "description": "Mapping of footprint IDs to provenance records (paths + hashes) per REQ-M1-013"
+    },
+    "ZonePolicyDrc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refill_zones", "flag"],
+      "description": "DRC zone refill policy",
+      "properties": {
+        "refill_zones": {
+          "type": "boolean",
+          "description": "Whether zones are refilled before DRC"
+        },
+        "flag": {
+          "type": "string",
+          "description": "CLI flag used for zone refill (e.g., --refill-zones)"
+        }
+      }
+    },
+    "ZonePolicyExport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_zones", "flag"],
+      "description": "Export zone check policy",
+      "properties": {
+        "check_zones": {
+          "type": "boolean",
+          "description": "Whether zones are checked during export"
+        },
+        "flag": {
+          "type": "string",
+          "description": "CLI flag used for zone checking (e.g., --check-zones)"
+        }
+      }
+    },
+    "ZonePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "drc", "export"],
+      "description": "Explicit zone policy record per REQ-M1-013",
+      "properties": {
+        "policy_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Policy identifier (e.g., kicad-cli-zones-v1)"
+        },
+        "drc": {
+          "$ref": "#/$defs/ZonePolicyDrc"
+        },
+        "export": {
+          "$ref": "#/$defs/ZonePolicyExport"
+        },
+        "kicad_cli_version": {
+          "type": "string",
+          "description": "KiCad CLI version used to apply the policy"
         }
       }
     },

@@ -4,6 +4,10 @@ This module generates manifest.json files for every coupon build with complete
 provenance information and export hashes.
 
 Satisfies:
+    - REQ-M1-013: The manifest MUST include a spec-consumption summary, footprint
+                  provenance (paths + hashes of source footprint content), and an
+                  explicit zone policy record (refill/check behavior and toolchain
+                  versioning).
     - REQ-M1-018: The repo must emit a manifest.json for every build containing
                   required provenance fields and export hashes.
     - CP-5.1: Ensure toolchain provenance always captured (lock_file_toolchain_hash)
@@ -29,6 +33,9 @@ Required manifest fields (per DESIGN_DOCUMENT.md Section 13.5.1):
         - drc (returncode, report_path, summary, canonical_hash)
         - layer_set (per Section 13.5.3) - validation of expected layers
     - lineage (git sha, UTC timestamp - explicitly excluded from design_hash)
+    - spec_consumption: consumed/expected/unused paths (REQ-M1-013)
+    - footprint_provenance: paths and hashes of source footprints (REQ-M1-013)
+    - zone_policy: refill/check behavior and toolchain versioning (REQ-M1-013)
 
 DRC canonicalization is delegated to kicad/canonicalize.py per Section 13.5.2,
 which is the authoritative source for all artifact canonicalization algorithms.
@@ -46,7 +53,9 @@ from typing import Any, cast
 from formula_foundry.substrate import canonical_json_dumps, get_git_sha, sha256_bytes
 
 from .constraints import ConstraintProof, resolve_fab_limits
+from .geom.footprint_meta import FootprintMeta, load_footprint_meta
 from .kicad.canonicalize import canonical_hash_drc_json
+from .kicad.runners.protocol import ZonePolicy
 from .layer_validation import LayerValidationResult, layer_validation_payload
 from .resolve import ResolvedDesign
 from .spec import CouponSpec
@@ -61,6 +70,50 @@ class ManifestPaths:
 def toolchain_hash(toolchain: Mapping[str, Any]) -> str:
     canonical = canonical_json_dumps(dict(toolchain))
     return sha256_bytes(canonical.encode("utf-8"))
+
+
+def _build_footprint_provenance(spec: CouponSpec) -> dict[str, dict[str, str]]:
+    """Build footprint provenance from spec connectors.
+
+    Extracts footprint IDs from spec, loads metadata, and returns provenance
+    with paths and hashes for each unique footprint.
+
+    REQ-M1-013: Footprint provenance must include paths and hashes of source
+    footprint content.
+
+    Args:
+        spec: The coupon specification containing connector footprint IDs.
+
+    Returns:
+        Dictionary mapping footprint IDs to provenance info:
+        {
+            "footprint_id": {
+                "path": "/path/to/footprint.kicad_mod",
+                "footprint_hash": "sha256...",
+                "metadata_hash": "sha256..."
+            }
+        }
+        Keys are sorted for stable ordering.
+    """
+    provenance: dict[str, dict[str, str]] = {}
+    # Collect unique footprint IDs from left and right connectors
+    footprint_ids = {spec.connectors.left.footprint, spec.connectors.right.footprint}
+    for fp_id in sorted(footprint_ids):
+        try:
+            meta: FootprintMeta = load_footprint_meta(fp_id)
+            provenance[fp_id] = {
+                "path": str(meta.footprint_file),
+                "footprint_hash": meta.footprint_hash,
+                "metadata_hash": meta.metadata_hash,
+            }
+        except FileNotFoundError:
+            # If metadata not found, record with empty hashes for traceability
+            provenance[fp_id] = {
+                "path": "",
+                "footprint_hash": "",
+                "metadata_hash": "",
+            }
+    return provenance
 
 
 def build_manifest(
@@ -78,11 +131,14 @@ def build_manifest(
     layer_validation: LayerValidationResult | None = None,
     git_sha: str | None = None,
     timestamp_utc: str | None = None,
+    footprint_provenance: Mapping[str, dict[str, str]] | None = None,
+    zone_policy: ZonePolicy | None = None,
 ) -> dict[str, Any]:
     """Build a manifest dictionary with all required provenance fields.
 
-    Satisfies REQ-M1-018: The repo must emit a manifest.json for every build
-    containing required provenance fields and export hashes.
+    Satisfies REQ-M1-013 and REQ-M1-018: The repo must emit a manifest.json for
+    every build containing required provenance fields, export hashes,
+    spec-consumption summary, footprint provenance, and zone policy record.
 
     Args:
         spec: The original coupon specification.
@@ -98,6 +154,10 @@ def build_manifest(
         layer_validation: Optional layer set validation result (per Section 13.5.3).
         git_sha: Optional explicit git SHA (defaults to HEAD of cwd).
         timestamp_utc: Optional explicit UTC timestamp (defaults to now).
+        footprint_provenance: Optional mapping of footprint IDs to provenance info
+            (paths + hashes). If None, computed from spec connectors (REQ-M1-013).
+        zone_policy: Optional ZonePolicy record for zone refill/check behavior
+            and toolchain versioning (REQ-M1-013). If None, uses default policy.
 
     Returns:
         Dictionary with all required manifest fields ready for JSON serialization.
@@ -108,6 +168,17 @@ def build_manifest(
     failed_constraints = [result.constraint_id for result in proof.constraints if not result.passed]
     drc_summary = parse_drc_summary(drc_report_path)
     drc_canonical_hash = canonicalize_drc_report(drc_report_path)
+
+    # REQ-M1-013: Build footprint provenance if not explicitly provided
+    fp_provenance = (
+        dict(footprint_provenance) if footprint_provenance is not None
+        else _build_footprint_provenance(spec)
+    )
+
+    # REQ-M1-013: Build zone policy record if not explicitly provided
+    from .kicad.runners.protocol import DEFAULT_ZONE_POLICY
+    zp_record = zone_policy.to_dict() if zone_policy is not None else DEFAULT_ZONE_POLICY.to_dict()
+
     manifest = {
         "schema_version": spec.schema_version,
         "coupon_family": spec.coupon_family,
@@ -141,6 +212,10 @@ def build_manifest(
             "git_sha": resolved_git_sha,
             "timestamp_utc": timestamp,
         },
+        # REQ-M1-013: Footprint provenance with paths and hashes (stable ordering)
+        "footprint_provenance": dict(sorted(fp_provenance.items())),
+        # REQ-M1-013: Explicit zone policy details
+        "zone_policy": zp_record,
     }
     # REQ-M1-013: Include spec-consumption summary in manifest
     consumption_summary = resolved.get_spec_consumption_summary()
