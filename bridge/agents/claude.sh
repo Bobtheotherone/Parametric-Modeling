@@ -109,26 +109,42 @@ import sys
 
 bin_path = sys.argv[1]
 timeout_s = int(sys.argv[2])
-out = ""
-try:
-    proc = subprocess.Popen(
-        [bin_path, "--help"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    stdout, stderr = proc.communicate(timeout=timeout_s)
-    out = stdout or stderr or ""
-except subprocess.TimeoutExpired:
+
+def run(cmd):
+    out = ""
+    proc = None
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        proc = subprocess.Popen(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        out = stdout or stderr or ""
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
+        out = ""
     except Exception:
-        pass
-    out = ""
-except Exception:
-    out = ""
-print(out)
+        out = ""
+    return out
+
+outputs = []
+for cmd in (
+    [bin_path, "--help"],
+    [bin_path, "-h"],
+    [bin_path, "--version"],
+):
+    out = run(cmd)
+    if out:
+        outputs.append(out)
+
+print("\n".join(outputs))
 PY
 )"
 
@@ -823,8 +839,8 @@ if best_turn is None:
     import pathlib
     out_path = pathlib.Path(sys.argv[1])  # wrap_schema path
     debug_path = out_path.parent / f"{out_path.stem}_claude_raw_stream.txt"
+    raw_content = ""
     try:
-        raw_content = ""
         for p in [wrap_schema, wrap_plain]:
             try:
                 raw_content += f"\\n=== {p} ===\\n"
@@ -835,15 +851,16 @@ if best_turn is None:
     except Exception:
         pass
 
-    # Write error to stderr
+    # Write error to stderr, but still emit a schema-valid error turn.
     reason = "Claude did not emit a parseable JSON turn."
     diag = f"Raw output saved to: {debug_path}\\n"
     diag += f"wrap_schema: {wrap_schema}\\n"
     diag += f"wrap_plain: {wrap_plain}\\n"
     sys.stderr.write(f"ERROR: {reason}\\n{diag}\\n")
 
-    # Exit with non-zero to signal failure to orchestrator
-    raise SystemExit(1)
+    error_turn = synthesize(f"{reason} Raw output saved to: {debug_path}", raw_content)
+    print(json.dumps(error_turn, ensure_ascii=False, separators=(",", ":")))
+    raise SystemExit(0)
 
 # Normalize parsed turn to strict schema
 t = best_turn
@@ -892,8 +909,8 @@ except jsonschema.ValidationError as e:
     import pathlib
     out_path = pathlib.Path(sys.argv[1])
     debug_path = out_path.parent / f"{out_path.stem}_claude_raw_stream.txt"
+    raw_content = ""
     try:
-        raw_content = ""
         for p in [wrap_schema, wrap_plain]:
             try:
                 raw_content += f"\\n=== {p} ===\\n"
@@ -906,7 +923,13 @@ except jsonschema.ValidationError as e:
 
     sys.stderr.write(f"ERROR: Normalized turn failed schema validation: {e.message}\\n")
     sys.stderr.write(f"Raw output saved to: {debug_path}\\n")
-    raise SystemExit(1)
+    fallback_text = best_model_text if best_model_text else raw_content
+    error_turn = synthesize(
+        f"Normalized turn failed schema validation: {e.message}",
+        fallback_text,
+    )
+    print(json.dumps(error_turn, ensure_ascii=False, separators=(",", ":")))
+    raise SystemExit(0)
 
 print(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 PY

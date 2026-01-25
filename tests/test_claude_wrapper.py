@@ -38,8 +38,12 @@ def test_claude_wrapper_emits_schema_valid_turn_on_success(tmp_path: Path) -> No
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -88,18 +92,18 @@ PY
     assert payload["agent"] == "claude"
 
 
-def test_claude_wrapper_exits_nonzero_on_parse_failure(tmp_path: Path) -> None:
-    """Test that wrapper exits non-zero when Claude outputs unparseable garbage.
-
-    Previously the wrapper would synthesize a fallback response; now it must
-    exit non-zero to signal failure to the orchestrator.
-    """
+def test_claude_wrapper_emits_schema_valid_turn_on_parse_failure(tmp_path: Path) -> None:
+    """Test that wrapper emits schema-valid error turn on unparseable output."""
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -121,9 +125,11 @@ exit 1
         capture_output=True,
     )
 
-    # Wrapper must exit non-zero when Claude output is unparseable
-    assert result.returncode != 0, "Wrapper should fail on unparseable output"
-    # Should emit ERROR to stderr
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "wrapper_status=error" in payload["summary"].lower()
     assert "ERROR" in result.stderr
 
 
@@ -132,8 +138,12 @@ def test_claude_wrapper_fallback_when_help_lacks_flags(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -188,8 +198,12 @@ def test_claude_wrapper_invokes_cli_without_api_key(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         f"""#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -245,8 +259,12 @@ def test_claude_help_timeout_fallback(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   sleep 2
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -301,8 +319,12 @@ def test_claude_wrapper_warns_when_api_key_set(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -370,8 +392,12 @@ def test_claude_wrapper_json_sequence_concatenated(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -439,8 +465,12 @@ def test_claude_wrapper_pretty_printed_multiline_json(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -506,8 +536,12 @@ def test_claude_wrapper_assistant_message_format(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -571,14 +605,18 @@ PY
     assert payload["agent"] == "claude"
 
 
-def test_claude_wrapper_nonzero_exit_on_invalid_json(tmp_path: Path) -> None:
-    """Test that wrapper exits non-zero when Claude outputs unparseable content."""
+def test_claude_wrapper_emits_error_turn_on_invalid_json(tmp_path: Path) -> None:
+    """Test that wrapper emits a schema-valid error turn on unparseable content."""
     claude_stub = tmp_path / "claude"
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
@@ -602,9 +640,12 @@ exit 0
         capture_output=True,
     )
 
-    # Wrapper should exit non-zero when it can't parse JSON
-    assert result.returncode != 0, "Wrapper should fail on unparseable output"
-    assert "ERROR" in result.stderr or not out_path.exists() or out_path.stat().st_size == 0
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "wrapper_status=error" in payload["summary"].lower()
+    assert "ERROR" in result.stderr
 
 
 def test_claude_wrapper_result_event_priority(tmp_path: Path) -> None:
@@ -613,8 +654,12 @@ def test_claude_wrapper_result_event_priority(tmp_path: Path) -> None:
     _write_executable(
         claude_stub,
         """#!/usr/bin/env bash
-if [[ "$1" == "--help" ]]; then
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
   echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
   exit 0
 fi
 
