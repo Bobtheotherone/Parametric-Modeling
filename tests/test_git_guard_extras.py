@@ -10,6 +10,7 @@ Supplements test_git_guard.py with coverage for:
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -270,3 +271,24 @@ class TestEggInfoRegex:
         # Actually looking at the regex: r"(^|/)[^/]+\.egg-info/"
         # It requires a trailing / after .egg-info
         assert not pattern.search("about-egg-info.txt")
+
+
+class TestGitGuardDirtyStatus:
+    """Tests for dirty working tree detection."""
+
+    def test_dirty_repo_returns_nonzero(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Untracked files cause git_guard.main() to return 1."""
+        subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+        (tmp_path / "dirty.txt").write_text("untracked\n", encoding="utf-8")
+
+        monkeypatch.chdir(tmp_path)
+        rc = git_guard.main()
+        assert rc == 1
+
+        captured = capsys.readouterr()
+        assert "working directory is dirty" in captured.out.lower()

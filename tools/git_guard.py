@@ -10,6 +10,7 @@ Checks:
 
 Exit code:
 - 0 if clean / no hits
+- 1 if working directory is dirty
 - 2 if potential secrets found
 - 3 if tool error
 """
@@ -114,15 +115,19 @@ def main() -> int:
         print(err, file=sys.stderr)
         return 3
 
-    if status.strip():
-        print("git status --porcelain reports uncommitted changes:")
-        print(status.strip())
+    dirty_status = status.strip()
+    if dirty_status:
+        print("Working directory is dirty:")
+        print(dirty_status)
 
     if findings:
         print("Potential secret/hygiene issues detected:")
         for issue in findings:
             print(f"- {issue}")
         return 2
+
+    if dirty_status:
+        return 1
 
     return 0
 
