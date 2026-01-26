@@ -111,7 +111,8 @@ class TestPassivityCheck:
     ) -> None:
         """Passivity threshold should be configurable."""
         # With a high threshold, even non-passive network passes
-        config = PassivityCheckConfig(threshold=2.0, warn_margin=1.0)
+        # Use small warn_margin so value well below threshold gets PASS
+        config = PassivityCheckConfig(threshold=2.0, warn_margin=0.01)
         result = check_passivity(non_passive_2port, frequencies_hz, config=config, strict=True)
         assert result.status == VerificationStatus.PASS
 
@@ -199,7 +200,8 @@ class TestReciprocityCheck:
     ) -> None:
         """Reciprocity threshold should be configurable."""
         # With a high threshold, even non-reciprocal network passes
-        config = ReciprocityCheckConfig(threshold=1.0, warn_margin=1.0)
+        # Use small warn_margin so value well below threshold gets PASS
+        config = ReciprocityCheckConfig(threshold=1.0, warn_margin=0.01)
         result = check_reciprocity(non_reciprocal_2port, frequencies_hz, config=config, strict=True)
         assert result.status == VerificationStatus.PASS
 
@@ -294,7 +296,8 @@ class TestCausalityCheck:
         s_params[:, 1, 0] = 0.9 * np.exp(1j * np.random.uniform(-np.pi, np.pi, n_freq))
 
         # With a very high threshold, even problematic data passes
-        config = CausalityCheckConfig(threshold=1.0, warn_margin=1.0)
+        # Use small warn_margin so value well below threshold gets PASS
+        config = CausalityCheckConfig(threshold=5.0, warn_margin=0.01)
         result = check_causality(s_params, frequencies_hz, config=config, strict=True)
         assert result.status == VerificationStatus.PASS
 
