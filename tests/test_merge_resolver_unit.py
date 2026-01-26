@@ -21,7 +21,6 @@ from typing import Any
 
 import pytest
 
-
 # -----------------------------------------------------------------------------
 # ConflictFile Tests
 # -----------------------------------------------------------------------------
@@ -95,14 +94,7 @@ class TestParseConflictFile:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / "test.py").write_text(
-                "def foo():\n"
-                "<<<<<<< HEAD\n"
-                "    return 1\n"
-                "=======\n"
-                "    return 2\n"
-                ">>>>>>> branch\n"
-            )
+            (repo / "test.py").write_text("def foo():\n<<<<<<< HEAD\n    return 1\n=======\n    return 2\n>>>>>>> branch\n")
 
             cf = parse_conflict_file(repo, "test.py")
 
@@ -165,13 +157,7 @@ class TestParseConflictFile:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
-            (repo / "test.py").write_text(
-                "<<<<<<< HEAD\n"
-                "ours_code\n"
-                "=======\n"
-                "theirs_code\n"
-                ">>>>>>> feature/new-feature\n"
-            )
+            (repo / "test.py").write_text("<<<<<<< HEAD\nours_code\n=======\ntheirs_code\n>>>>>>> feature/new-feature\n")
 
             cf = parse_conflict_file(repo, "test.py")
 
@@ -388,18 +374,17 @@ class TestMergeResolverWithInjection:
         callback_calls = []
 
         def tracking_callback(conflicts, task_context, milestone_id, attempt):
-            callback_calls.append({
-                "conflicts": conflicts,
-                "task_context": task_context,
-                "milestone_id": milestone_id,
-                "attempt": attempt,
-            })
+            callback_calls.append(
+                {
+                    "conflicts": conflicts,
+                    "task_context": task_context,
+                    "milestone_id": milestone_id,
+                    "attempt": attempt,
+                }
+            )
             # Return resolution for all conflicts
             return {
-                "resolutions": [
-                    {"path": cf.path, "resolved_content": "resolved"}
-                    for cf in conflicts
-                ],
+                "resolutions": [{"path": cf.path, "resolved_content": "resolved"} for cf in conflicts],
                 "unresolvable": [],
             }
 
@@ -412,9 +397,7 @@ class TestMergeResolverWithInjection:
             self._init_git_repo(repo)
 
             # Create file with conflict markers (simulated conflict)
-            (repo / "conflict.py").write_text(
-                "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n"
-            )
+            (repo / "conflict.py").write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n")
             subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
             subprocess.run(
                 ["git", "commit", "-m", "Initial"],
@@ -425,9 +408,7 @@ class TestMergeResolverWithInjection:
 
             # Simulate unmerged file status (UU) by writing conflict markers
             # and marking file as modified but not committed
-            (repo / "conflict.py").write_text(
-                "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n"
-            )
+            (repo / "conflict.py").write_text("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n")
 
             # Create resolver
             resolver = MergeResolver(
@@ -439,7 +420,7 @@ class TestMergeResolverWithInjection:
 
             # Note: Without actual UU status from git merge, this will succeed
             # immediately as there are no detected conflicts
-            result = resolver.resolve_conflicts(
+            resolver.resolve_conflicts(
                 task_id="TEST",
                 task_context="test context",
                 milestone_id="M1",

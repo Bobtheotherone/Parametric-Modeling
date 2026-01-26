@@ -268,20 +268,24 @@ def main(argv: list[str] | None = None) -> int:
                     out_dir=args.out,
                     mode=args.constraint_mode,  # type: ignore[arg-type]
                 )
-                payload = canonical_json_dumps({
-                    "status": "valid",
-                    "engine": True,
-                    "was_repaired": result.was_repaired,
-                    "constraints_passed": result.proof.passed,
-                    "total_constraints": len(result.proof.constraints),
-                })
+                payload = canonical_json_dumps(
+                    {
+                        "status": "valid",
+                        "engine": True,
+                        "was_repaired": result.was_repaired,
+                        "constraints_passed": result.proof.passed,
+                        "total_constraints": len(result.proof.constraints),
+                    }
+                )
             except ConstraintViolationError as e:
-                error_payload = canonical_json_dumps({
-                    "status": "invalid",
-                    "engine": True,
-                    "violation_tier": e.tier,
-                    "constraint_ids": e.constraint_ids,
-                })
+                error_payload = canonical_json_dumps(
+                    {
+                        "status": "invalid",
+                        "engine": True,
+                        "violation_tier": e.tier,
+                        "constraint_ids": e.constraint_ids,
+                    }
+                )
                 sys.stderr.write(error_payload + "\n")
                 return 1
         sys.stdout.write(payload + "\n")
@@ -337,12 +341,14 @@ def main(argv: list[str] | None = None) -> int:
                     constraint_mode=args.constraint_mode,  # type: ignore[arg-type]
                 )
             except ConstraintViolationError as e:
-                error_payload = canonical_json_dumps({
-                    "status": "constraint_violation",
-                    "engine": True,
-                    "violation_tier": e.tier,
-                    "constraint_ids": e.constraint_ids,
-                })
+                error_payload = canonical_json_dumps(
+                    {
+                        "status": "constraint_violation",
+                        "engine": True,
+                        "violation_tier": e.tier,
+                        "constraint_ids": e.constraint_ids,
+                    }
+                )
                 sys.stderr.write(error_payload + "\n")
                 return 1
 
@@ -393,6 +399,7 @@ def _load_u_vectors(input_path: Path) -> np.ndarray | None:
         return np.load(input_path)
     elif suffix == ".jsonl":
         import json
+
         vectors = []
         with open(input_path, encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
@@ -487,9 +494,7 @@ def _run_batch_filter(args: argparse.Namespace) -> int:
         "seed": args.seed,
         "profile": args.profile,
         "use_gpu": use_gpu,
-        "tier_violations_summary": {
-            tier: int(counts.sum()) for tier, counts in result.tier_violations.items()
-        },
+        "tier_violations_summary": {tier: int(counts.sum()) for tier, counts in result.tier_violations.items()},
     }
     metadata_path = out_dir / "metadata.json"
     metadata_path.write_text(canonical_json_dumps(metadata), encoding="utf-8")
@@ -565,6 +570,7 @@ def _run_build_batch(args: argparse.Namespace) -> int:
         gpu_used = True
         try:
             import cupy as cp
+
             cupy_version = cp.__version__
             cuda_version = str(cp.cuda.runtime.runtimeGetVersion())
         except Exception:
@@ -619,9 +625,7 @@ def _run_build_batch(args: argparse.Namespace) -> int:
             "profile": args.profile,
             "use_gpu": use_gpu,
             "gpu_used": gpu_used,
-            "tier_violations_summary": {
-                tier: int(counts.sum()) for tier, counts in filter_result.tier_violations.items()
-            },
+            "tier_violations_summary": {tier: int(counts.sum()) for tier, counts in filter_result.tier_violations.items()},
         }
         if gpu_used:
             filter_meta["cupy_version"] = cupy_version
@@ -667,14 +671,16 @@ def _run_build_batch(args: argparse.Namespace) -> int:
                     kicad_mode=args.mode,
                 )
 
-                build_results.append({
-                    "index": original_idx,
-                    "design_hash": result.design_hash,
-                    "coupon_id": result.coupon_id,
-                    "output_dir": str(result.output_dir),
-                    "cache_hit": result.cache_hit,
-                    "status": "success",
-                })
+                build_results.append(
+                    {
+                        "index": original_idx,
+                        "design_hash": result.design_hash,
+                        "coupon_id": result.coupon_id,
+                        "output_dir": str(result.output_dir),
+                        "cache_hit": result.cache_hit,
+                        "status": "success",
+                    }
+                )
                 builds_completed += 1
 
                 # Add GPU metadata to manifest if GPU was used
@@ -687,27 +693,33 @@ def _run_build_batch(args: argparse.Namespace) -> int:
 
             except ConstraintViolationError as e:
                 builds_failed += 1
-                errors.append({
-                    "index": original_idx,
-                    "error": "constraint_violation",
-                    "tier": e.tier,
-                    "constraint_ids": e.constraint_ids,
-                })
+                errors.append(
+                    {
+                        "index": original_idx,
+                        "error": "constraint_violation",
+                        "tier": e.tier,
+                        "constraint_ids": e.constraint_ids,
+                    }
+                )
             except RuntimeError as e:
                 builds_failed += 1
-                errors.append({
-                    "index": original_idx,
-                    "error": "build_error",
-                    "message": str(e),
-                })
+                errors.append(
+                    {
+                        "index": original_idx,
+                        "error": "build_error",
+                        "message": str(e),
+                    }
+                )
 
         except Exception as e:
             builds_failed += 1
-            errors.append({
-                "index": original_idx,
-                "error": "spec_mapping_error",
-                "message": str(e),
-            })
+            errors.append(
+                {
+                    "index": original_idx,
+                    "error": "spec_mapping_error",
+                    "message": str(e),
+                }
+            )
 
     # Write batch summary
     batch_summary = {

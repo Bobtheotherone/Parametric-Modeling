@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from formula_foundry.coupongen.kicad.cli import KicadCliMode
     from formula_foundry.coupongen.spec import KicadToolchain
 
+
 def __getattr__(name: str) -> Any:
     if name == "commands":
         return import_module("formula_foundry.commands")

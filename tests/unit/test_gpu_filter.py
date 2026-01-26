@@ -75,9 +75,7 @@ class TestCPUGPUComparison:
     """
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_mask_identical_reject_mode(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_mask_identical_reject_mode(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU should produce identical masks in REJECT mode."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -102,9 +100,7 @@ class TestCPUGPUComparison:
         )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_mask_identical_repair_mode(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_mask_identical_repair_mode(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU should produce identical masks in REPAIR mode."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -128,9 +124,7 @@ class TestCPUGPUComparison:
         )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_repair_counts_identical(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_repair_counts_identical(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU should produce identical repair counts."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -154,9 +148,7 @@ class TestCPUGPUComparison:
         )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_repaired_u_close(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_repaired_u_close(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU repaired vectors should be nearly identical.
 
         Note: Floating point operations may have minor differences due to
@@ -188,9 +180,7 @@ class TestCPUGPUComparison:
         )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_tier_violations_identical(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_tier_violations_identical(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU should produce identical tier violation counts."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -215,9 +205,7 @@ class TestCPUGPUComparison:
             )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_cpu_gpu_constraint_margins_close(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_cpu_gpu_constraint_margins_close(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """CPU and GPU constraint margins should be nearly identical."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -256,9 +244,7 @@ class TestMaskCorrectnessReference:
     masks by comparing against manually verified reference implementations.
     """
 
-    def test_mask_all_pass_valid_parameters(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_mask_all_pass_valid_parameters(self, default_fab_limits: dict[str, int]) -> None:
         """All candidates with known-valid parameters should pass."""
         space = FamilyF1ParameterSpace()
         n = 5
@@ -291,9 +277,7 @@ class TestMaskCorrectnessReference:
         u_batch[:, 17] = 0.9  # fence_pitch_nm: 500k + 0.9*2.5M = 2.75M
         u_batch[:, 18] = 0.9  # fence_offset_nm: 200k + 0.9*1.3M = 1.37M
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False)
 
         # All should pass
         assert result.mask.all(), (
@@ -303,9 +287,7 @@ class TestMaskCorrectnessReference:
             f"T2={result.tier_violations['T2'].sum()}"
         )
 
-    def test_mask_detects_trace_width_violation(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_mask_detects_trace_width_violation(self, default_fab_limits: dict[str, int]) -> None:
         """Mask should correctly detect trace width below minimum."""
         space = FamilyF1ParameterSpace()
         u_batch = np.ones((2, space.dimension)) * 0.5
@@ -322,18 +304,12 @@ class TestMaskCorrectnessReference:
         stricter_limits = default_fab_limits.copy()
         stricter_limits["min_trace_width_nm"] = 150_000  # Now u=0 => 100k < 150k
 
-        result = batch_filter(
-            u_batch, profiles=stricter_limits, mode="REJECT", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=stricter_limits, mode="REJECT", seed=0, use_gpu=False)
 
         # First should pass, second should fail
-        assert result.mask[0] or not result.mask[1], (
-            "Expected different outcomes for valid vs violating trace width"
-        )
+        assert result.mask[0] or not result.mask[1], "Expected different outcomes for valid vs violating trace width"
 
-    def test_mask_detects_annular_ring_violation(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_mask_detects_annular_ring_violation(self, default_fab_limits: dict[str, int]) -> None:
         """Mask should correctly detect insufficient annular ring."""
         space = FamilyF1ParameterSpace()
         u_batch = np.ones((2, space.dimension)) * 0.5
@@ -347,18 +323,14 @@ class TestMaskCorrectnessReference:
         u_batch[1, 7] = 0.1  # signal_pad_diameter_nm: ~480k
         # annular = (480k - 470k) / 2 = 5k < 100k min
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False)
 
         # Check T1 violations
         assert result.tier_violations["T1"][1] > result.tier_violations["T1"][0], (
             "Expected more T1 violations for poor annular ring candidate"
         )
 
-    def test_mask_reference_single_candidate(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_mask_reference_single_candidate(self, default_fab_limits: dict[str, int]) -> None:
         """Verify mask for a single candidate with known constraint status."""
         space = FamilyF1ParameterSpace()
 
@@ -390,9 +362,7 @@ class TestMaskCorrectnessReference:
         u[0, 17] = 0.9  # fence_pitch
         u[0, 18] = 0.9  # fence_offset
 
-        result = batch_filter(
-            u, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False
-        )
+        result = batch_filter(u, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False)
 
         # Should pass
         assert result.mask[0], (
@@ -416,9 +386,7 @@ class TestRepairDeterminism:
     - Multiple runs produce identical results
     """
 
-    def test_repair_determinism_same_seed(
-        self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_determinism_same_seed(self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """Repair with same seed should produce identical results."""
         result1 = batch_filter(
             fixed_seed_batch.copy(),
@@ -435,12 +403,8 @@ class TestRepairDeterminism:
             use_gpu=False,
         )
 
-        np.testing.assert_array_equal(
-            result1.mask, result2.mask, err_msg="Masks differ between runs"
-        )
-        np.testing.assert_array_equal(
-            result1.u_repaired, result2.u_repaired, err_msg="Repaired vectors differ"
-        )
+        np.testing.assert_array_equal(result1.mask, result2.mask, err_msg="Masks differ between runs")
+        np.testing.assert_array_equal(result1.u_repaired, result2.u_repaired, err_msg="Repaired vectors differ")
         np.testing.assert_array_equal(
             result1.repair_meta.repair_counts,
             result2.repair_meta.repair_counts,
@@ -452,9 +416,7 @@ class TestRepairDeterminism:
             err_msg="Repair distances differ",
         )
 
-    def test_repair_determinism_multiple_runs(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_determinism_multiple_runs(self, default_fab_limits: dict[str, int]) -> None:
         """Multiple runs with same inputs should be deterministic."""
         rng = np.random.default_rng(seed=999)
         u_batch = rng.random((30, 19))
@@ -483,9 +445,7 @@ class TestRepairDeterminism:
                 err_msg=f"Run {i} repaired vectors differ from run 0",
             )
 
-    def test_different_seeds_can_differ(
-        self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_different_seeds_can_differ(self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """Different seeds may produce different results.
 
         Note: Current repair is deterministic (clamping), so seeds may not
@@ -513,9 +473,7 @@ class TestRepairDeterminism:
         # The actual outputs may or may not differ depending on repair strategy
         # Current implementation uses deterministic clamping, so they'll be equal
 
-    def test_repair_preserves_feasible_candidates(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_preserves_feasible_candidates(self, default_fab_limits: dict[str, int]) -> None:
         """Repair should not modify already-feasible candidates."""
         space = FamilyF1ParameterSpace()
 
@@ -556,16 +514,12 @@ class TestRepairDeterminism:
             feasible_distances = result.repair_meta.repair_distances[feasible_mask]
             assert (feasible_distances == 0).all()
 
-    def test_repair_count_consistency(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_count_consistency(self, default_fab_limits: dict[str, int]) -> None:
         """Repair counts should be consistent with repair distances."""
         rng = np.random.default_rng(seed=7777)
         u_batch = rng.random((50, 19))
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=42, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=42, use_gpu=False)
 
         # Candidates with zero repair count should have zero distance
         zero_repair_mask = result.repair_meta.repair_counts == 0
@@ -577,9 +531,7 @@ class TestRepairDeterminism:
                 err_msg="Zero repair count but non-zero distance",
             )
 
-    def test_repair_meta_recorded_correctly(
-        self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_meta_recorded_correctly(self, fixed_seed_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """RepairMeta should correctly record mode and seed."""
         result_repair = batch_filter(
             fixed_seed_batch.copy(),
@@ -658,9 +610,7 @@ class TestIntegerOperationsBitwiseIdentity:
                 )
 
     @pytest.mark.skipif(not is_gpu_available(), reason="CuPy not available")
-    def test_violation_counts_bitwise_identical(
-        self, small_batch: np.ndarray, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_violation_counts_bitwise_identical(self, small_batch: np.ndarray, default_fab_limits: dict[str, int]) -> None:
         """Violation counts (integers) should be bitwise identical."""
         result_cpu = batch_filter(
             small_batch.copy(),
@@ -682,9 +632,7 @@ class TestIntegerOperationsBitwiseIdentity:
             cpu_counts = result_cpu.tier_violations[tier]
             gpu_counts = result_gpu.tier_violations[tier]
 
-            assert cpu_counts.dtype == gpu_counts.dtype, (
-                f"Tier {tier} dtypes differ: {cpu_counts.dtype} vs {gpu_counts.dtype}"
-            )
+            assert cpu_counts.dtype == gpu_counts.dtype, f"Tier {tier} dtypes differ: {cpu_counts.dtype} vs {gpu_counts.dtype}"
             np.testing.assert_array_equal(
                 cpu_counts,
                 gpu_counts,
@@ -704,9 +652,7 @@ class TestEdgeCases:
         """Empty batch should return empty results."""
         u_batch = np.zeros((0, 19))
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False)
 
         assert len(result.mask) == 0
         assert result.u_repaired.shape == (0, 19)
@@ -717,9 +663,7 @@ class TestEdgeCases:
         """Single candidate should work correctly."""
         u_batch = np.random.rand(1, 19)
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False)
 
         assert len(result.mask) == 1
         assert result.u_repaired.shape == (1, 19)
@@ -729,9 +673,7 @@ class TestEdgeCases:
         """All-zeros batch should be handled."""
         u_batch = np.zeros((10, 19))
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False)
 
         assert len(result.mask) == 10
         # Some constraints will fail at boundary values
@@ -740,9 +682,7 @@ class TestEdgeCases:
         """All-ones batch should be handled."""
         u_batch = np.ones((10, 19))
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False)
 
         assert len(result.mask) == 10
 
@@ -755,9 +695,7 @@ class TestEdgeCases:
         u_batch[0, :] = 0.0  # All at minimum
         u_batch[1, :] = 1.0  # All at maximum
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REJECT", seed=0, use_gpu=False)
 
         # Should have some passing and some failing
         assert 0 <= result.n_feasible <= 20
@@ -789,15 +727,11 @@ class TestAPIContract:
         )
         assert isinstance(result, BatchFilterResult)
 
-    def test_result_has_required_attributes(
-        self, default_fab_limits: dict[str, int]
-    ) -> None:
+    def test_result_has_required_attributes(self, default_fab_limits: dict[str, int]) -> None:
         """BatchFilterResult should have all required attributes."""
         u_batch = np.random.rand(10, 19)
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=42, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=42, use_gpu=False)
 
         # CP-4.1 required attributes
         assert hasattr(result, "mask")
@@ -818,9 +752,7 @@ class TestAPIContract:
         d = 19
         u_batch = np.random.rand(n, d)
 
-        result = batch_filter(
-            u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False
-        )
+        result = batch_filter(u_batch, profiles=default_fab_limits, mode="REPAIR", seed=0, use_gpu=False)
 
         assert result.mask.shape == (n,)
         assert result.u_repaired.shape == (n, d)

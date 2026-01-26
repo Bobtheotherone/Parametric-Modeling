@@ -33,6 +33,7 @@ ContractMode = Literal["strict", "loose", "off"]
 @dataclass
 class Requirement:
     """A parsed requirement from the design document."""
+
     id: str
     text: str
     line_no: int
@@ -48,6 +49,7 @@ class DesignDocSpec:
     This dataclass contains all extracted data from a design document,
     with warnings for anything that couldn't be extracted.
     """
+
     # Source information
     path: Path
     raw_text: str
@@ -90,7 +92,7 @@ class DesignDocSpec:
         """
         parts = []
 
-        parts.append(f"## Design Document Context")
+        parts.append("## Design Document Context")
         parts.append(f"**Document Hash:** {self.doc_hash[:16]}")
 
         if self.milestone_id:
@@ -105,12 +107,12 @@ class DesignDocSpec:
                 parts.append(f"- **{r.id}**: {r.text[:200]}{'...' if len(r.text) > 200 else ''}")
 
         if self.definition_of_done:
-            parts.append(f"\n### Definition of Done")
+            parts.append("\n### Definition of Done")
             for item in self.definition_of_done:
                 parts.append(f"- {item}")
 
         if self.test_matrix:
-            parts.append(f"\n### Test Matrix")
+            parts.append("\n### Test Matrix")
             for req_id, tests in self.test_matrix.items():
                 parts.append(f"- {req_id}: {', '.join(tests)}")
 
@@ -260,17 +262,19 @@ def _extract_requirements(text: str, lines: list[str]) -> tuple[list[Requirement
 
             # If no text on same line, try to get the next non-empty line
             if not req_text and line_no < len(lines):
-                for next_line in lines[line_no:line_no + 3]:
+                for next_line in lines[line_no : line_no + 3]:
                     next_line = next_line.strip()
                     if next_line and not next_line.startswith("#") and not next_line.startswith("-"):
                         req_text = next_line
                         break
 
-            requirements.append(Requirement(
-                id=req_id,
-                text=req_text or "(no description)",
-                line_no=line_no,
-            ))
+            requirements.append(
+                Requirement(
+                    id=req_id,
+                    text=req_text or "(no description)",
+                    line_no=line_no,
+                )
+            )
 
     # Strategy 2: If no REQ-* found, try alternative patterns
     if not requirements:
@@ -281,11 +285,13 @@ def _extract_requirements(text: str, lines: list[str]) -> tuple[list[Requirement
 
                 if req_id not in seen_ids:
                     seen_ids.add(req_id)
-                    requirements.append(Requirement(
-                        id=req_id,
-                        text=req_text or "(no description)",
-                        line_no=text[:match.start()].count("\n") + 1,
-                    ))
+                    requirements.append(
+                        Requirement(
+                            id=req_id,
+                            text=req_text or "(no description)",
+                            line_no=text[: match.start()].count("\n") + 1,
+                        )
+                    )
 
     return requirements, warnings
 
@@ -324,7 +330,7 @@ def _extract_definition_of_done(text: str, lines: list[str]) -> list[str]:
     section_text = text[dod_start:]
     next_header_match = re.search(r"^#+\s", section_text, re.MULTILINE)
     if next_header_match:
-        section_text = section_text[:next_header_match.start()]
+        section_text = section_text[: next_header_match.start()]
 
     # Extract bullet points
     bullet_pattern = re.compile(r"^\s*[-*]\s+(.+)", re.MULTILINE)
@@ -352,10 +358,7 @@ def _extract_test_matrix(text: str, lines: list[str]) -> tuple[dict[str, list[st
 
     # Look for markdown table with "Requirement" and "pytest" headers
     # Pattern: | Requirement | Pytest | or similar
-    table_header_pattern = re.compile(
-        r"^\s*\|\s*(?:Requirement|REQ).*\|.*(?:pytest|test|coverage)",
-        re.MULTILINE | re.IGNORECASE
-    )
+    table_header_pattern = re.compile(r"^\s*\|\s*(?:Requirement|REQ).*\|.*(?:pytest|test|coverage)", re.MULTILINE | re.IGNORECASE)
 
     table_start = None
     for i, line in enumerate(lines):

@@ -20,15 +20,16 @@ import re
 import subprocess
 import textwrap
 import threading
-import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass
 class ConflictFile:
     """Represents a file with merge conflicts."""
+
     path: str
     content: str
     conflict_count: int
@@ -39,6 +40,7 @@ class ConflictFile:
 @dataclass
 class MergeResolutionResult:
     """Result of a merge resolution attempt."""
+
     success: bool
     resolved_files: list[str] = field(default_factory=list)
     unresolved_files: list[str] = field(default_factory=list)
@@ -117,10 +119,7 @@ def parse_conflict_file(project_root: Path, file_path: str) -> ConflictFile | No
     ours_parts = []
     theirs_parts = []
 
-    conflict_pattern = re.compile(
-        r"<<<<<<< ([^\n]+)\n(.*?)=======\n(.*?)>>>>>>> ([^\n]+)",
-        re.DOTALL
-    )
+    conflict_pattern = re.compile(r"<<<<<<< ([^\n]+)\n(.*?)=======\n(.*?)>>>>>>> ([^\n]+)", re.DOTALL)
 
     for match in conflict_pattern.finditer(content):
         ours_parts.append(match.group(2))
@@ -396,7 +395,7 @@ class MergeResolver:
 
         if self.agent_runner is not None:
             # Use injected callback (for testing)
-            print(f"[merge_resolver] Using injected agent_runner callback...")
+            print("[merge_resolver] Using injected agent_runner callback...")
             try:
                 output = self.agent_runner(conflicts, task_context, milestone_id, attempt)
                 # Save output for debugging
@@ -426,7 +425,7 @@ class MergeResolver:
 
             cmd = [str(agent_script_path), str(prompt_path), str(schema_path), str(out_path)]
 
-            print(f"[merge_resolver] Running agent for conflict resolution...")
+            print("[merge_resolver] Running agent for conflict resolution...")
             rc, stdout, stderr = _run_cmd(cmd, cwd=self.project_root, env=env, timeout=300)
 
             if rc != 0:

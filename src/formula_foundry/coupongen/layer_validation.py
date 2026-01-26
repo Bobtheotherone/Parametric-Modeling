@@ -70,8 +70,7 @@ class LayerSetValidationError(Exception):
         self.result = result
         missing = ", ".join(result.missing_layers) if result.missing_layers else "none"
         super().__init__(
-            f"Layer set validation failed for {result.family} "
-            f"({result.copper_layer_count}-layer): missing layers: {missing}"
+            f"Layer set validation failed for {result.family} ({result.copper_layer_count}-layer): missing layers: {missing}"
         )
 
 
@@ -100,14 +99,8 @@ def get_layer_set_for_copper_count(copper_layers: int) -> LayerSetConfig:
     key = f"{copper_layers}_layer"
 
     if key not in config["layer_sets"]:
-        supported = sorted(
-            int(k.replace("_layer", ""))
-            for k in config["layer_sets"]
-        )
-        raise ValueError(
-            f"Unsupported copper layer count: {copper_layers}. "
-            f"Supported counts: {supported}"
-        )
+        supported = sorted(int(k.replace("_layer", "")) for k in config["layer_sets"])
+        raise ValueError(f"Unsupported copper layer count: {copper_layers}. Supported counts: {supported}")
 
     layer_set = config["layer_sets"][key]
     return LayerSetConfig(

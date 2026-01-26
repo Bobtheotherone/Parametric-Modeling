@@ -49,6 +49,19 @@ from .core import (
     resolve_fab_limits_from_profile,
 )
 
+# Export DRC runner and Tier 4 constraint (REQ-M1-016)
+from .drc import (
+    DRCError,
+    DRCExitCode,
+    DRCReport,
+    DRCResult,
+    DRCSeverity,
+    DRCViolation,
+    Tier4DrcChecker,
+    check_drc_gate,
+    run_drc,
+)
+
 # Export unified ConstraintEngine (CP-3.1, Section 13.3)
 from .engine import (
     ConstraintEngine,
@@ -116,19 +129,6 @@ from .tiers import (
     TieredConstraintProof,
     TieredConstraintSystem,
     evaluate_tiered_constraints,
-)
-
-# Export DRC runner and Tier 4 constraint (REQ-M1-016)
-from .drc import (
-    DRCError,
-    DRCExitCode,
-    DRCReport,
-    DRCResult,
-    DRCSeverity,
-    DRCViolation,
-    Tier4DrcChecker,
-    check_drc_gate,
-    run_drc,
 )
 
 __all__ = [

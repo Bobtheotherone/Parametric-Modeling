@@ -159,18 +159,14 @@ class TurnNormalizer:
 
         return None
 
-    def _build_normalized_turn(
-        self, payload: dict[str, Any], warnings: list[str]
-    ) -> dict[str, Any]:
+    def _build_normalized_turn(self, payload: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
         """Build normalized turn from payload, overriding invariants."""
         turn: dict[str, Any] = {}
 
         # INVARIANT: agent - always use expected, log if different
         payload_agent = payload.get("agent")
         if payload_agent and payload_agent != self.expected_agent:
-            warnings.append(
-                f"agent mismatch: payload={payload_agent}, expected={self.expected_agent} (auto-corrected)"
-            )
+            warnings.append(f"agent mismatch: payload={payload_agent}, expected={self.expected_agent} (auto-corrected)")
         turn["agent"] = self.expected_agent
 
         # INVARIANT: milestone_id - always use expected, log if different
@@ -184,9 +180,7 @@ class TurnNormalizer:
         # INVARIANT: stats_refs - derive from agent if missing/invalid
         payload_stats = payload.get("stats_refs", [])
         if isinstance(payload_stats, list):
-            valid_stats = [
-                s for s in payload_stats if isinstance(s, str) and s in self.stats_id_set
-            ]
+            valid_stats = [s for s in payload_stats if isinstance(s, str) and s in self.stats_id_set]
         else:
             valid_stats = []
         if not valid_stats:
@@ -207,9 +201,7 @@ class TurnNormalizer:
         else:
             turn["phase"] = self.default_phase
             if payload_phase:
-                warnings.append(
-                    f"invalid phase '{payload_phase}', using '{self.default_phase}'"
-                )
+                warnings.append(f"invalid phase '{payload_phase}', using '{self.default_phase}'")
 
         # Required payload fields (already validated)
         turn["summary"] = str(payload.get("summary", ""))
@@ -225,9 +217,7 @@ class TurnNormalizer:
             rp = {}
         turn["requirement_progress"] = {
             "covered_req_ids": self._to_str_list(rp.get("covered_req_ids", [])),
-            "tests_added_or_modified": self._to_str_list(
-                rp.get("tests_added_or_modified", [])
-            ),
+            "tests_added_or_modified": self._to_str_list(rp.get("tests_added_or_modified", [])),
             "commands_run": self._to_str_list(rp.get("commands_run", [])),
         }
 
@@ -336,16 +326,11 @@ def validate_turn_lenient(
 
     # Agent mismatch - WARN but don't fail, auto-correct
     if obj.get("agent") != expected_agent:
-        warnings.append(
-            f"agent mismatch: expected {expected_agent}, got {obj.get('agent')} (auto-corrected)"
-        )
+        warnings.append(f"agent mismatch: expected {expected_agent}, got {obj.get('agent')} (auto-corrected)")
         obj["agent"] = expected_agent
 
     # Milestone mismatch - WARN but don't fail, auto-correct
-    if (
-        expected_milestone_id is not None
-        and str(obj.get("milestone_id")) != expected_milestone_id
-    ):
+    if expected_milestone_id is not None and str(obj.get("milestone_id")) != expected_milestone_id:
         warnings.append(
             f"milestone_id mismatch: expected {expected_milestone_id}, got {obj.get('milestone_id')} (auto-corrected)"
         )
@@ -357,9 +342,7 @@ def validate_turn_lenient(
     if obj.get("phase") not in ("plan", "implement", "verify", "finalize"):
         return False, "invalid phase", warnings
 
-    if not isinstance(obj["work_completed"], bool) or not isinstance(
-        obj["project_complete"], bool
-    ):
+    if not isinstance(obj["work_completed"], bool) or not isinstance(obj["project_complete"], bool):
         return False, "work_completed/project_complete must be boolean", warnings
 
     for k in ("summary", "next_prompt", "delegate_rationale"):
@@ -369,14 +352,10 @@ def validate_turn_lenient(
     if not isinstance(obj["needs_write_access"], bool):
         return False, "needs_write_access must be boolean", warnings
 
-    if not isinstance(obj["gates_passed"], list) or not all(
-        isinstance(x, str) for x in obj["gates_passed"]
-    ):
+    if not isinstance(obj["gates_passed"], list) or not all(isinstance(x, str) for x in obj["gates_passed"]):
         return False, "gates_passed must be array of strings", warnings
 
-    if not isinstance(obj["stats_refs"], list) or not all(
-        isinstance(x, str) for x in obj["stats_refs"]
-    ):
+    if not isinstance(obj["stats_refs"], list) or not all(isinstance(x, str) for x in obj["stats_refs"]):
         return False, "stats_refs must be array of strings", warnings
     if not obj["stats_refs"]:
         return False, "stats_refs is empty", warnings
@@ -386,11 +365,7 @@ def validate_turn_lenient(
         valid_refs = [x for x in obj["stats_refs"] if x in stats_id_set]
         if not valid_refs:
             default_ref = "CL-1" if expected_agent == "claude" else "CX-1"
-            valid_refs = (
-                [default_ref]
-                if default_ref in stats_id_set
-                else list(stats_id_set)[:1] or ["CL-1"]
-            )
+            valid_refs = [default_ref] if default_ref in stats_id_set else list(stats_id_set)[:1] or ["CL-1"]
         warnings.append(f"unknown stats_refs {unknown} removed, using {valid_refs}")
         obj["stats_refs"] = valid_refs
 
@@ -414,9 +389,7 @@ def validate_turn_lenient(
                 f"artifact[{i}] must have exactly keys: path, description",
                 warnings,
             )
-        if not isinstance(a.get("path"), str) or not isinstance(
-            a.get("description"), str
-        ):
+        if not isinstance(a.get("path"), str) or not isinstance(a.get("description"), str):
             return False, f"artifact[{i}] path/description must be strings", warnings
 
     extra = set(obj.keys()) - set(required_keys)

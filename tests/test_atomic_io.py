@@ -37,7 +37,6 @@ from bridge.atomic_io import (
     validate_json_file,
 )
 
-
 # -----------------------------------------------------------------------------
 # atomic_write_text tests
 # -----------------------------------------------------------------------------
@@ -432,9 +431,7 @@ class TestRecoverOrCreateJson:
         def creator() -> dict:
             return {"version": 2}
 
-        success, data, error = recover_or_create_json(
-            target, creator, validator=validator
-        )
+        success, data, error = recover_or_create_json(target, creator, validator=validator)
         assert success
         assert data == {"version": 2}
 
@@ -445,9 +442,7 @@ class TestRecoverOrCreateJson:
         def creator() -> dict:
             raise RuntimeError("Creator failed")
 
-        success, data, error = recover_or_create_json(
-            target, creator, max_attempts=1
-        )
+        success, data, error = recover_or_create_json(target, creator, max_attempts=1)
         assert not success
         assert "Creator failed" in (error or "")
 

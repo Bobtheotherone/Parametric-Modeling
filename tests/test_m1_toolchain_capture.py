@@ -98,9 +98,7 @@ class TestCaptureToolchainProvenanceLocal:
 
     @patch("formula_foundry.coupongen.toolchain_capture.get_kicad_cli_version")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
-    def test_local_mode_success(
-        self, mock_git_sha: MagicMock, mock_cli_version: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_local_mode_success(self, mock_git_sha: MagicMock, mock_cli_version: MagicMock, tmp_path: Path) -> None:
         """Test successful local mode provenance capture."""
         mock_git_sha.return_value = "abc123" + "0" * 34
         mock_cli_version.return_value = "9.0.7"
@@ -119,9 +117,7 @@ class TestCaptureToolchainProvenanceLocal:
 
     @patch("formula_foundry.coupongen.toolchain_capture.get_kicad_cli_version")
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
-    def test_local_mode_allows_unknown(
-        self, mock_git_sha: MagicMock, mock_cli_version: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_local_mode_allows_unknown(self, mock_git_sha: MagicMock, mock_cli_version: MagicMock, tmp_path: Path) -> None:
         """Test that local mode allows 'unknown' kicad-cli version (fallback)."""
         mock_git_sha.return_value = "abc123" + "0" * 34
         mock_cli_version.side_effect = RuntimeError("kicad-cli not found")
@@ -275,9 +271,7 @@ class TestCaptureToolchainProvenanceDocker:
             )
 
     @patch("formula_foundry.coupongen.toolchain_capture.get_git_sha")
-    def test_docker_mode_without_lock_file_or_image(
-        self, mock_git_sha: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_docker_mode_without_lock_file_or_image(self, mock_git_sha: MagicMock, tmp_path: Path) -> None:
         """Test that docker mode requires either lock file or docker_image."""
         mock_git_sha.return_value = "abc123" + "0" * 34
 

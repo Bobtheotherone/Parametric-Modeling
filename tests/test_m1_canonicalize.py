@@ -787,12 +787,14 @@ class TestHashStabilityRegressions:
         # Run 3 times and compare
         results = []
         for _ in range(3):
-            results.append({
-                "gerber": canonicalize_gerber(gerber),
-                "drill": canonicalize_drill(drill),
-                "board": canonicalize_board(board),
-                "drc": canonicalize_drc_json(drc),
-            })
+            results.append(
+                {
+                    "gerber": canonicalize_gerber(gerber),
+                    "drill": canonicalize_drill(drill),
+                    "board": canonicalize_board(board),
+                    "drc": canonicalize_drc_json(drc),
+                }
+            )
 
         # All runs must produce identical results
         for key in ["gerber", "drill", "board", "drc"]:

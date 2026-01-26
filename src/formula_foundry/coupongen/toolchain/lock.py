@@ -274,9 +274,7 @@ def resolve_docker_image_ref(
     try:
         lock_config = load_toolchain_lock(lock_path=lock_path, repo_root=repo_root)
     except ToolchainLoadError as e:
-        raise ToolchainLoadError(
-            f"Cannot resolve docker image ref in docker mode: {e}"
-        ) from e
+        raise ToolchainLoadError(f"Cannot resolve docker image ref in docker mode: {e}") from e
 
     # Check if the spec's docker_image contains a digest
     spec_digest = None

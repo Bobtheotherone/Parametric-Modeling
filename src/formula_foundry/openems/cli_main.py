@@ -31,14 +31,6 @@ from .batch_runner import (
     load_batch_result_summary,
     write_batch_result,
 )
-from .gpu_batch_runner import (
-    GPUBatchConfig,
-    GPUBatchMode,
-    GPUBatchSimulationRunner,
-    check_cuda_available,
-    detect_nvidia_gpus,
-    write_gpu_batch_result,
-)
 from .convergence import validate_simulation_convergence
 from .geometry import (
     BoardOutlineSpec,
@@ -48,6 +40,13 @@ from .geometry import (
     StackupMaterialsSpec,
     StackupSpec,
     TransmissionLineSpec,
+)
+from .gpu_batch_runner import (
+    GPUBatchConfig,
+    GPUBatchMode,
+    GPUBatchSimulationRunner,
+    detect_nvidia_gpus,
+    write_gpu_batch_result,
 )
 from .manifest import load_m2_manifest, validate_m2_manifest
 from .runner import OpenEMSMode, OpenEMSRunner
@@ -238,8 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--gpu-mode",
         choices=("auto", "force_gpu", "force_cpu", "hybrid"),
         default="auto",
-        help="GPU batching mode: auto (use GPU if available), force_gpu (require GPU), "
-        "force_cpu (CPU only), hybrid (use both)",
+        help="GPU batching mode: auto (use GPU if available), force_gpu (require GPU), force_cpu (CPU only), hybrid (use both)",
     )
     sim_batch.add_argument(
         "--gpu-devices",
@@ -751,7 +749,7 @@ def _print_gpu_batch_result(result: Any) -> None:
     print(f"  Total time: {batch.total_time_sec:.2f}s")
 
     # GPU-specific stats
-    print(f"\nGPU Execution Stats:")
+    print("\nGPU Execution Stats:")
     print(f"  GPU jobs: {result.n_gpu_jobs}")
     print(f"  CPU fallback jobs: {result.n_cpu_fallback_jobs}")
     print(f"  OOM retries: {result.n_oom_retries}")
@@ -759,7 +757,7 @@ def _print_gpu_batch_result(result: Any) -> None:
 
     # GPU utilization metrics
     if result.gpu_metrics:
-        print(f"\nGPU Utilization:")
+        print("\nGPU Utilization:")
         for device_id, metrics in result.gpu_metrics.items():
             print(f"  GPU {device_id} ({metrics.device_name}):")
             print(f"    Jobs run: {metrics.total_jobs_run}")
@@ -769,7 +767,7 @@ def _print_gpu_batch_result(result: Any) -> None:
             print(f"    Peak memory used: {metrics.max_memory_used_mb} MB")
 
     if batch.config.validate_convergence:
-        print(f"\nConvergence:")
+        print("\nConvergence:")
         print(f"  Passed: {batch.n_convergence_passed}")
         print(f"  Failed: {batch.n_convergence_failed}")
 

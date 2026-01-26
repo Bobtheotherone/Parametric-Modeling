@@ -23,7 +23,6 @@ from formula_foundry.coupongen.cache import (
     StructuralCache,
 )
 
-
 # -----------------------------------------------------------------------------
 # CacheStats edge case tests
 # -----------------------------------------------------------------------------
@@ -297,9 +296,7 @@ class TestStructuralCacheStatsEdgeCases:
         cache.get_resolved_design(key)  # Hit
 
         try:
-            cache.get_resolved_design(
-                CacheKey(design_hash="c" * 64, toolchain_hash="d" * 64)
-            )
+            cache.get_resolved_design(CacheKey(design_hash="c" * 64, toolchain_hash="d" * 64))
         except CacheError:
             pass  # Miss
 

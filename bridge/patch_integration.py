@@ -53,18 +53,14 @@ DEFAULT_ALLOWLIST: tuple[str, ...] = (
 )
 
 # Files that are always allowed regardless of denylist
-ALWAYS_ALLOWED: tuple[str, ...] = (
-    "bridge/**",
-)
+ALWAYS_ALLOWED: tuple[str, ...] = ("bridge/**",)
 
 # =============================================================================
 # User-owned files - NEVER modify these
 # These files are manually controlled by humans and must not be touched by agents
 # =============================================================================
 
-USER_OWNED_FILES: tuple[str, ...] = (
-    "DESIGN_DOCUMENT.md",
-)
+USER_OWNED_FILES: tuple[str, ...] = ("DESIGN_DOCUMENT.md",)
 
 # =============================================================================
 # Backfill task scope configuration
@@ -171,15 +167,13 @@ def is_user_owned_file(path: str) -> bool:
         True if this is a user-owned file
     """
     normalized = normalize_diff_path(path)
-    return normalized in USER_OWNED_FILES or any(
-        fnmatch.fnmatch(normalized, pattern) for pattern in USER_OWNED_FILES
-    )
+    return normalized in USER_OWNED_FILES or any(fnmatch.fnmatch(normalized, pattern) for pattern in USER_OWNED_FILES)
 
 
 def create_backfill_scope_guard(
     runs_dir: Path | None = None,
     allow_bridge: bool = False,
-) -> "ScopeGuard":
+) -> ScopeGuard:
     """Create a scope guard for backfill tasks with restricted allowlist.
 
     Args:
@@ -323,22 +317,26 @@ class ScopeGuard:
             # CRITICAL: Check if this is a user-owned file FIRST
             # User-owned files (like DESIGN_DOCUMENT.md) must NEVER be modified
             if is_user_owned_file(path):
-                violations.append(ScopeViolation(
-                    path=path,
-                    reason="user_owned_file",
-                    matched_pattern="USER_OWNED_FILES",
-                ))
+                violations.append(
+                    ScopeViolation(
+                        path=path,
+                        reason="user_owned_file",
+                        matched_pattern="USER_OWNED_FILES",
+                    )
+                )
                 continue
 
             # Check denylist BEFORE ALWAYS_ALLOWED when ignore_always_allowed is set
             # This is used for backfill guards that need stricter constraints
             denied_pattern = self._matches_any(path, self.denylist)
             if denied_pattern:
-                violations.append(ScopeViolation(
-                    path=path,
-                    reason="denylist_match",
-                    matched_pattern=denied_pattern,
-                ))
+                violations.append(
+                    ScopeViolation(
+                        path=path,
+                        reason="denylist_match",
+                        matched_pattern=denied_pattern,
+                    )
+                )
                 continue
 
             # Check if in always-allowed list (unless ignore_always_allowed is set)
@@ -349,11 +347,13 @@ class ScopeGuard:
             if self.allowlist:
                 allowed_pattern = self._matches_any(path, self.allowlist)
                 if not allowed_pattern:
-                    violations.append(ScopeViolation(
-                        path=path,
-                        reason="not_in_allowlist",
-                        matched_pattern="",
-                    ))
+                    violations.append(
+                        ScopeViolation(
+                            path=path,
+                            reason="not_in_allowlist",
+                            matched_pattern="",
+                        )
+                    )
 
         return ScopeCheckResult(
             allowed=len(violations) == 0,
@@ -439,6 +439,7 @@ class ScopeGuard:
 @dataclass
 class FileChange:
     """Represents a single file change."""
+
     path: str
     operation: str  # "modify", "add", "delete", "binary"
     sha256: str | None = None
@@ -449,6 +450,7 @@ class FileChange:
 @dataclass
 class PatchArtifact:
     """Complete patch artifact from a worker."""
+
     task_id: str
     base_sha: str
     changes: list[FileChange] = field(default_factory=list)
@@ -590,11 +592,13 @@ def collect_patch_artifact(
             except Exception:
                 pass
 
-        artifact.changes.append(FileChange(
-            path=file_path,
-            operation=operation,
-            sha256=sha256,
-        ))
+        artifact.changes.append(
+            FileChange(
+                path=file_path,
+                operation=operation,
+                sha256=sha256,
+            )
+        )
 
     return artifact
 
@@ -1068,7 +1072,9 @@ class PatchIntegrator:
                 )
 
                 if merge_result.success:
-                    print(f"[patch_integration] {task_id}: Agent merge resolver succeeded after {merge_result.attempt} attempt(s)")
+                    print(
+                        f"[patch_integration] {task_id}: Agent merge resolver succeeded after {merge_result.attempt} attempt(s)"
+                    )
                     # Retry integration after agent resolution
                     return apply_patch_artifact(
                         self.project_root,

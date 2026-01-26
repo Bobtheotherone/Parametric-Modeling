@@ -380,9 +380,7 @@ class EngineSpec(_SpecBase):
     gpu_memory_fraction: float | None = Field(
         None, ge=0.1, le=1.0, description="Fraction of GPU memory to use (0.1-1.0, None = auto)"
     )
-    gpu_memory_limit_mb: int | None = Field(
-        None, ge=256, description="GPU memory limit in MB (minimum 256 MB, None = auto)"
-    )
+    gpu_memory_limit_mb: int | None = Field(None, ge=256, description="GPU memory limit in MB (minimum 256 MB, None = auto)")
 
 
 class SimulationControlSpec(_SpecBase):

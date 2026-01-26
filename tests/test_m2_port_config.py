@@ -13,10 +13,10 @@ These tests validate:
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 from pydantic import ValidationError
-
-import warnings
 
 from formula_foundry.openems import (
     BoardOutlineSpec,

@@ -7,6 +7,7 @@ by testing critical invariants and deterministic behaviors.
 These tests serve as regression guards to prevent reintroduction of issues
 that caused tools.verify to fail during M1 compliance work.
 """
+
 from __future__ import annotations
 
 import json
@@ -54,9 +55,7 @@ class TestGateMarkerConfiguration:
     def test_strict_markers_enabled(self) -> None:
         """--strict-markers must be enabled in addopts."""
         content = PYPROJECT_PATH.read_text(encoding="utf-8")
-        assert "--strict-markers" in content, (
-            "pytest addopts must include --strict-markers for consistent enforcement"
-        )
+        assert "--strict-markers" in content, "pytest addopts must include --strict-markers for consistent enforcement"
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +91,7 @@ class TestGoldenSpecCoverage:
         data = json.loads(GOLDEN_HASHES_PATH.read_text(encoding="utf-8"))
         spec_hashes = data.get("spec_hashes", {})
 
-        all_specs = list(GOLDEN_SPECS_DIR.glob("f0_*.yaml")) + list(
-            GOLDEN_SPECS_DIR.glob("f1_*.yaml")
-        )
+        all_specs = list(GOLDEN_SPECS_DIR.glob("f0_*.yaml")) + list(GOLDEN_SPECS_DIR.glob("f1_*.yaml"))
 
         missing = []
         for spec_path in all_specs:
@@ -113,9 +110,7 @@ class TestGoldenSpecCoverage:
 
         for spec_name, hash_value in spec_hashes.items():
             assert len(hash_value) == 64, f"Hash for {spec_name} is not 64 chars"
-            assert all(
-                c in "0123456789abcdef" for c in hash_value
-            ), f"Hash for {spec_name} is not valid hex"
+            assert all(c in "0123456789abcdef" for c in hash_value), f"Hash for {spec_name} is not valid hex"
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +141,7 @@ class TestGoldenSpecContent:
 
         for spec_path in self._collect_golden_specs():
             data = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-            assert (
-                data.get("schema_version") == 1
-            ), f"{spec_path.name} missing schema_version: 1"
+            assert data.get("schema_version") == 1, f"{spec_path.name} missing schema_version: 1"
 
     def test_all_specs_have_digest_pinned_docker(self) -> None:
         """All golden specs must use digest-pinned Docker images."""
@@ -163,10 +156,7 @@ class TestGoldenSpecContent:
             kicad = toolchain.get("kicad", {})
             docker_image = kicad.get("docker_image", "")
 
-            assert "@sha256:" in docker_image, (
-                f"{spec_path.name} must use digest-pinned Docker image, "
-                f"got: {docker_image}"
-            )
+            assert "@sha256:" in docker_image, f"{spec_path.name} must use digest-pinned Docker image, got: {docker_image}"
 
     def test_all_specs_have_drc_must_pass(self) -> None:
         """All golden specs must have constraints.drc.must_pass: true."""
@@ -180,9 +170,7 @@ class TestGoldenSpecContent:
             constraints = data.get("constraints", {})
             drc = constraints.get("drc", {})
 
-            assert drc.get("must_pass") is True, (
-                f"{spec_path.name} must have constraints.drc.must_pass: true"
-            )
+            assert drc.get("must_pass") is True, f"{spec_path.name} must have constraints.drc.must_pass: true"
 
     def test_all_specs_have_export_enabled(self) -> None:
         """All golden specs must have Gerber and drill export enabled."""
@@ -196,14 +184,10 @@ class TestGoldenSpecContent:
             export = data.get("export", {})
 
             gerbers = export.get("gerbers", {})
-            assert gerbers.get("enabled") is True, (
-                f"{spec_path.name} must have export.gerbers.enabled: true"
-            )
+            assert gerbers.get("enabled") is True, f"{spec_path.name} must have export.gerbers.enabled: true"
 
             drill = export.get("drill", {})
-            assert drill.get("enabled") is True, (
-                f"{spec_path.name} must have export.drill.enabled: true"
-            )
+            assert drill.get("enabled") is True, f"{spec_path.name} must have export.drill.enabled: true"
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +281,9 @@ class TestGateTestModuleStructure:
             path = self.GATES_DIR / filename
             if path.exists():
                 content = path.read_text(encoding="utf-8")
-                assert (
-                    f"@pytest.mark.{expected_marker}" in content
-                ), f"{filename} missing @pytest.mark.{expected_marker} decorator"
+                assert f"@pytest.mark.{expected_marker}" in content, (
+                    f"{filename} missing @pytest.mark.{expected_marker} decorator"
+                )
 
 
 # ---------------------------------------------------------------------------

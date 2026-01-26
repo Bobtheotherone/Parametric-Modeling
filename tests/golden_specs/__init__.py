@@ -42,13 +42,16 @@ from pathlib import Path
 
 GOLDEN_SPECS_DIR = Path(__file__).parent
 
+
 def get_f0_spec_paths() -> list[Path]:
     """Return paths to all F0 golden spec YAML files."""
     return sorted(GOLDEN_SPECS_DIR.glob("f0_cal_*.yaml"))
 
+
 def get_f1_spec_paths() -> list[Path]:
     """Return paths to all F1 golden spec YAML files."""
     return sorted(GOLDEN_SPECS_DIR.glob("f1_via_*.yaml"))
+
 
 def get_all_spec_paths() -> list[Path]:
     """Return paths to all golden spec YAML files."""

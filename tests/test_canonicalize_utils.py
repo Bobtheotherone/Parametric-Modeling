@@ -311,9 +311,7 @@ class TestCanonicalHashFile:
     def test_hash_kicad_pcb_file(self, tmp_path: Path) -> None:
         """Should use PCB canonicalization for .kicad_pcb files."""
         pcb_file = tmp_path / "test.kicad_pcb"
-        pcb_file.write_text(
-            "(kicad_pcb (tstamp 12345) (uuid abcde) (net 1))", encoding="utf-8"
-        )
+        pcb_file.write_text("(kicad_pcb (tstamp 12345) (uuid abcde) (net 1))", encoding="utf-8")
 
         hash_result = canonical_hash_file(pcb_file)
 
@@ -323,9 +321,7 @@ class TestCanonicalHashFile:
     def test_hash_drill_file(self, tmp_path: Path) -> None:
         """Should use drill canonicalization for .drl files."""
         drl_file = tmp_path / "test.drl"
-        drl_file.write_text(
-            "M48\n; Comment to be stripped\nT1C0.3\n%\nM30\n", encoding="utf-8"
-        )
+        drl_file.write_text("M48\n; Comment to be stripped\nT1C0.3\n%\nM30\n", encoding="utf-8")
 
         hash_result = canonical_hash_file(drl_file)
 
@@ -343,9 +339,7 @@ class TestCanonicalHashFile:
     def test_hash_gerber_file(self, tmp_path: Path) -> None:
         """Should use Gerber canonicalization for layer files."""
         gbr_file = tmp_path / "test-F_Cu.gbr"
-        gbr_file.write_text(
-            "G04 Comment*\n%FSLAX35Y35*%\nX0Y0D02*\nM02*\n", encoding="utf-8"
-        )
+        gbr_file.write_text("G04 Comment*\n%FSLAX35Y35*%\nX0Y0D02*\nM02*\n", encoding="utf-8")
 
         hash_result = canonical_hash_file(gbr_file)
 

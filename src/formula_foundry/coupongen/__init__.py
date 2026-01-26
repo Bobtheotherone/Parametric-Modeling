@@ -21,6 +21,7 @@ from .cache import (
     should_invalidate_cache,
     toolchain_hash_from_config,
 )
+
 # Note: CacheKey is imported from both cache.py and export.py
 # The export.py version is used for backward compatibility
 from .cache import CacheKey as StructuralCacheKey

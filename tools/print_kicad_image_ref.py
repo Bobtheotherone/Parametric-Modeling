@@ -51,26 +51,17 @@ def parse_docker_ref(docker_ref: str) -> tuple[str, str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Print the pinned KiCad Docker image reference"
-    )
+    parser = argparse.ArgumentParser(description="Print the pinned KiCad Docker image reference")
     parser.add_argument(
         "--lock-file",
         type=Path,
         default=Path(__file__).parent.parent / "toolchain" / "kicad.lock.json",
-        help="Path to the lock file (default: toolchain/kicad.lock.json)"
+        help="Path to the lock file (default: toolchain/kicad.lock.json)",
     )
     parser.add_argument(
-        "--format",
-        choices=["full", "ref", "image", "digest", "tag"],
-        default="full",
-        help="Output format (default: full)"
+        "--format", choices=["full", "ref", "image", "digest", "tag"], default="full", help="Output format (default: full)"
     )
-    parser.add_argument(
-        "--allow-placeholder",
-        action="store_true",
-        help="Allow placeholder digest (exit 0 even if not pinned)"
-    )
+    parser.add_argument("--allow-placeholder", action="store_true", help="Allow placeholder digest (exit 0 even if not pinned)")
     args = parser.parse_args()
 
     lock_path: Path = args.lock_file
@@ -102,8 +93,7 @@ def main():
 
     if not docker_digest:
         print(
-            "Error: Docker digest missing in lock file. "
-            "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
+            "Error: Docker digest missing in lock file. Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -128,8 +118,7 @@ def main():
     is_placeholder = is_placeholder_digest(docker_digest)
     if is_placeholder and not args.allow_placeholder:
         print(
-            "Error: Docker digest is a placeholder. "
-            "Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
+            "Error: Docker digest is a placeholder. Run 'python tools/pin_kicad_image.py' to resolve the actual digest.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -146,7 +135,7 @@ def main():
         # Strip tag from image_base: "kicad/kicad:9.0.7" -> "kicad/kicad"
         base_no_tag = image_base
         if ":" in image_base and image_base.rfind(":") > image_base.rfind("/"):
-            base_no_tag = image_base[:image_base.rfind(":")]
+            base_no_tag = image_base[: image_base.rfind(":")]
         print(f"{base_no_tag}@{docker_digest}")
     elif args.format == "image":
         print(image_base)

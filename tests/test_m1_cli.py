@@ -335,14 +335,20 @@ def test_cli_batch_filter_parser_args() -> None:
 def test_cli_batch_filter_parser_optional_args() -> None:
     """CP-4.2: batch-filter command accepts optional arguments."""
     parser = cli_main.build_parser()
-    args = parser.parse_args([
-        "batch-filter", "input.npy",
-        "--out", "/tmp/output",
-        "--repair",
-        "--profile", "jlcpcb",
-        "--seed", "42",
-        "--no-gpu",
-    ])
+    args = parser.parse_args(
+        [
+            "batch-filter",
+            "input.npy",
+            "--out",
+            "/tmp/output",
+            "--repair",
+            "--profile",
+            "jlcpcb",
+            "--seed",
+            "42",
+            "--no-gpu",
+        ]
+    )
     assert args.command == "batch-filter"
     assert args.repair is True
     assert args.profile == "jlcpcb"
@@ -353,11 +359,16 @@ def test_cli_batch_filter_parser_optional_args() -> None:
 def test_cli_build_batch_parser_args() -> None:
     """CP-4.2: build-batch command accepts required arguments."""
     parser = cli_main.build_parser()
-    args = parser.parse_args([
-        "build-batch", "spec_template.yaml",
-        "--u", "vectors.npy",
-        "--out", "/tmp/builds",
-    ])
+    args = parser.parse_args(
+        [
+            "build-batch",
+            "spec_template.yaml",
+            "--u",
+            "vectors.npy",
+            "--out",
+            "/tmp/builds",
+        ]
+    )
     assert args.command == "build-batch"
     assert args.spec_template == Path("spec_template.yaml")
     assert args.u == Path("vectors.npy")
@@ -370,14 +381,21 @@ def test_cli_build_batch_parser_args() -> None:
 def test_cli_build_batch_parser_optional_args() -> None:
     """CP-4.2: build-batch command accepts optional arguments."""
     parser = cli_main.build_parser()
-    args = parser.parse_args([
-        "build-batch", "spec_template.yaml",
-        "--u", "vectors.npy",
-        "--out", "/tmp/builds",
-        "--mode", "docker",
-        "--limit", "10",
-        "--skip-filter",
-    ])
+    args = parser.parse_args(
+        [
+            "build-batch",
+            "spec_template.yaml",
+            "--u",
+            "vectors.npy",
+            "--out",
+            "/tmp/builds",
+            "--mode",
+            "docker",
+            "--limit",
+            "10",
+            "--skip-filter",
+        ]
+    )
     assert args.command == "build-batch"
     assert args.mode == "docker"
     assert args.limit == 10
@@ -394,12 +412,15 @@ def test_cli_batch_filter_success(tmp_path: Path) -> None:
     out_dir = tmp_path / "output"
 
     with patch("sys.stdout.write") as mock_stdout:
-        exit_code = cli_main.main([
-            "batch-filter",
-            str(input_path),
-            "--out", str(out_dir),
-            "--no-gpu",
-        ])
+        exit_code = cli_main.main(
+            [
+                "batch-filter",
+                str(input_path),
+                "--out",
+                str(out_dir),
+                "--no-gpu",
+            ]
+        )
 
     assert exit_code == 0
 
@@ -435,13 +456,16 @@ def test_cli_batch_filter_repair_mode(tmp_path: Path) -> None:
     out_dir = tmp_path / "output"
 
     with patch("sys.stdout.write") as mock_stdout:
-        exit_code = cli_main.main([
-            "batch-filter",
-            str(input_path),
-            "--out", str(out_dir),
-            "--repair",
-            "--no-gpu",
-        ])
+        exit_code = cli_main.main(
+            [
+                "batch-filter",
+                str(input_path),
+                "--out",
+                str(out_dir),
+                "--repair",
+                "--no-gpu",
+            ]
+        )
 
     assert exit_code == 0
 
@@ -453,11 +477,14 @@ def test_cli_batch_filter_repair_mode(tmp_path: Path) -> None:
 def test_cli_batch_filter_missing_input() -> None:
     """CP-4.2: batch-filter command returns 1 when input file is missing."""
     with patch("sys.stderr.write"):
-        exit_code = cli_main.main([
-            "batch-filter",
-            "/nonexistent/input.npy",
-            "--out", "/tmp/output",
-        ])
+        exit_code = cli_main.main(
+            [
+                "batch-filter",
+                "/nonexistent/input.npy",
+                "--out",
+                "/tmp/output",
+            ]
+        )
 
     assert exit_code == 1
 
@@ -473,12 +500,16 @@ def test_cli_batch_filter_invalid_profile() -> None:
 
     try:
         with patch("sys.stderr.write"):
-            exit_code = cli_main.main([
-                "batch-filter",
-                input_path,
-                "--out", "/tmp/output",
-                "--profile", "nonexistent_profile",
-            ])
+            exit_code = cli_main.main(
+                [
+                    "batch-filter",
+                    input_path,
+                    "--out",
+                    "/tmp/output",
+                    "--profile",
+                    "nonexistent_profile",
+                ]
+            )
 
         assert exit_code == 1
     finally:
@@ -495,6 +526,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
     import yaml
 
     from formula_foundry.coupongen.cli_main import _run_build_batch
+
     spec_dict = _minimal_f1_spec_dict_for_cli()
     spec_path = tmp_path / "spec_template.yaml"
     spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
@@ -502,7 +534,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
     # Use valid u vectors with known-good parameters
     u_batch = np.ones((20, 19), dtype=np.float64) * 0.5
     # Fix spatial parameters to ensure feasibility
-    u_batch[:, 3] = 0.8   # board_length_nm: 126M nm (large enough)
+    u_batch[:, 3] = 0.8  # board_length_nm: 126M nm (large enough)
     u_batch[:, 13] = 0.2  # right_connector_x_nm: 85M nm (well within board)
     u_batch[:, 12] = 0.2  # left_connector_x_nm
     u_batch[:, 14] = 0.3  # trace_length_left_nm
@@ -514,9 +546,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
     out_dir = tmp_path / "builds"
 
     # Mock build_coupon_with_engine to avoid KiCad dependency
-    with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, \
-         patch("sys.stdout.write"):
-
+    with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, patch("sys.stdout.write"):
         mock_result = MagicMock()
         mock_result.design_hash = "test_hash"
         mock_result.coupon_id = "test_id"
@@ -525,14 +555,19 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
         mock_result.manifest_path = tmp_path / "manifest.json"
         mock_build.return_value = mock_result
 
-        cli_main.main([
-            "build-batch",
-            str(spec_path),
-            "--u", str(u_path),
-            "--out", str(out_dir),
-            "--skip-filter",  # Skip GPU filter for this basic test
-            "--limit", "1",   # Just process one candidate
-        ])
+        cli_main.main(
+            [
+                "build-batch",
+                str(spec_path),
+                "--u",
+                str(u_path),
+                "--out",
+                str(out_dir),
+                "--skip-filter",  # Skip GPU filter for this basic test
+                "--limit",
+                "1",  # Just process one candidate
+            ]
+        )
 
     # Should succeed with skip_filter (no inter-parameter constraint checking)
     # The exit code may be non-zero if there were build failures
@@ -542,6 +577,7 @@ def test_cli_build_batch_success(tmp_path: Path) -> None:
 def test_cli_build_batch_with_limit(tmp_path: Path) -> None:
     """CP-4.2/4.3: build-batch command respects --limit flag."""
     import yaml
+
     spec_dict = _minimal_f1_spec_dict_for_cli()
     spec_path = tmp_path / "spec_template.yaml"
     spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
@@ -560,9 +596,7 @@ def test_cli_build_batch_with_limit(tmp_path: Path) -> None:
 
     out_dir = tmp_path / "builds"
 
-    with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, \
-         patch("sys.stdout.write"):
-
+    with patch("formula_foundry.coupongen.cli_main.build_coupon_with_engine") as mock_build, patch("sys.stdout.write"):
         mock_result = MagicMock()
         mock_result.design_hash = "test_hash"
         mock_result.coupon_id = "test_id"
@@ -571,14 +605,19 @@ def test_cli_build_batch_with_limit(tmp_path: Path) -> None:
         mock_result.manifest_path = tmp_path / "manifest.json"
         mock_build.return_value = mock_result
 
-        cli_main.main([
-            "build-batch",
-            str(spec_path),
-            "--u", str(u_path),
-            "--out", str(out_dir),
-            "--limit", "10",
-            "--skip-filter",
-        ])
+        cli_main.main(
+            [
+                "build-batch",
+                str(spec_path),
+                "--u",
+                str(u_path),
+                "--out",
+                str(out_dir),
+                "--limit",
+                "10",
+                "--skip-filter",
+            ]
+        )
 
     # Verify batch_summary.json was written
     assert (out_dir / "batch_summary.json").exists()
@@ -598,12 +637,16 @@ def test_cli_build_batch_missing_spec() -> None:
 
     try:
         with patch("sys.stderr.write"):
-            exit_code = cli_main.main([
-                "build-batch",
-                "/nonexistent/spec.yaml",
-                "--u", u_path,
-                "--out", "/tmp/builds",
-            ])
+            exit_code = cli_main.main(
+                [
+                    "build-batch",
+                    "/nonexistent/spec.yaml",
+                    "--u",
+                    u_path,
+                    "--out",
+                    "/tmp/builds",
+                ]
+            )
 
         assert exit_code == 1
     finally:
@@ -620,12 +663,16 @@ def test_cli_build_batch_missing_u_vectors() -> None:
 
     try:
         with patch("sys.stderr.write"):
-            exit_code = cli_main.main([
-                "build-batch",
-                spec_path,
-                "--u", "/nonexistent/vectors.npy",
-                "--out", "/tmp/builds",
-            ])
+            exit_code = cli_main.main(
+                [
+                    "build-batch",
+                    spec_path,
+                    "--u",
+                    "/nonexistent/vectors.npy",
+                    "--out",
+                    "/tmp/builds",
+                ]
+            )
 
         assert exit_code == 1
     finally:
@@ -696,12 +743,17 @@ def test_cli_explain_parser_args() -> None:
 def test_cli_explain_parser_optional_args() -> None:
     """REQ-M1-018: explain command accepts optional arguments."""
     parser = cli_main.build_parser()
-    args = parser.parse_args([
-        "explain", "test.yaml",
-        "--out", "/tmp/report.txt",
-        "--json",
-        "--constraint-mode", "REPAIR",
-    ])
+    args = parser.parse_args(
+        [
+            "explain",
+            "test.yaml",
+            "--out",
+            "/tmp/report.txt",
+            "--json",
+            "--constraint-mode",
+            "REPAIR",
+        ]
+    )
     assert args.command == "explain"
     assert args.out == Path("/tmp/report.txt")
     assert args.json is True
@@ -767,10 +819,12 @@ def test_cli_lint_spec_coverage_exit_code_failure(tmp_path: Path) -> None:
 def test_cli_lint_spec_coverage_missing_spec() -> None:
     """REQ-M1-018: lint-spec-coverage returns 1 when spec file is missing."""
     with patch("sys.stderr.write"):
-        exit_code = cli_main.main([
-            "lint-spec-coverage",
-            "/nonexistent/spec.yaml",
-        ])
+        exit_code = cli_main.main(
+            [
+                "lint-spec-coverage",
+                "/nonexistent/spec.yaml",
+            ]
+        )
 
     assert exit_code == 1
 
@@ -860,10 +914,12 @@ def test_cli_explain_json_output(tmp_path: Path) -> None:
 def test_cli_explain_missing_spec() -> None:
     """REQ-M1-018: explain returns 1 when spec file is missing."""
     with patch("sys.stderr.write"):
-        exit_code = cli_main.main([
-            "explain",
-            "/nonexistent/spec.yaml",
-        ])
+        exit_code = cli_main.main(
+            [
+                "explain",
+                "/nonexistent/spec.yaml",
+            ]
+        )
 
     assert exit_code == 1
 
@@ -879,10 +935,14 @@ def test_cli_explain_output_file(tmp_path: Path) -> None:
     output_path = tmp_path / "report.txt"
 
     with patch("sys.stdout.write") as mock_stdout:
-        exit_code = cli_main.main([
-            "explain", str(spec_path),
-            "--out", str(output_path),
-        ])
+        exit_code = cli_main.main(
+            [
+                "explain",
+                str(spec_path),
+                "--out",
+                str(output_path),
+            ]
+        )
 
     assert exit_code == 0
     assert output_path.exists()
@@ -908,11 +968,15 @@ def test_cli_explain_constraint_mode_override(tmp_path: Path) -> None:
 
     with patch("sys.stdout.write") as mock_stdout:
         # Override to REPAIR
-        exit_code = cli_main.main([
-            "explain", str(spec_path),
-            "--json",
-            "--constraint-mode", "REPAIR",
-        ])
+        exit_code = cli_main.main(
+            [
+                "explain",
+                str(spec_path),
+                "--json",
+                "--constraint-mode",
+                "REPAIR",
+            ]
+        )
 
     assert exit_code == 0
 
@@ -930,10 +994,13 @@ def test_cli_explain_tightest_constraints_content(tmp_path: Path) -> None:
     spec_path.write_text(yaml.dump(spec_dict), encoding="utf-8")
 
     with patch("sys.stdout.write") as mock_stdout:
-        exit_code = cli_main.main([
-            "explain", str(spec_path),
-            "--json",
-        ])
+        exit_code = cli_main.main(
+            [
+                "explain",
+                str(spec_path),
+                "--json",
+            ]
+        )
 
     assert exit_code == 0
 
@@ -945,7 +1012,7 @@ def test_cli_explain_tightest_constraints_content(tmp_path: Path) -> None:
     assert isinstance(tightest, dict)
 
     # Each category should have the expected fields if present
-    for category, info in tightest.items():
+    for _category, info in tightest.items():
         assert "min_margin_nm" in info
         assert "constraint_id" in info
         assert "constraint_count" in info

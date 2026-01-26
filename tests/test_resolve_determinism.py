@@ -543,15 +543,19 @@ class TestMutationDetection:
 
         # Create spec with ground_via_fence enabled
         fence_spec_data = copy.deepcopy(baseline_data)
-        _deep_set(fence_spec_data, "transmission_line.ground_via_fence", {
-            "enabled": True,
-            "pitch_nm": 1000000,  # 1mm pitch
-            "offset_from_gap_nm": 200000,  # 0.2mm offset
-            "via": {
-                "drill_nm": 300000,
-                "diameter_nm": 600000,
-            }
-        })
+        _deep_set(
+            fence_spec_data,
+            "transmission_line.ground_via_fence",
+            {
+                "enabled": True,
+                "pitch_nm": 1000000,  # 1mm pitch
+                "offset_from_gap_nm": 200000,  # 0.2mm offset
+                "via": {
+                    "drill_nm": 300000,
+                    "diameter_nm": 600000,
+                },
+            },
+        )
 
         fence_spec = CouponSpec.model_validate(fence_spec_data)
         fence_resolved = resolve(fence_spec)
@@ -589,31 +593,37 @@ class TestMutationDetection:
 
         # Create spec with ground_via_fence enabled
         fence_spec_data = copy.deepcopy(baseline_data)
-        _deep_set(fence_spec_data, "transmission_line.ground_via_fence", {
-            "enabled": True,
-            "pitch_nm": 1000000,
-            "offset_from_gap_nm": 200000,
-            "via": {
-                "drill_nm": 300000,
-                "diameter_nm": 600000,
-            }
-        })
+        _deep_set(
+            fence_spec_data,
+            "transmission_line.ground_via_fence",
+            {
+                "enabled": True,
+                "pitch_nm": 1000000,
+                "offset_from_gap_nm": 200000,
+                "via": {
+                    "drill_nm": 300000,
+                    "diameter_nm": 600000,
+                },
+            },
+        )
 
         fence_spec = CouponSpec.model_validate(fence_spec_data)
         fence_resolved = resolve(fence_spec)
         fence_hash = design_hash(fence_resolved)
 
         assert baseline_hash != fence_hash, (
-            "Enabling ground_via_fence did not change design hash. "
-            "REQ-M1-015 requires distinct specs to produce distinct hashes."
+            "Enabling ground_via_fence did not change design hash. REQ-M1-015 requires distinct specs to produce distinct hashes."
         )
 
-    @pytest.mark.parametrize("field_path,delta", [
-        ("transmission_line.w_nm", 10000),  # trace width
-        ("transmission_line.length_left_nm", 1000000),  # trace length
-        ("board.outline.width_nm", 1000000),  # board width
-        ("board.outline.length_nm", 1000000),  # board length
-    ])
+    @pytest.mark.parametrize(
+        "field_path,delta",
+        [
+            ("transmission_line.w_nm", 10000),  # trace width
+            ("transmission_line.length_left_nm", 1000000),  # trace length
+            ("board.outline.width_nm", 1000000),  # board width
+            ("board.outline.length_nm", 1000000),  # board length
+        ],
+    )
     def test_additional_nm_mutations_change_hash(self, field_path: str, delta: int) -> None:
         """Verify other key _nm fields also produce distinct hashes when changed.
 
@@ -745,6 +755,5 @@ def test_resolve_determinism() -> None:
     mutated_hash = design_hash(resolve(mutated_spec))
 
     assert hash_a != mutated_hash, (
-        f"REQ-M1-015: gap_nm mutation ({original_gap} -> {original_gap + 10000}) "
-        "must change design hash"
+        f"REQ-M1-015: gap_nm mutation ({original_gap} -> {original_gap + 10000}) must change design hash"
     )

@@ -1,70 +1,209 @@
-# Milestone Design Document
 
-**Milestone:** M1 — M1.1 Geometry Realization + Spec Coverage Hardening
+### `oracle_case.json` (canonical)
 
-## Scope
-- Eliminate “silent stubs”: any accepted `CouponSpec` field must be consumed and must affect resolved design, geometry, constraints, or outputs (unless explicitly reserved and rejected).
-- Make generated coupons physically-real for equation discovery: real connector footprints, real launch region, real CPWG (signal + GND copper + enforced gap), real via fences, and real rounded outlines.
-- Preserve and strengthen determinism + provenance: stable hashes, stable manifests, stable exports across repeated runs (toolchain pinned).
-- Make REPAIR mode fully reproducible (audited, serialized, rebuildable).
-- Make spec coverage a CI gate so future schema drift cannot silently corrupt datasets.
+`oracle_case.json` is the authoritative interface. It compiles down into gerber2ems-compatible inputs while preserving stricter invariants (explicit defaults, strict schema, recorded provenance).
 
-## Normative Requirements (must)
+Key fields:
+- `format_version`, `case_id`
+- `frequency { start_hz, stop_hz, npoints, spacing }`
+- `solver_policy { boundary, pml_cells, end_criteria, max_steps, threads, time_step_factor }`
+- `grid_policy { lambda_divisor_max_cell, thirds_rule, max_ratio, roi_margins_um, pml_clearance_policy }`
+- `ports { port_definitions[], reference_impedance_ohm, backend }`
+- `structures { type, expected_behavior_profile, port_map }`
+- `postprocess { export_touchstone, ri_format, renormalize_to_ohms, mixed_mode }`
+- `verification { enabled_checks, thresholds, strict }`
+- `provenance { git_commit, toolchain_digest, openems_version, gerber2ems_version }`
 
-- [REQ-M1-001] The generator MUST track and emit spec consumption (consumed paths, expected paths, unused provided paths) and MUST fail in strict mode if any provided field is unused or any expected field is unconsumed.
-- [REQ-M1-002] The spec validator MUST enforce family-specific correctness (e.g., F0 cannot include F1-only blocks) and MUST reject unknown/extra fields (no silent accept) under strict mode.
-- [REQ-M1-003] Connector footprints MUST be sourced from vendored in-repo `.kicad_mod` files and embedded into the generated `.kicad_pcb`; placeholder “single pad connector” generation is disallowed for M1 compliance.
-- [REQ-M1-004] Footprint-to-net and anchor-pad mapping MUST be deterministic and explicit (via `pad_map` or documented conventions) so the launch connects to the true signal pad and GND pads/nets are correctly assigned.
-- [REQ-M1-005] CPWG generation MUST produce net-aware copper geometry: a signal conductor on the declared layer plus a GND reference conductor on that layer with an enforced `gap_nm` (no “CPWG in schema only”).
-- [REQ-M1-006] If CPWG uses zones, DRC MUST be run with zone refill enabled and exports MUST be run with zone checks enabled (KiCad CLI flags/policy pinned in code and recorded in manifest).
-- [REQ-M1-007] When `ground_via_fence.enabled=true`, the generator MUST place GND via fences deterministically with correct pitch/offset policies, symmetry, and collision/edge-clearance enforcement suggests by the spec and fab profile.
-- [REQ-M1-008] A launch feature MUST exist for F0/F1 that deterministically connects connector pads to CPWG (taper or stepped transition) with correct nets, optional stitching, and manufacturable DFM constraints.
-- [REQ-M1-009] If `corner_radius_nm > 0` is provided, the board outline MUST be generated as a rounded-rectangle on `Edge.Cuts` using deterministic integer-nm arcs/segments and validated for feasibility.
-- [REQ-M1-010] The generator MUST place deterministic board annotations on silkscreen, including `coupon_id` and a short hash marker (e.g., design/manifest hash prefix), and these annotations MUST appear in exported silkscreen Gerbers.
-- [REQ-M1-011] REPAIR mode MUST emit a serialized `repair_map` plus a deterministic `repaired_spec` (or deterministic patch set) such that rebuilding from the repaired spec reproduces the same `design_hash` and artifacts.
-- [REQ-M1-012] CLI and Python APIs MUST call a single canonical build pipeline (validate→resolve→generate→drc→export→manifest); divergent “parallel pipelines” are disallowed for production readiness.
-- [REQ-M1-013] The manifest MUST include a spec-consumption summary, footprint provenance (paths + hashes of source footprint content), and an explicit zone policy record (refill/check behavior and toolchain versioning).
-- [REQ-M1-014] Derived features and dimensionless groups MUST be expanded to include CPWG/via/fence/launch-relevant groups and MUST be emitted deterministically in `manifest.json`.
-- [REQ-M1-015] The test suite MUST include mutation/coverage tests proving that changing key fields (e.g., `gap_nm`, fence pitch, connector footprint id, corner radius) changes the appropriate geometry/artifact hashes and never results in an identical board for distinct specs.
-- [REQ-M1-016] For golden specs, KiCad DRC MUST pass in CI on the pinned toolchain with the zone policy applied, demonstrating that the realized copper/nets are manufacturable and DRC-clean.
-- [REQ-M1-017] For golden specs, gerber/drill export completeness and canonical hash stability MUST hold across repeated builds (including silkscreen content), subject only to documented canonicalization rules.
-- [REQ-M1-018] The CLI MUST provide `lint-spec-coverage` (non-zero on coverage failures) and `explain` (human-readable resolved + tightest-constraint summary) as additive commands.
+## Toolchain & Reproducibility
 
-## Notes
-- This document is intentionally a “quality hardening” change order: it does not weaken determinism guarantees; it eliminates schema/geometry drift and improves physical realism for equation discovery.
-- Preferred CPWG implementation for net-awareness is a GND zone on the CPWG layer plus deterministic keepout/rule areas that enforce `gap_nm` around the signal path; explicit rails are acceptable if net-aware and equally deterministic.
-- The zone policy must be explicit: refilling/checking zones in headless flows is mandatory for correctness of DRC and exports.
+### Digest-pinned toolchain
+
+M2.1 requires an OCI container image pinned by digest that contains openEMS + gerber2ems. Every artifact bundle records:
+- toolchain image + digest
+- openEMS version/commit
+- gerber2ems version/commit
+- any relevant build flags
+
+### Provenance in every run
+
+`meta.json` must include:
+- case hash
+- repo git commit
+- toolchain digest + versions
+- normalized case config (explicit defaults)
+- frequency grid used
+- mesh summary hash
+- per-port mapping and reference plane
+- runtime and termination statistics
+
+## Golden Path Pipeline
+
+### Stage 1 — Validation (fail fast)
+
+Validation covers:
+- required files + naming conventions
+- stackup/Gerber consistency
+- port marker parsing and cardinal rotations
+- port geometry overlap and anti-short checks
+- port length vs local mesh cell size
+- resource preflight (cells + memory budget)
+
+### Stage 2 — Geometry Builder (gerber2ems)
+
+Gerber2ems is the canonical geometry frontend. The geometry builder produces:
+- deterministic `geometry.xml`
+- recorded rasterization/contour extraction settings
+- intermediate logs for auditability
+
+### Stage 3 — Mesh Planner
+
+Mesh planning enforces:
+- wavelength-based Δmax
+- smooth grading via max ratio
+- thirds-rule refinement near metal edges (default on)
+- PML clearances and padding
+
+It writes `mesh_summary.json` with:
+- mesh lines per axis
+- min/max Δ
+- ratio statistics
+- total cell count
+- conservative memory estimate
+- mesh hash
+
+### Stage 4 — Solver Runner (openEMS)
+
+Solver execution rules:
+- one excitation per port for N-port assembly
+- store raw per-port waves/traces sufficient to recompute S offline
+- record termination cause (end criteria vs max steps)
+- enforce timestep sufficiency policy relative to excitation length
+
+Stub execution exists only behind an explicit flag and produces NON-GOLD output.
+
+### Stage 5 — Postprocessing
+
+Postprocessing produces:
+- Touchstone `.s2p`/`.s4p` in RI format with frequency in Hz
+- optional renormalized exports when configured
+- optional mixed-mode outputs for differential cases with strict port pairing
+
+GPU backend:
+- CuPy for FFT and batch transforms when available
+- explicit, recorded fallback to NumPy with reason (never silent)
+
+### Stage 6 — Verification & Calibration Gates
+
+Verification includes:
+- passivity checks (N-port)
+- reciprocity checks where expected
+- causality sanity checks (group delay)
+- dead port detection and sanity checks on time-domain behavior for calibration structures
+
+Calibration suite:
+- CAL-0…CAL-6 minimum
+- metric-based regression comparisons (not bitwise)
+- merge-blocking for oracle/mesh/port/postprocess changes
+
+Mesh invariance:
+- baseline mesh vs refined mesh
+- ΔS thresholds enforced across band
+
+### Stage 7 — Artifact Writer + Caching
+
+Artifact bundle completeness is enforced; missing required files is a hard failure.
+
+Caching:
+- keyed by input file hashes + normalized config + toolchain digest + mesh hash
+- verifies output hashes before reuse
+
+## Testing & CI
+
+### Test tiers
+
+Tier 1 (fast PR):
+- schema/validation, hashing, mesh determinism, touchstone I/O, postprocess unit tests, verification logic unit tests
+
+Tier 2 (PR required minimal real solver):
+- run a small CAL-2 Thru case in pinned container
+- validate artifacts complete + key verification metrics
+
+Tier 3 (nightly/scheduled):
+- `oracle cal run --all`
+- mesh invariance checks
+- performance trending
+
+## Performance & Storage Policies
+
+- ROI required by default (no full-board runs unless explicitly allowed)
+- conservative memory preflight hard cap
+- field dumps disabled by default and gated
+- openEMS threading controlled; postprocess batched on GPU where possible
+
+## Migration & Compatibility
+
+Existing internal geometry/mesh paths may remain for dev/test, but only the Gerber-driven pipeline is treated as “gold” unless a backend can prove identical artifact completeness, verification behavior, and calibration performance.
+
+## Risks & Mitigations
+
+- Port correctness: mitigate with geometry overlap/anti-short/orientation checks + calibration behavior tests + negative tests.
+- Toolchain drift: mitigate with digest pinning + enforcement tests + provenance.
+- Mesh sensitivity: mitigate with thirds rule + mesh invariance regression.
+- Boundary reflections: mitigate with PML clearances + recorded margins.
+- Performance regressions: mitigate with CI benchmark envelopes + preflight cell/memory budgeting.
+- Storage blow-ups: mitigate with default-off field exports + strict gating.
+
+## Implementation Plan (work packages)
+
+WP0 — Make gold path non-stub and explicit  
+WP1 — Toolchain digest pinning + enforcement  
+WP2 — Deterministic solver input generation (no manual sim.xml)  
+WP3 — Gerber2ems integration (canonical fab ingestion)  
+WP4 — Port verification hardening + debug overlays  
+WP5 — Calibration suite + regression runner + CI gates  
+WP6 — GPU postprocessing backend + recorded fallbacks  
+WP7 — Artifact completeness enforcement + caching upgrades
 
 ## Definition of Done
 
-- Spec consumption tracking exists, is emitted in artifacts, and strict mode fails on unused or unconsumed fields.
-- Connector footprints are embedded from vendored `.kicad_mod` sources; no placeholder connector geometry remains in the M1 build path.
-- CPWG is realized in copper with enforced gaps and correct nets; via fences and launch features exist and are deterministic.
-- Board outline rounding is implemented when requested; board annotations include `coupon_id` and hash marker and appear in silkscreen exports.
-- REPAIR mode emits `repair_map` + `repaired_spec` and rebuild-from-repaired-spec reproduces identical `design_hash` and artifacts.
-- A single canonical pipeline is used by both CLI and Python API.
-- Manifest includes spec coverage summary, footprint provenance hashes, and zone policy; derived features/groups are expanded and deterministic.
-- CI passes for golden specs: determinism gates, DRC clean, export completeness, and export hash stability across repeated runs.
+- The repository contains a root-level `DESIGN_DOCUMENT.md` matching this M2 spec and the workflow lints it successfully.
+- `oracle run <case_dir>` executes the real, end-to-end golden pipeline by default and produces a complete artifact bundle.
+- Stub execution is only possible via explicit opt-in and produces outputs that are clearly labeled NON-GOLD.
+- Toolchain is digest-pinned and recorded in every run’s metadata; strict mode fails if it is unpinned or missing.
+- Ports are validated at geometry level (overlap, anti-short, cardinal rotation, length vs mesh) and failures halt strict runs.
+- N-port simulations run N excitations and store raw per-port waves sufficient to recompute S deterministically.
+- Touchstone export is canonical (Hz, RI), and metadata contains per-port Zref and complete provenance.
+- Mixed-mode outputs are produced for 4-port differential cases with strict, recorded pairing conventions.
+- GPU-backed postprocessing is available; any CPU fallback is explicit, logged, and recorded with reason.
+- Calibration suite (CAL-0…CAL-6) exists, runs end-to-end, and regression thresholds are enforced for oracle changes.
+- Mesh invariance gate exists and is exercised in CI (nightly or required tier).
+- CI runs at least one real openEMS simulation in the pinned toolchain and validates artifact completeness + key verification metrics.
 
 ## Test Matrix
 
-| Requirement | Pytest(s) |
+| Requirement | Pytest(s) (pytest node ids) |
 |---|---|
-| REQ-M1-001 | tests/test_schema.py::test_schema |
-| REQ-M1-002 | tests/test_schema.py::test_schema |
-| REQ-M1-003 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-004 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-005 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-006 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-007 | tests/test_constraints.py::test_constraints |
-| REQ-M1-008 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-009 | tests/test_constraints.py::test_constraints |
-| REQ-M1-010 | tests/test_export_hashes.py::test_export_hashes |
-| REQ-M1-011 | tests/test_constraints.py::test_constraints |
-| REQ-M1-012 | tests/test_resolve_determinism.py::test_resolve_determinism |
-| REQ-M1-013 | tests/test_export_hashes.py::test_export_hashes |
-| REQ-M1-014 | tests/test_resolve_determinism.py::test_resolve_determinism |
-| REQ-M1-015 | tests/test_resolve_determinism.py::test_resolve_determinism |
-| REQ-M1-016 | tests/test_kicad_drc.py::test_kicad_drc |
-| REQ-M1-017 | tests/test_export_hashes.py::test_export_hashes |
-| REQ-M1-018 | tests/test_schema.py::test_schema |
+| REQ-M2-001 | tests/test_oracle_pipeline.py::test_oracle_run_executes_full_pipeline_real_default |
+| REQ-M2-002 | tests/test_oracle_pipeline.py::test_stub_mode_requires_explicit_allow_and_labels_non_gold |
+| REQ-M2-003 | tests/test_case_validation.py::test_validator_enforces_canonical_case_layout_and_required_fab_files |
+| REQ-M2-004 | tests/test_geometry_builder_gerber2ems.py::test_gerber2ems_geometry_is_deterministic_given_fixed_settings |
+| REQ-M2-005 | tests/test_toolchain_pinning.py::test_toolchain_is_digest_pinned_and_recorded_in_meta |
+| REQ-M2-006 | tests/test_artifact_bundle.py::test_artifact_bundle_contains_required_files |
+| REQ-M2-007 | tests/test_case_fingerprint.py::test_fingerprint_includes_all_input_bytes_normalized_config_and_toolchain_digest |
+| REQ-M2-008 | tests/test_mesh_policy.py::test_mesh_policy_enforces_lambda_rule_grading_thirds_rule_and_pml_clearance |
+| REQ-M2-009 | tests/test_resource_preflight.py::test_preflight_estimates_cells_and_memory_and_fails_over_budget |
+| REQ-M2-010 | tests/test_field_export_policy.py::test_field_exports_disabled_by_default_and_require_explicit_flag |
+| REQ-M2-011 | tests/test_port_verification.py::test_port_rotation_must_be_cardinal_by_default |
+| REQ-M2-012 | tests/test_port_verification.py::test_port_geometry_overlap_no_short_and_min_length_vs_mesh |
+| REQ-M2-013 | tests/test_port_map_metadata.py::test_port_map_records_mapping_orientation_reference_plane_and_backend |
+| REQ-M2-014 | tests/test_solver_runner.py::test_solver_runs_one_excitation_per_port_and_persists_raw_waves |
+| REQ-M2-015 | tests/test_termination_policy.py::test_requires_end_criteria_and_max_steps_and_records_termination_cause |
+| REQ-M2-016 | tests/test_touchstone_export.py::test_touchstone_exports_hz_ri_and_records_zref |
+| REQ-M2-017 | tests/test_renormalization.py::test_exports_native_and_renormalized_sparams_when_configured |
+| REQ-M2-018 | tests/test_mixed_mode.py::test_mixed_mode_enforces_strict_pairing_and_records_in_meta |
+| REQ-M2-019 | tests/test_gpu_backend.py::test_gpu_backend_defaults_to_cupy_and_records_fallback_reason |
+| REQ-M2-020 | tests/test_verification_suite.py::test_verification_enforces_passivity_reciprocity_and_causality_in_strict_mode |
+| REQ-M2-021 | tests/test_calibration_suite.py::test_calibration_library_contains_cal_0_through_cal_6_and_runs_end_to_end |
+| REQ-M2-022 | tests/test_calibration_regression.py::test_calibration_regression_is_metric_based_and_merge_blocking |
+| REQ-M2-023 | tests/test_mesh_invariance.py::test_mesh_invariance_gate_runs_baseline_vs_refined_and_enforces_thresholds |
+| REQ-M2-024 | tests/test_ci_real_openems.py::test_ci_runs_minimal_real_openems_case_in_pinned_toolchain |

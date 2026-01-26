@@ -160,32 +160,24 @@ def _capture_docker_provenance(
         if docker_image:
             docker_image_ref = docker_image
         else:
-            raise ToolchainProvenanceError(
-                "Docker mode requires toolchain lock file or docker_image parameter"
-            )
+            raise ToolchainProvenanceError("Docker mode requires toolchain lock file or docker_image parameter")
     except FileNotFoundError:
         # Fall back to provided image if lock file not found
         if docker_image:
             docker_image_ref = docker_image
         else:
-            raise ToolchainProvenanceError(
-                "Docker mode requires toolchain lock file or docker_image parameter"
-            )
+            raise ToolchainProvenanceError("Docker mode requires toolchain lock file or docker_image parameter")
 
     # Run kicad-cli --version inside the container
     try:
         runner = DockerKicadRunner(docker_image=docker_image_ref)
         kicad_cli_version = runner.kicad_cli_version(workdir)
     except RuntimeError as e:
-        raise ToolchainProvenanceError(
-            f"Failed to capture kicad-cli version in docker mode: {e}"
-        ) from e
+        raise ToolchainProvenanceError(f"Failed to capture kicad-cli version in docker mode: {e}") from e
 
     # Validate that we don't have 'unknown' values for docker builds
     if kicad_cli_version == "unknown" or not kicad_cli_version:
-        raise ToolchainProvenanceError(
-            "Docker builds must have valid kicad-cli version, got 'unknown'"
-        )
+        raise ToolchainProvenanceError("Docker builds must have valid kicad-cli version, got 'unknown'")
 
     return ToolchainProvenance(
         mode="docker",

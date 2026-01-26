@@ -18,14 +18,15 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
 
 from .policy import DEFAULT_ZONE_POLICY, ZonePolicy
+
 
 def _get_host_uid_gid() -> tuple[int, int]:
     """Get the current host user's UID and GID.
@@ -34,6 +35,7 @@ def _get_host_uid_gid() -> tuple[int, int]:
         Tuple of (uid, gid).
     """
     return os.getuid(), os.getgid()
+
 
 KicadCliMode = Literal["local", "docker"]
 
@@ -53,7 +55,7 @@ _ENV_DISABLE_WSL_COPY = "COUPONGEN_DISABLE_WSL_WORKDIR_COPY"
 def _is_wsl() -> bool:
     """Detect if running in WSL environment."""
     try:
-        with open("/proc/version", "r") as f:
+        with open("/proc/version") as f:
             return "microsoft" in f.read().lower()
     except (FileNotFoundError, PermissionError):
         return False
@@ -837,9 +839,7 @@ def get_kicad_cli_version(runner: KicadCliRunner, workdir: Path | None = None) -
     result = runner.run(["--version"], workdir=workdir)
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Failed to get kicad-cli version: {result.stderr or result.stdout}"
-        )
+        raise RuntimeError(f"Failed to get kicad-cli version: {result.stderr or result.stdout}")
 
     return _parse_version_output(result.stdout)
 

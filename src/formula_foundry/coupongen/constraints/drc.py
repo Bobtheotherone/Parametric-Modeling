@@ -159,9 +159,7 @@ class DRCReport:
             Parsed DRCReport instance.
         """
         violations_raw = data.get("violations", [])
-        violations = tuple(
-            DRCViolation.from_dict(v) for v in violations_raw
-        )
+        violations = tuple(DRCViolation.from_dict(v) for v in violations_raw)
 
         unconnected = tuple(data.get("unconnected_items", []))
         schematic = tuple(data.get("schematic_parity", []))
@@ -364,9 +362,7 @@ def check_drc_gate(
                 return True
 
             violations = result.report.violations
-            violation_summary = ", ".join(
-                f"{v.type}({v.severity})" for v in violations[:5]
-            )
+            violation_summary = ", ".join(f"{v.type}({v.severity})" for v in violations[:5])
             if len(violations) > 5:
                 violation_summary += f" ... and {len(violations) - 5} more"
 

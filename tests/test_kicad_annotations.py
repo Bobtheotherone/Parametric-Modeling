@@ -62,7 +62,7 @@ class TestBuildSilkscreenText:
         result = build_silkscreen_text(
             text="TEST",
             x_nm=10_000_000,  # 10mm
-            y_nm=5_000_000,   # 5mm
+            y_nm=5_000_000,  # 5mm
             layer="F.SilkS",
             uuid_value="test-uuid-001",
         )
@@ -76,7 +76,7 @@ class TestBuildSilkscreenText:
 
         assert at_element is not None
         assert at_element[1] == "10"  # 10mm (string from nm_to_mm)
-        assert at_element[2] == "5"   # 5mm (string from nm_to_mm)
+        assert at_element[2] == "5"  # 5mm (string from nm_to_mm)
 
     def test_layer_included(self) -> None:
         """Layer should be included in the S-expression."""
@@ -176,9 +176,7 @@ class TestBuildSilkscreenText:
 
         assert effects_element is not None
         # Check for justify in effects
-        has_justify = any(
-            isinstance(e, list) and e[0] == "justify" for e in effects_element
-        )
+        has_justify = any(isinstance(e, list) and e[0] == "justify" for e in effects_element)
         assert has_justify
 
     def test_justify_not_included_when_none(self) -> None:
@@ -203,9 +201,7 @@ class TestBuildSilkscreenText:
 
         assert effects_element is not None
         # Check that justify is NOT in effects
-        has_justify = any(
-            isinstance(e, list) and e[0] == "justify" for e in effects_element
-        )
+        has_justify = any(isinstance(e, list) and e[0] == "justify" for e in effects_element)
         assert not has_justify
 
 

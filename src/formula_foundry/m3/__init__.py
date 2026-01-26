@@ -17,14 +17,6 @@ from formula_foundry.m3.artifact_store import (
     Provenance,
     compute_spec_id,
 )
-from formula_foundry.m3.locking import (
-    FileLock,
-    LockAcquisitionError,
-    LockError,
-    LockInfo,
-    LockNotHeldError,
-    StoreLock,
-)
 from formula_foundry.m3.dataset_snapshot import (
     DatasetMember,
     DatasetNotFoundError,
@@ -47,6 +39,14 @@ from formula_foundry.m3.lineage_graph import (
     LineagePath,
     LineageSubgraph,
     NodeNotFoundError,
+)
+from formula_foundry.m3.locking import (
+    FileLock,
+    LockAcquisitionError,
+    LockError,
+    LockInfo,
+    LockNotHeldError,
+    StoreLock,
 )
 from formula_foundry.m3.mlflow_config import (
     M3RunContext,

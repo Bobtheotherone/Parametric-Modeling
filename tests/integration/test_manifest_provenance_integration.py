@@ -205,9 +205,7 @@ class TestToolchainLockPresent:
 
     def test_lock_file_exists(self) -> None:
         """REQ-CP1-1: Toolchain lock file must exist."""
-        assert TOOLCHAIN_LOCK_PATH.exists(), (
-            f"Toolchain lock file not found at {TOOLCHAIN_LOCK_PATH}"
-        )
+        assert TOOLCHAIN_LOCK_PATH.exists(), f"Toolchain lock file not found at {TOOLCHAIN_LOCK_PATH}"
 
     def test_lock_file_valid_json(self) -> None:
         """REQ-CP1-1: Toolchain lock file must be valid JSON."""
@@ -302,17 +300,11 @@ class TestManifestProvenanceIntegration:
         )
 
         # Check build succeeded
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstdout: {result.stdout}\nstderr: {result.stderr}"
 
         # Find and load manifest
         manifest_path = _find_manifest_json(output_dir)
-        assert manifest_path is not None, (
-            f"Manifest not found for {spec_name} in {output_dir}"
-        )
+        assert manifest_path is not None, f"Manifest not found for {spec_name} in {output_dir}"
 
         manifest = _load_manifest(manifest_path)
 
@@ -323,29 +315,19 @@ class TestManifestProvenanceIntegration:
         # Verify toolchain.kicad.version is present
         assert "kicad" in toolchain, "Manifest toolchain must contain 'kicad' field"
         kicad_info = toolchain["kicad"]
-        assert "version" in kicad_info, (
-            "Manifest toolchain.kicad must contain 'version' field"
-        )
+        assert "version" in kicad_info, "Manifest toolchain.kicad must contain 'version' field"
 
         # Verify toolchain.mode is docker
         assert "mode" in toolchain, "Manifest toolchain must contain 'mode' field"
-        assert toolchain["mode"] == "docker", (
-            f"Expected mode='docker', got mode='{toolchain['mode']}'"
-        )
+        assert toolchain["mode"] == "docker", f"Expected mode='docker', got mode='{toolchain['mode']}'"
 
         # Verify toolchain.docker.image_ref is present for docker mode
-        assert "docker" in toolchain, (
-            "Manifest toolchain must contain 'docker' field for docker builds"
-        )
+        assert "docker" in toolchain, "Manifest toolchain must contain 'docker' field for docker builds"
         docker_info = toolchain["docker"]
-        assert "image_ref" in docker_info, (
-            "Manifest toolchain.docker must contain 'image_ref' field"
-        )
+        assert "image_ref" in docker_info, "Manifest toolchain.docker must contain 'image_ref' field"
 
         # Verify toolchain.kicad.cli_version_output is present
-        assert "cli_version_output" in kicad_info, (
-            "Manifest toolchain.kicad must contain 'cli_version_output' field"
-        )
+        assert "cli_version_output" in kicad_info, "Manifest toolchain.kicad must contain 'cli_version_output' field"
 
     @pytest.mark.parametrize(
         "spec_name",
@@ -388,10 +370,7 @@ class TestManifestProvenanceIntegration:
             timeout=180,
         )
 
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstderr: {result.stderr}"
 
         # Find and load manifest
         manifest_path = _find_manifest_json(output_dir)
@@ -404,16 +383,14 @@ class TestManifestProvenanceIntegration:
         expected_version = toolchain_lock["kicad_version"]
         actual_version = toolchain["kicad"]["version"]
         assert actual_version == expected_version, (
-            f"Manifest kicad.version ({actual_version}) does not match "
-            f"lock file ({expected_version})"
+            f"Manifest kicad.version ({actual_version}) does not match lock file ({expected_version})"
         )
 
         # Verify docker image reference contains the expected image
         expected_image = toolchain_lock["docker_image"]
         actual_image_ref = toolchain["docker"]["image_ref"]
         assert expected_image in actual_image_ref, (
-            f"Manifest docker.image_ref ({actual_image_ref}) does not reference "
-            f"expected image ({expected_image})"
+            f"Manifest docker.image_ref ({actual_image_ref}) does not reference expected image ({expected_image})"
         )
 
     @pytest.mark.parametrize(
@@ -457,10 +434,7 @@ class TestManifestProvenanceIntegration:
             timeout=180,
         )
 
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstderr: {result.stderr}"
 
         # Find and load manifest
         manifest_path = _find_manifest_json(output_dir)
@@ -471,23 +445,17 @@ class TestManifestProvenanceIntegration:
 
         # Check kicad.version is not 'unknown'
         kicad_version = toolchain["kicad"]["version"]
-        assert kicad_version != "unknown", (
-            "Docker builds must not have 'unknown' kicad.version"
-        )
+        assert kicad_version != "unknown", "Docker builds must not have 'unknown' kicad.version"
         assert kicad_version, "kicad.version must not be empty"
 
         # Check kicad.cli_version_output is not 'unknown'
         cli_version = toolchain["kicad"]["cli_version_output"]
-        assert cli_version != "unknown", (
-            "Docker builds must not have 'unknown' kicad.cli_version_output"
-        )
+        assert cli_version != "unknown", "Docker builds must not have 'unknown' kicad.cli_version_output"
         assert cli_version, "kicad.cli_version_output must not be empty"
 
         # Check docker.image_ref is not 'unknown'
         image_ref = toolchain["docker"]["image_ref"]
-        assert image_ref != "unknown", (
-            "Docker builds must not have 'unknown' docker.image_ref"
-        )
+        assert image_ref != "unknown", "Docker builds must not have 'unknown' docker.image_ref"
         assert image_ref, "docker.image_ref must not be empty"
 
 
@@ -568,20 +536,14 @@ class TestF0ProvenanceComplete:
             assert field in manifest, f"Manifest missing required field: {field}"
 
         # Verify coupon_family is F0
-        assert manifest["coupon_family"].startswith("F0"), (
-            f"Expected F0 family, got {manifest['coupon_family']}"
-        )
+        assert manifest["coupon_family"].startswith("F0"), f"Expected F0 family, got {manifest['coupon_family']}"
 
         # Verify design_hash format (64-char hex)
         assert len(manifest["design_hash"]) == 64, "design_hash must be 64 hex chars"
-        assert all(c in "0123456789abcdef" for c in manifest["design_hash"]), (
-            "design_hash must be lowercase hex"
-        )
+        assert all(c in "0123456789abcdef" for c in manifest["design_hash"]), "design_hash must be lowercase hex"
 
         # Verify toolchain_hash format (64-char hex)
-        assert len(manifest["toolchain_hash"]) == 64, (
-            "toolchain_hash must be 64 hex chars"
-        )
+        assert len(manifest["toolchain_hash"]) == 64, "toolchain_hash must be 64 hex chars"
 
         # Verify exports is a list with entries
         assert isinstance(manifest["exports"], list), "exports must be a list"
@@ -597,9 +559,7 @@ class TestF0ProvenanceComplete:
         verification = manifest["verification"]
         assert "constraints" in verification, "verification must have 'constraints'"
         assert "drc" in verification, "verification must have 'drc'"
-        assert verification["constraints"]["passed"] is True, (
-            "Golden spec constraints must pass"
-        )
+        assert verification["constraints"]["passed"] is True, "Golden spec constraints must pass"
         assert verification["drc"]["returncode"] == 0, "Golden spec DRC must pass"
 
         # Verify lineage structure
@@ -686,20 +646,14 @@ class TestF1ProvenanceComplete:
             assert field in manifest, f"Manifest missing required field: {field}"
 
         # Verify coupon_family is F1
-        assert manifest["coupon_family"].startswith("F1"), (
-            f"Expected F1 family, got {manifest['coupon_family']}"
-        )
+        assert manifest["coupon_family"].startswith("F1"), f"Expected F1 family, got {manifest['coupon_family']}"
 
         # Verify design_hash format (64-char hex)
         assert len(manifest["design_hash"]) == 64, "design_hash must be 64 hex chars"
-        assert all(c in "0123456789abcdef" for c in manifest["design_hash"]), (
-            "design_hash must be lowercase hex"
-        )
+        assert all(c in "0123456789abcdef" for c in manifest["design_hash"]), "design_hash must be lowercase hex"
 
         # Verify toolchain_hash format (64-char hex)
-        assert len(manifest["toolchain_hash"]) == 64, (
-            "toolchain_hash must be 64 hex chars"
-        )
+        assert len(manifest["toolchain_hash"]) == 64, "toolchain_hash must be 64 hex chars"
 
         # Verify exports is a list with entries
         assert isinstance(manifest["exports"], list), "exports must be a list"
@@ -715,9 +669,7 @@ class TestF1ProvenanceComplete:
         verification = manifest["verification"]
         assert "constraints" in verification, "verification must have 'constraints'"
         assert "drc" in verification, "verification must have 'drc'"
-        assert verification["constraints"]["passed"] is True, (
-            "Golden spec constraints must pass"
-        )
+        assert verification["constraints"]["passed"] is True, "Golden spec constraints must pass"
         assert verification["drc"]["returncode"] == 0, "Golden spec DRC must pass"
 
         # Verify lineage structure
@@ -769,9 +721,7 @@ class TestToolchainHashConsistency:
                 timeout=180,
             )
 
-            assert result.returncode == 0, (
-                f"Build failed for {spec_path.name}: {result.stderr}"
-            )
+            assert result.returncode == 0, f"Build failed for {spec_path.name}: {result.stderr}"
 
             manifest_path = _find_manifest_json(output_dir)
             assert manifest_path is not None, f"Manifest not found for {spec_path.name}"
@@ -780,6 +730,4 @@ class TestToolchainHashConsistency:
             toolchain_hashes.append(manifest["toolchain_hash"])
 
         # All toolchain hashes should be the same for same toolchain config
-        assert len(set(toolchain_hashes)) == 1, (
-            f"Toolchain hash inconsistent across builds: {toolchain_hashes}"
-        )
+        assert len(set(toolchain_hashes)) == 1, f"Toolchain hash inconsistent across builds: {toolchain_hashes}"

@@ -87,6 +87,7 @@ class TestDockerKicadRunner:
         Without --user, the container cannot write to bind-mounted directories.
         """
         import os
+
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
         cmd = runner._build_docker_command(["--version"], tmp_path)
 
@@ -124,9 +125,7 @@ class TestDockerKicadRunner:
 
     def test_build_docker_command_with_env(self, tmp_path: Path) -> None:
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
-        cmd = runner._build_docker_command(
-            ["--version"], tmp_path, env={"HOME": "/tmp", "DISPLAY": ":0"}
-        )
+        cmd = runner._build_docker_command(["--version"], tmp_path, env={"HOME": "/tmp", "DISPLAY": ":0"})
 
         # Check environment variables are passed
         assert "-e" in cmd
@@ -145,9 +144,7 @@ class TestDockerKicadRunner:
 
     @patch("subprocess.run")
     def test_run_method(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="output", stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="output", stderr="")
 
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
         result = runner.run(["--version"], tmp_path)
@@ -165,9 +162,7 @@ class TestDockerKicadRunner:
 
     @patch("subprocess.run")
     def test_kicad_cli_version(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="kicad-cli 9.0.7\n", stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="kicad-cli 9.0.7\n", stderr="")
 
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
         version = runner.kicad_cli_version(tmp_path)
@@ -176,9 +171,7 @@ class TestDockerKicadRunner:
 
     @patch("subprocess.run")
     def test_kicad_cli_version_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        mock_run.return_value = MagicMock(
-            returncode=1, stdout="", stderr="Docker not found"
-        )
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Docker not found")
 
         runner = DockerKicadRunner(docker_image="kicad/kicad:9.0.7")
         with pytest.raises(RuntimeError, match="Failed to get kicad-cli version"):
@@ -466,9 +459,7 @@ class TestMountVerification:
     """
 
     @patch("subprocess.run")
-    def test_verify_mount_detects_empty_workspace(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_verify_mount_detects_empty_workspace(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Mount verification should raise DockerMountError for empty workspace.
 
         Regression test: empty /workspace (only . and ..) should raise a clear
@@ -490,10 +481,9 @@ class TestMountVerification:
         assert str(tmp_path) in str(exc_info.value) or "Docker" in str(exc_info.value)
 
     @patch("subprocess.run")
-    def test_verify_mount_passes_with_files(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_verify_mount_passes_with_files(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Mount verification should pass when workspace has files."""
+
         def side_effect(cmd, **kwargs):
             if "ls" in cmd:
                 return MagicMock(
@@ -512,10 +502,9 @@ class TestMountVerification:
         runner._verify_mount(tmp_path, "coupon.kicad_pcb")
 
     @patch("subprocess.run")
-    def test_verify_mount_fails_when_file_missing(
-        self, mock_run: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_verify_mount_fails_when_file_missing(self, mock_run: MagicMock, tmp_path: Path) -> None:
         """Mount verification should raise when expected file is missing."""
+
         def side_effect(cmd, **kwargs):
             if "ls" in cmd:
                 return MagicMock(

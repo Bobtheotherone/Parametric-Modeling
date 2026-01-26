@@ -142,11 +142,7 @@ def generate_cpwg_ground_tracks(
         perp_dy = unit_dx
 
     ground_width = _resolve_ground_width_nm(spec)
-    offset_from_center = (
-        half_width_nm(spec.w_nm)
-        + spec.gap_nm
-        + half_width_nm(ground_width)
-    )
+    offset_from_center = half_width_nm(spec.w_nm) + spec.gap_nm + half_width_nm(ground_width)
 
     offset_dx = int(offset_from_center * perp_dx)
     offset_dy = int(offset_from_center * perp_dy)
@@ -236,11 +232,7 @@ def generate_ground_via_fence(
 
     # Distance from centerline to via center:
     # half_trace_width + gap + offset_from_gap
-    offset_from_center = (
-        half_width_nm(cpwg_spec.w_nm)
-        + cpwg_spec.gap_nm
-        + fence_spec.offset_from_gap_nm
-    )
+    offset_from_center = half_width_nm(cpwg_spec.w_nm) + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
 
     # Calculate number of vias that fit
     num_vias = segment_length // fence_spec.pitch_nm
@@ -266,22 +258,26 @@ def generate_ground_via_fence(
         offset_dy = int(offset_from_center * perp_dy)
 
         # Positive side via (e.g., +y for horizontal segment)
-        positive_vias.append(Via(
-            position=PositionNM(base_x + offset_dx, base_y + offset_dy),
-            drill_nm=fence_spec.drill_nm,
-            diameter_nm=fence_spec.diameter_nm,
-            layers=fence_spec.layers,
-            net_id=net_id,
-        ))
+        positive_vias.append(
+            Via(
+                position=PositionNM(base_x + offset_dx, base_y + offset_dy),
+                drill_nm=fence_spec.drill_nm,
+                diameter_nm=fence_spec.diameter_nm,
+                layers=fence_spec.layers,
+                net_id=net_id,
+            )
+        )
 
         # Negative side via (e.g., -y for horizontal segment)
-        negative_vias.append(Via(
-            position=PositionNM(base_x - offset_dx, base_y - offset_dy),
-            drill_nm=fence_spec.drill_nm,
-            diameter_nm=fence_spec.diameter_nm,
-            layers=fence_spec.layers,
-            net_id=net_id,
-        ))
+        negative_vias.append(
+            Via(
+                position=PositionNM(base_x - offset_dx, base_y - offset_dy),
+                drill_nm=fence_spec.drill_nm,
+                diameter_nm=fence_spec.diameter_nm,
+                layers=fence_spec.layers,
+                net_id=net_id,
+            )
+        )
 
     return (tuple(positive_vias), tuple(negative_vias))
 

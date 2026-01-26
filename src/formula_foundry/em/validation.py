@@ -294,10 +294,7 @@ def check_passivity(
         )
     else:
         status = ValidationStatus.FAIL
-        message = (
-            f"Passivity violated (max eigenvalue = {max_eigenvalue:.6f}, "
-            f"{n_violations} violations)"
-        )
+        message = f"Passivity violated (max eigenvalue = {max_eigenvalue:.6f}, {n_violations} violations)"
 
     return PassivityCheckResult(
         status=status,
@@ -378,16 +375,10 @@ def check_reciprocity(
         message = f"Network is reciprocal (max error = {max_error:.2e})"
     elif max_error <= warn_threshold:
         status = ValidationStatus.WARN
-        message = (
-            f"Network is approximately reciprocal (max error = {max_error:.2e}, "
-            f"{n_violations} frequency/pair violations)"
-        )
+        message = f"Network is approximately reciprocal (max error = {max_error:.2e}, {n_violations} frequency/pair violations)"
     else:
         status = ValidationStatus.FAIL
-        message = (
-            f"Reciprocity violated (max error = {max_error:.2e}, "
-            f"{n_violations} violations)"
-        )
+        message = f"Reciprocity violated (max error = {max_error:.2e}, {n_violations} violations)"
 
     return ReciprocityCheckResult(
         status=status,
@@ -460,7 +451,7 @@ def check_causality(
 
     f_min = float(frequencies_hz[0])
     f_max = float(frequencies_hz[-1])
-    df = (f_max - f_min) / (n_freq - 1) if n_freq > 1 else f_max
+    (f_max - f_min) / (n_freq - 1) if n_freq > 1 else f_max
 
     # Create FFT grid: from DC to beyond f_max, with Nyquist at 2*f_max
     n_fft = max(4 * n_freq, 512)
@@ -474,11 +465,11 @@ def check_causality(
     # Build full spectrum with Hermitian symmetry
     s_full = np.zeros(n_fft, dtype=np.complex128)
     s_full[0] = np.real(s_interp[0])  # DC is real
-    s_full[1:n_fft // 2] = s_interp[1:-1]
+    s_full[1 : n_fft // 2] = s_interp[1:-1]
     if n_fft % 2 == 0:
         s_full[n_fft // 2] = np.real(s_interp[-1])  # Nyquist is real
     # Negative frequencies: conjugate symmetry
-    s_full[n_fft // 2 + 1:] = np.conj(s_full[n_fft // 2 - 1:0:-1])
+    s_full[n_fft // 2 + 1 :] = np.conj(s_full[n_fft // 2 - 1 : 0 : -1])
 
     # Inverse FFT to get impulse response (should be real)
     impulse_response = np.fft.ifft(s_full)
@@ -487,7 +478,7 @@ def check_causality(
     # For a causal system, the second half (negative time) should have minimal energy
     mid_point = n_fft // 2
     pre_response_energy = float(np.sum(impulse_real[mid_point:] ** 2))
-    total_energy = float(np.sum(impulse_real ** 2))
+    total_energy = float(np.sum(impulse_real**2))
 
     if total_energy > 0:
         pre_response_ratio = pre_response_energy / total_energy
@@ -504,14 +495,10 @@ def check_causality(
     elif pre_response_ratio <= warn_threshold:
         status = ValidationStatus.WARN
         is_causal = True  # Still considered causal with warning
-        message = (
-            f"Network is approximately causal (pre-response energy ratio = {pre_response_ratio:.2e})"
-        )
+        message = f"Network is approximately causal (pre-response energy ratio = {pre_response_ratio:.2e})"
     else:
         status = ValidationStatus.FAIL
-        message = (
-            f"Causality check failed (pre-response energy ratio = {pre_response_ratio:.2e})"
-        )
+        message = f"Causality check failed (pre-response energy ratio = {pre_response_ratio:.2e})"
 
     return CausalityCheckResult(
         status=status,

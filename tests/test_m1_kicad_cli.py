@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import formula_foundry.coupongen.kicad.cli as cli_module
 from formula_foundry.coupongen.kicad import (
     DEFAULT_TIMEOUT_SEC,
     KicadCliRunner,
@@ -19,7 +20,6 @@ from formula_foundry.coupongen.kicad.runners import (
     DockerKicadRunner,
     DockerKicadTimeoutError,
 )
-import formula_foundry.coupongen.kicad.cli as cli_module
 
 
 def test_module_imported_from_workspace() -> None:
@@ -33,9 +33,11 @@ def test_module_imported_from_workspace() -> None:
     # The module should be under src/formula_foundry/ in the workspace
     # or under site-packages if installed with pip install -e .
     # Either way, it should contain our expected default severity
-    from formula_foundry.coupongen.kicad.cli import build_drc_args as fn
     # Check that the function has severity="all" as default
     import inspect
+
+    from formula_foundry.coupongen.kicad.cli import build_drc_args as fn
+
     sig = inspect.signature(fn)
     default_severity = sig.parameters["severity"].default
     assert default_severity == "all", (
@@ -66,6 +68,7 @@ def test_kicad_cli_runner_docker_includes_user_flag(tmp_path: Path) -> None:
     Without --user, the container cannot write to bind-mounted directories.
     """
     import os
+
     runner = KicadCliRunner(mode="docker", docker_image="kicad/kicad:9.0.7")
     cmd = runner.build_command(["--version"], workdir=tmp_path)
 
@@ -259,11 +262,7 @@ def test_parse_kicad_error_success() -> None:
 
 def test_parse_kicad_error_file_load() -> None:
     """Verify parsing of file load error."""
-    result = parse_kicad_error(
-        3,
-        "",
-        "Failed to load 'board.kicad_pcb'"
-    )
+    result = parse_kicad_error(3, "", "Failed to load 'board.kicad_pcb'")
     assert result.error_code == 3
     assert result.error_type == "file_load_error"
     assert result.is_file_error
@@ -272,11 +271,7 @@ def test_parse_kicad_error_file_load() -> None:
 
 def test_parse_kicad_error_drc_violations() -> None:
     """Verify parsing of DRC violations error."""
-    result = parse_kicad_error(
-        5,
-        "Found 3 violations",
-        ""
-    )
+    result = parse_kicad_error(5, "Found 3 violations", "")
     assert result.error_code == 5
     assert result.error_type == "drc_violations"
     assert result.is_drc_error
@@ -318,9 +313,6 @@ def test_kicad_cli_runner_build_command_includes_vars(tmp_path: Path) -> None:
     runner = KicadCliRunner(mode="local")
     # Variables are passed through run(), not build_command() directly
     # This test verifies the command structure
-    cmd = runner.build_command(
-        ["--define-var", "TEST=value", "pcb", "export", "gerbers"],
-        workdir=tmp_path
-    )
+    cmd = runner.build_command(["--define-var", "TEST=value", "pcb", "export", "gerbers"], workdir=tmp_path)
     assert "--define-var" in cmd
     assert "TEST=value" in cmd

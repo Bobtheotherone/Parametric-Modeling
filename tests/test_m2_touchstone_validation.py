@@ -34,7 +34,6 @@ from formula_foundry.em.validation import (
     validate_touchstone_file,
 )
 
-
 # =============================================================================
 # Test Data Factories
 # =============================================================================
@@ -280,7 +279,7 @@ class TestCausalityValidation:
         sparam_data = _make_passive_reciprocal_sparam_data()
 
         result_loose = check_causality(sparam_data, tolerance=0.5)
-        result_strict = check_causality(sparam_data, tolerance=1e-10)
+        check_causality(sparam_data, tolerance=1e-10)
 
         # Loose should always pass
         assert result_loose.is_causal

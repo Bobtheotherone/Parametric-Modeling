@@ -18,11 +18,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from formula_foundry.resolve.types import SpecConsumption
 from formula_foundry.resolve.expectations import (
     expected_paths_for_family,
     is_optional_path,
 )
+from formula_foundry.resolve.types import SpecConsumption
 
 if TYPE_CHECKING:
     from formula_foundry.coupongen.spec import CouponSpec
@@ -144,10 +144,7 @@ def _is_path_prefix_in(path: str, paths: frozenset[str]) -> bool:
     """Check if a path or any of its descendants exists in paths."""
     prefix = path + "."
     list_prefix = path + "["
-    for p in paths:
-        if p == path or p.startswith(prefix) or p.startswith(list_prefix):
-            return True
-    return False
+    return any(p == path or p.startswith(prefix) or p.startswith(list_prefix) for p in paths)
 
 
 def _matches_optional_pattern(path: str) -> bool:

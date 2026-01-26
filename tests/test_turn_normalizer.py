@@ -29,7 +29,6 @@ from bridge.loop_pkg.turn_normalizer import (
     validate_turn_lenient,
 )
 
-
 # -----------------------------------------------------------------------------
 # Test data fixtures
 # -----------------------------------------------------------------------------
@@ -193,9 +192,7 @@ class TestRequiredFields:
         assert not result.success
         assert "project_complete" in (result.error or "")
 
-    def test_all_required_present_succeeds(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_all_required_present_succeeds(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """All required fields present succeeds."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
@@ -209,9 +206,7 @@ class TestRequiredFields:
 class TestInvariantFields:
     """Tests for invariant field auto-correction."""
 
-    def test_agent_mismatch_is_corrected(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_agent_mismatch_is_corrected(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Agent mismatch is auto-corrected with warning."""
         minimal_valid_payload["agent"] = "codex"  # Wrong agent
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -220,9 +215,7 @@ class TestInvariantFields:
         assert result.turn["agent"] == "claude"  # Corrected to expected
         assert any("agent mismatch" in w for w in result.warnings)
 
-    def test_milestone_mismatch_is_corrected(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_milestone_mismatch_is_corrected(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Milestone mismatch is auto-corrected with warning."""
         minimal_valid_payload["milestone_id"] = "M2"  # Wrong milestone
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -231,9 +224,7 @@ class TestInvariantFields:
         assert result.turn["milestone_id"] == "M1"  # Corrected to expected
         assert any("milestone_id mismatch" in w for w in result.warnings)
 
-    def test_missing_stats_refs_defaults(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_stats_refs_defaults(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing stats_refs defaults to agent-appropriate value."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
@@ -241,22 +232,16 @@ class TestInvariantFields:
         assert "CL-1" in result.turn["stats_refs"]  # Default for claude
         assert any("stats_refs defaulted" in w for w in result.warnings)
 
-    def test_invalid_stats_refs_defaults(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_invalid_stats_refs_defaults(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Invalid stats_refs defaults with warning."""
         minimal_valid_payload["stats_refs"] = ["INVALID-1"]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert result.turn["stats_refs"]  # Should have valid refs
-        assert all(
-            ref in {"CX-1", "CL-1"} for ref in result.turn["stats_refs"]
-        )
+        assert all(ref in {"CX-1", "CL-1"} for ref in result.turn["stats_refs"])
 
-    def test_valid_stats_refs_preserved(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_valid_stats_refs_preserved(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Valid stats_refs are preserved."""
         minimal_valid_payload["stats_refs"] = ["CL-1"]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -273,9 +258,7 @@ class TestInvariantFields:
 class TestPhaseHandling:
     """Tests for phase field handling."""
 
-    def test_valid_phase_preserved(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_valid_phase_preserved(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Valid phase is preserved."""
         minimal_valid_payload["phase"] = "verify"
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -283,9 +266,7 @@ class TestPhaseHandling:
         assert result.turn is not None
         assert result.turn["phase"] == "verify"
 
-    def test_invalid_phase_defaults(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_invalid_phase_defaults(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Invalid phase defaults to default_phase with warning."""
         minimal_valid_payload["phase"] = "invalid_phase"
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -294,9 +275,7 @@ class TestPhaseHandling:
         assert result.turn["phase"] == "implement"  # Default
         assert any("invalid phase" in w for w in result.warnings)
 
-    def test_missing_phase_defaults(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_phase_defaults(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing phase defaults to default_phase."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
@@ -304,9 +283,7 @@ class TestPhaseHandling:
         assert result.turn["phase"] == "implement"
 
     @pytest.mark.parametrize("phase", ["plan", "implement", "verify", "finalize"])
-    def test_all_valid_phases(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict, phase: str
-    ) -> None:
+    def test_all_valid_phases(self, normalizer: TurnNormalizer, minimal_valid_payload: dict, phase: str) -> None:
         """All valid phases are accepted."""
         minimal_valid_payload["phase"] = phase
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -323,18 +300,14 @@ class TestPhaseHandling:
 class TestOptionalFields:
     """Tests for optional field handling."""
 
-    def test_missing_gates_passed_defaults_empty(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_gates_passed_defaults_empty(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing gates_passed defaults to empty list."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert result.turn["gates_passed"] == []
 
-    def test_missing_requirement_progress_defaults(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_requirement_progress_defaults(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing requirement_progress defaults correctly."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
@@ -344,36 +317,28 @@ class TestOptionalFields:
         assert rp["tests_added_or_modified"] == []
         assert rp["commands_run"] == []
 
-    def test_missing_next_prompt_defaults_empty(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_next_prompt_defaults_empty(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing next_prompt defaults to empty string."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert result.turn["next_prompt"] == ""
 
-    def test_missing_delegate_rationale_defaults_empty(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_delegate_rationale_defaults_empty(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing delegate_rationale defaults to empty string."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert result.turn["delegate_rationale"] == ""
 
-    def test_missing_artifacts_defaults_empty(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_missing_artifacts_defaults_empty(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing artifacts defaults to empty list."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert result.turn["artifacts"] == []
 
-    def test_needs_write_access_defaults_true(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_needs_write_access_defaults_true(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Missing needs_write_access defaults to True."""
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
@@ -389,22 +354,16 @@ class TestOptionalFields:
 class TestArtifactNormalization:
     """Tests for artifact list normalization."""
 
-    def test_valid_artifacts_preserved(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_valid_artifacts_preserved(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Valid artifacts are preserved."""
-        minimal_valid_payload["artifacts"] = [
-            {"path": "src/foo.py", "description": "New file"}
-        ]
+        minimal_valid_payload["artifacts"] = [{"path": "src/foo.py", "description": "New file"}]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
         assert result.success
         assert result.turn is not None
         assert len(result.turn["artifacts"]) == 1
         assert result.turn["artifacts"][0]["path"] == "src/foo.py"
 
-    def test_invalid_artifact_missing_path_filtered(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_invalid_artifact_missing_path_filtered(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Artifacts missing path are filtered out."""
         minimal_valid_payload["artifacts"] = [{"description": "No path"}]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -412,9 +371,7 @@ class TestArtifactNormalization:
         assert result.turn is not None
         assert result.turn["artifacts"] == []
 
-    def test_invalid_artifact_missing_description_filtered(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_invalid_artifact_missing_description_filtered(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Artifacts missing description are filtered out."""
         minimal_valid_payload["artifacts"] = [{"path": "src/foo.py"}]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -422,9 +379,7 @@ class TestArtifactNormalization:
         assert result.turn is not None
         assert result.turn["artifacts"] == []
 
-    def test_non_dict_artifacts_filtered(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_non_dict_artifacts_filtered(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Non-dict artifacts are filtered out."""
         minimal_valid_payload["artifacts"] = ["not a dict", 123]
         result = normalizer.normalize(json.dumps(minimal_valid_payload))
@@ -432,9 +387,7 @@ class TestArtifactNormalization:
         assert result.turn is not None
         assert result.turn["artifacts"] == []
 
-    def test_empty_path_artifact_filtered(
-        self, normalizer: TurnNormalizer, minimal_valid_payload: dict
-    ) -> None:
+    def test_empty_path_artifact_filtered(self, normalizer: TurnNormalizer, minimal_valid_payload: dict) -> None:
         """Artifacts with empty path are filtered out."""
         minimal_valid_payload["artifacts"] = [
             {"path": "", "description": "Empty path"},
@@ -454,9 +407,7 @@ class TestArtifactNormalization:
 class TestNormalizeAgentOutput:
     """Tests for the convenience function."""
 
-    def test_normalize_agent_output_basic(
-        self, stats_id_set: set[str], minimal_valid_payload: dict
-    ) -> None:
+    def test_normalize_agent_output_basic(self, stats_id_set: set[str], minimal_valid_payload: dict) -> None:
         """Basic normalization via convenience function."""
         result = normalize_agent_output(
             raw_output=json.dumps(minimal_valid_payload),
@@ -469,9 +420,7 @@ class TestNormalizeAgentOutput:
         assert result.turn["agent"] == "codex"
         assert result.turn["milestone_id"] == "M0"
 
-    def test_normalize_agent_output_with_custom_default_phase(
-        self, stats_id_set: set[str], minimal_valid_payload: dict
-    ) -> None:
+    def test_normalize_agent_output_with_custom_default_phase(self, stats_id_set: set[str], minimal_valid_payload: dict) -> None:
         """Default phase can be customized."""
         result = normalize_agent_output(
             raw_output=json.dumps(minimal_valid_payload),
@@ -493,9 +442,7 @@ class TestNormalizeAgentOutput:
 class TestValidateTurnLenient:
     """Tests for lenient turn validation."""
 
-    def test_valid_turn_passes(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_valid_turn_passes(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Fully valid turn passes validation."""
         is_valid, msg, warnings = validate_turn_lenient(
             full_valid_payload,
@@ -507,9 +454,7 @@ class TestValidateTurnLenient:
         assert msg == "ok"
         assert len(warnings) == 0
 
-    def test_agent_mismatch_corrected_with_warning(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_agent_mismatch_corrected_with_warning(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Agent mismatch is corrected with warning."""
         full_valid_payload["agent"] = "codex"
         is_valid, msg, warnings = validate_turn_lenient(
@@ -522,9 +467,7 @@ class TestValidateTurnLenient:
         assert full_valid_payload["agent"] == "claude"  # Corrected in place
         assert any("agent mismatch" in w for w in warnings)
 
-    def test_milestone_mismatch_corrected_with_warning(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_milestone_mismatch_corrected_with_warning(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Milestone mismatch is corrected with warning."""
         full_valid_payload["milestone_id"] = "M2"
         is_valid, msg, warnings = validate_turn_lenient(
@@ -537,9 +480,7 @@ class TestValidateTurnLenient:
         assert full_valid_payload["milestone_id"] == "M1"  # Corrected in place
         assert any("milestone_id mismatch" in w for w in warnings)
 
-    def test_missing_key_fails(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_missing_key_fails(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Missing required key fails validation."""
         del full_valid_payload["summary"]
         is_valid, msg, warnings = validate_turn_lenient(
@@ -560,9 +501,7 @@ class TestValidateTurnLenient:
         assert not is_valid
         assert "not an object" in msg
 
-    def test_invalid_phase_fails(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_invalid_phase_fails(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Invalid phase fails validation."""
         full_valid_payload["phase"] = "invalid"
         is_valid, msg, warnings = validate_turn_lenient(
@@ -573,9 +512,7 @@ class TestValidateTurnLenient:
         assert not is_valid
         assert "invalid phase" in msg
 
-    def test_unknown_stats_refs_corrected(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_unknown_stats_refs_corrected(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Unknown stats_refs are removed and replaced."""
         full_valid_payload["stats_refs"] = ["UNKNOWN-1", "CL-1"]
         is_valid, msg, warnings = validate_turn_lenient(
@@ -588,9 +525,7 @@ class TestValidateTurnLenient:
         assert "UNKNOWN-1" not in full_valid_payload["stats_refs"]
         assert any("unknown stats_refs" in w for w in warnings)
 
-    def test_extra_keys_fail(
-        self, stats_id_set: set[str], full_valid_payload: dict
-    ) -> None:
+    def test_extra_keys_fail(self, stats_id_set: set[str], full_valid_payload: dict) -> None:
         """Extra unexpected keys fail validation."""
         full_valid_payload["extra_key"] = "unexpected"
         is_valid, msg, warnings = validate_turn_lenient(

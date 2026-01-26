@@ -533,7 +533,7 @@ class TestGenerateRoundedOutline:
             else:
                 next_start = next_elem.start
 
-            assert current_end == next_start, f"Gap between element {i} and {i+1}"
+            assert current_end == next_start, f"Gap between element {i} and {i + 1}"
 
 
 class TestGenerateMultiviaAntipad:

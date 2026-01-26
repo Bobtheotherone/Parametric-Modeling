@@ -53,6 +53,7 @@ def _coupon_id_from_design_hash(design_hash: str) -> str:
     encoded = base64.b32encode(digest).decode("ascii").lower().rstrip("=")
     return encoded[:12]
 
+
 if TYPE_CHECKING:
     from ..geom.footprint_meta import FootprintMeta
 
@@ -120,6 +121,7 @@ _LAYER_FLIP_MAP: dict[str, str] = {
     "B.Adhes": "F.Adhes",
 }
 
+
 def map_layer_to_kicad(spec_layer: str) -> str:
     """Map a spec layer name to a KiCad layer name.
 
@@ -134,10 +136,7 @@ def map_layer_to_kicad(spec_layer: str) -> str:
     """
     if spec_layer in SPEC_TO_KICAD_LAYER:
         return SPEC_TO_KICAD_LAYER[spec_layer]
-    raise ValueError(
-        f"Unknown layer name: {spec_layer!r}. "
-        f"Expected one of: {sorted(SPEC_TO_KICAD_LAYER.keys())}"
-    )
+    raise ValueError(f"Unknown layer name: {spec_layer!r}. Expected one of: {sorted(SPEC_TO_KICAD_LAYER.keys())}")
 
 
 def deterministic_uuid(schema_version: int, path: str) -> str:
@@ -218,8 +217,7 @@ class BoardWriter:
         layout_plan = resolved.layout_plan
         if layout_plan is None:
             raise ValueError(
-                "ResolvedDesign.layout_plan is None. The resolver must compute "
-                "a LayoutPlan before passing to BoardWriter."
+                "ResolvedDesign.layout_plan is None. The resolver must compute a LayoutPlan before passing to BoardWriter."
             )
         self._layout_plan: LayoutPlan = layout_plan
 
@@ -361,10 +359,10 @@ class BoardWriter:
             ) from e
 
         # Convert from nm to mm for KiCad
-        min_via_dia = nm_to_mm(limits.get("min_via_diameter_nm", 200000))
-        min_via_drill = nm_to_mm(limits.get("min_drill_nm", 200000))
-        min_track = nm_to_mm(limits.get("min_trace_width_nm", 100000))
-        min_clearance = nm_to_mm(limits.get("min_gap_nm", 100000))
+        nm_to_mm(limits.get("min_via_diameter_nm", 200000))
+        nm_to_mm(limits.get("min_drill_nm", 200000))
+        nm_to_mm(limits.get("min_trace_width_nm", 100000))
+        nm_to_mm(limits.get("min_gap_nm", 100000))
 
         return [
             "setup",
@@ -474,7 +472,6 @@ class BoardWriter:
         """
         from ..geom.cutouts import (
             OutlineArc,
-            OutlineFeasibilityError,
             OutlineLine,
             generate_rounded_outline,
         )
@@ -1090,10 +1087,7 @@ class BoardWriter:
 
         # Get return via positions and diameter
         if self._f1_composition is not None and self._f1_composition.return_vias:
-            return_via_positions = [
-                (v.position.x, v.position.y)
-                for v in self._f1_composition.return_vias
-            ]
+            return_via_positions = [(v.position.x, v.position.y) for v in self._f1_composition.return_vias]
             via_diameter = self._f1_composition.return_vias[0].diameter_nm if self._f1_composition.return_vias else 500000
         else:
             # Fallback: calculate positions

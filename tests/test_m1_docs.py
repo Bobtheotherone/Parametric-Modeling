@@ -65,9 +65,7 @@ class TestM1DeterminismPolicyDoc:
     def test_has_digest_pinning_section(self) -> None:
         """Document must have a Digest Pinning section."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "digest pinning" in content or "docker_digest" in content, (
-            "Missing 'Digest Pinning' section"
-        )
+        assert "digest pinning" in content or "docker_digest" in content, "Missing 'Digest Pinning' section"
 
     def test_documents_docker_digest_requirement(self) -> None:
         """Document must explain docker_digest requirements."""
@@ -79,9 +77,7 @@ class TestM1DeterminismPolicyDoc:
     def test_has_determinism_gates_section(self) -> None:
         """Document must have a Determinism Gates section."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "determinism gate" in content or "g1" in content, (
-            "Missing 'Determinism Gates' section"
-        )
+        assert "determinism gate" in content or "g1" in content, "Missing 'Determinism Gates' section"
 
     def test_documents_all_gates(self) -> None:
         """Document must reference gates G1-G5."""
@@ -92,9 +88,7 @@ class TestM1DeterminismPolicyDoc:
     def test_has_canonicalization_section(self) -> None:
         """Document must have a Canonicalization section."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "canonicalization" in content or "canonical" in content, (
-            "Missing 'Canonicalization' section"
-        )
+        assert "canonicalization" in content or "canonical" in content, "Missing 'Canonicalization' section"
 
 
 class TestM1ToolchainDoc:
@@ -109,16 +103,12 @@ class TestM1ToolchainDoc:
     def test_has_toolchain_lock_section(self) -> None:
         """Document must have a Toolchain Lock File section."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "toolchain lock" in content or "lock file" in content, (
-            "Missing 'Toolchain Lock File' section"
-        )
+        assert "toolchain lock" in content or "lock file" in content, "Missing 'Toolchain Lock File' section"
 
     def test_documents_lock_file_path(self) -> None:
         """Document must specify lock file path."""
         content = self.DOC_PATH.read_text(encoding="utf-8")
-        assert "toolchain/kicad.lock.json" in content, (
-            "Missing lock file path documentation"
-        )
+        assert "toolchain/kicad.lock.json" in content, "Missing lock file path documentation"
 
     def test_documents_lock_file_schema(self) -> None:
         """Document must show lock file schema."""
@@ -131,9 +121,7 @@ class TestM1ToolchainDoc:
     def test_has_docker_pinning_section(self) -> None:
         """Document must have a Docker Image Pinning section."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "docker" in content and "pin" in content, (
-            "Missing 'Docker Image Pinning' section"
-        )
+        assert "docker" in content and "pin" in content, "Missing 'Docker Image Pinning' section"
 
     def test_documents_pinning_rationale(self) -> None:
         """Document must explain why Docker images are pinned."""
@@ -171,9 +159,7 @@ class TestM1ToolchainDoc:
     def test_documents_load_function(self) -> None:
         """Document must reference load_toolchain_lock function."""
         content = self.DOC_PATH.read_text(encoding="utf-8")
-        assert "load_toolchain_lock" in content, (
-            "Missing load_toolchain_lock documentation"
-        )
+        assert "load_toolchain_lock" in content, "Missing load_toolchain_lock documentation"
 
     def test_has_error_handling_section(self) -> None:
         """Document must have an Error Handling section."""
@@ -196,16 +182,12 @@ class TestM1DocsConsistency:
     def test_determinism_doc_references_toolchain_doc(self) -> None:
         """m1_determinism_policy.md should reference m1_toolchain.md."""
         content = self.DETERMINISM_DOC.read_text(encoding="utf-8")
-        assert "m1_toolchain.md" in content, (
-            "m1_determinism_policy.md should reference m1_toolchain.md"
-        )
+        assert "m1_toolchain.md" in content, "m1_determinism_policy.md should reference m1_toolchain.md"
 
     def test_toolchain_doc_references_determinism_doc(self) -> None:
         """m1_toolchain.md should reference m1_determinism_policy.md."""
         content = self.TOOLCHAIN_DOC.read_text(encoding="utf-8")
-        assert "m1_determinism_policy.md" in content, (
-            "m1_toolchain.md should reference m1_determinism_policy.md"
-        )
+        assert "m1_determinism_policy.md" in content, "m1_toolchain.md should reference m1_determinism_policy.md"
 
     def test_both_docs_reference_eco(self) -> None:
         """Both docs should reference the ECO."""
@@ -242,9 +224,7 @@ class TestDeterminismPolicyDocCompleteness:
     def test_documents_exclusions(self) -> None:
         """Document must explain exclusions."""
         content = self.DOC_PATH.read_text(encoding="utf-8").lower()
-        assert "excluded" in content or "exclusion" in content, (
-            "Missing exclusion documentation"
-        )
+        assert "excluded" in content or "exclusion" in content, "Missing exclusion documentation"
 
     def test_documents_digest_pinning(self) -> None:
         """Document must explain digest pinning."""

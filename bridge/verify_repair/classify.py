@@ -222,11 +222,13 @@ def extract_import_errors(summary: VerifySummary) -> list[dict[str, Any]]:
             key = f"import:{name}"
             if key not in seen:
                 seen.add(key)
-                errors.append({
-                    "type": "import_error",
-                    "name": name,
-                    "source_gate": gate.name,
-                })
+                errors.append(
+                    {
+                        "type": "import_error",
+                        "name": name,
+                        "source_gate": gate.name,
+                    }
+                )
 
         # ModuleNotFoundError: No module named 'X'
         for match in MODULE_NOT_FOUND_RE.finditer(combined):
@@ -236,14 +238,16 @@ def extract_import_errors(summary: VerifySummary) -> list[dict[str, Any]]:
                 seen.add(key)
                 root_module = module.split(".")[0]
                 is_internal = any(root_module.startswith(p) for p in INTERNAL_MODULE_PREFIXES)
-                errors.append({
-                    "type": "module_not_found",
-                    "module": module,
-                    "root_module": root_module,
-                    "is_internal": is_internal,
-                    "is_bootstrap_installable": root_module in BOOTSTRAP_INSTALLABLE,
-                    "source_gate": gate.name,
-                })
+                errors.append(
+                    {
+                        "type": "module_not_found",
+                        "module": module,
+                        "root_module": root_module,
+                        "is_internal": is_internal,
+                        "is_bootstrap_installable": root_module in BOOTSTRAP_INSTALLABLE,
+                        "source_gate": gate.name,
+                    }
+                )
 
     return errors
 
@@ -263,11 +267,13 @@ def extract_mypy_errors(summary: VerifySummary) -> list[dict[str, str]]:
 
     combined = gate.stdout + "\n" + gate.stderr
     for match in MYPY_ERROR_RE.finditer(combined):
-        errors.append({
-            "file": match.group(1),
-            "line": match.group(2),
-            "message": match.group(3),
-        })
+        errors.append(
+            {
+                "file": match.group(1),
+                "line": match.group(2),
+                "message": match.group(3),
+            }
+        )
 
     return errors
 

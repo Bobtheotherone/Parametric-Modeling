@@ -401,9 +401,7 @@ class M2ManifestBuilder:
         self.solver_version = solver_version
         return self
 
-    def with_solver_version_from_metadata(
-        self, version_metadata: Mapping[str, Any]
-    ) -> M2ManifestBuilder:
+    def with_solver_version_from_metadata(self, version_metadata: Mapping[str, Any]) -> M2ManifestBuilder:
         """Add solver version from runner version_metadata() output (REQ-M2-008).
 
         Args:

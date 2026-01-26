@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 # Default text properties for silkscreen annotations
 DEFAULT_TEXT_HEIGHT_NM = 1_000_000  # 1mm text height
-DEFAULT_TEXT_WIDTH_NM = 1_000_000   # 1mm text width
+DEFAULT_TEXT_WIDTH_NM = 1_000_000  # 1mm text width
 DEFAULT_TEXT_THICKNESS_NM = 150_000  # 0.15mm stroke thickness
 TEXT_Y_OFFSET_FROM_EDGE_NM = 1_500_000  # 1.5mm offset from board edge
 
@@ -87,7 +87,7 @@ def build_coupon_annotation(
     *,
     coupon_id: str,
     design_hash: str,
-    layout_plan: "LayoutPlan",
+    layout_plan: LayoutPlan,
     uuid_generator: callable,
 ) -> list[SExprList]:
     """Build silkscreen annotation elements with coupon_id and short hash.
@@ -156,7 +156,7 @@ def build_annotations_from_spec(
     include_manifest_hash: bool,
     actual_coupon_id: str,
     design_hash: str,
-    layout_plan: "LayoutPlan",
+    layout_plan: LayoutPlan,
     uuid_generator: callable,
 ) -> list[SExprList]:
     """Build silkscreen annotations based on spec configuration.

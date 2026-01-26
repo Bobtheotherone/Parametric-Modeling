@@ -22,8 +22,7 @@ All group keys are sorted alphabetically for deterministic JSON emission.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from formula_foundry.coupongen.spec import CouponSpec

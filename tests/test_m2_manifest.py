@@ -1169,15 +1169,9 @@ class TestM2ManifestBuilderREQM2008:
                 geometry=geometry,
                 simulation_result=result,
             )
-            .with_solver_version(
-                SolverVersionInfo(openems_version="0.0.35", mode="docker")
-            )
-            .with_gpu_device_info(
-                GPUDeviceInfo(device_id=0, device_name="NVIDIA A100")
-            )
-            .with_sparam_file_hashes(
-                SParamFileHashes(touchstone_hash="x" * 64)
-            )
+            .with_solver_version(SolverVersionInfo(openems_version="0.0.35", mode="docker"))
+            .with_gpu_device_info(GPUDeviceInfo(device_id=0, device_name="NVIDIA A100"))
+            .with_sparam_file_hashes(SParamFileHashes(touchstone_hash="x" * 64))
             .with_convergence_from_spec()
             .with_m1_manifest("y" * 64)
             .with_git_sha("z" * 40)

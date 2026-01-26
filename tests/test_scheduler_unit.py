@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-
 # -----------------------------------------------------------------------------
 # Mock SchedulableTask for testing
 # -----------------------------------------------------------------------------
@@ -27,6 +26,7 @@ import pytest
 @dataclass
 class MockTask:
     """Mock task implementing SchedulableTask protocol."""
+
     id: str
     status: str = "pending"
     solo: bool = False
@@ -103,7 +103,7 @@ class TestSchedulerMetrics:
         assert metrics.completed_tasks == 0
         assert metrics.failed_tasks == 0
         assert metrics.blocked_tasks == 0
-        assert metrics.hits == 0 if hasattr(metrics, 'hits') else True
+        assert metrics.hits == 0 if hasattr(metrics, "hits") else True
         assert len(metrics.active_workers_samples) == 0
         assert len(metrics.stall_events) == 0
 
@@ -222,7 +222,7 @@ class TestSchedulerMetrics:
 class TestTwoLaneScheduler:
     """Tests for TwoLaneScheduler class."""
 
-    def _create_scheduler(self, tasks: list[MockTask]) -> "TwoLaneScheduler":
+    def _create_scheduler(self, tasks: list[MockTask]) -> TwoLaneScheduler:
         """Helper to create scheduler with mock tasks."""
         from bridge.scheduler import LaneConfig, TwoLaneScheduler
 
@@ -230,9 +230,7 @@ class TestTwoLaneScheduler:
 
         def deps_satisfied(t):
             return all(
-                self._get_task(tasks, d).status == "completed"
-                for d in t.depends_on
-                if self._get_task(tasks, d) is not None
+                self._get_task(tasks, d).status == "completed" for d in t.depends_on if self._get_task(tasks, d) is not None
             )
 
         def locks_available(t):

@@ -35,6 +35,7 @@ def _get_host_uid_gid() -> tuple[int, int]:
     """
     return os.getuid(), os.getgid()
 
+
 # Default timeout for Docker kicad-cli operations (5 minutes)
 DEFAULT_DOCKER_TIMEOUT_SEC: float = 300.0
 
@@ -49,9 +50,7 @@ class DockerKicadTimeoutError(RuntimeError):
     ) -> None:
         self.timeout_sec = timeout_sec
         self.command = command or []
-        super().__init__(
-            f"Docker kicad-cli command timed out after {timeout_sec} seconds"
-        )
+        super().__init__(f"Docker kicad-cli command timed out after {timeout_sec} seconds")
 
 
 def build_define_var_args(variables: Mapping[str, str] | None) -> list[str]:
@@ -85,6 +84,7 @@ def build_define_var_args(variables: Mapping[str, str] | None) -> list[str]:
         args.extend(["--define-var", f"{name}={value}"])
 
     return args
+
 
 # Default path to the toolchain lock file
 DEFAULT_LOCK_FILE = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "toolchain" / "kicad.lock.json"
@@ -180,11 +180,7 @@ class DockerMountError(RuntimeError):
     def __init__(self, host_path: Path, expected_file: str | None = None) -> None:
         self.host_path = host_path
         self.expected_file = expected_file
-        msg = (
-            f"Docker bind mount visibility issue:\n"
-            f"  Host path: {host_path}\n"
-            f"  Container mount: /workspace\n"
-        )
+        msg = f"Docker bind mount visibility issue:\n  Host path: {host_path}\n  Container mount: /workspace\n"
         if expected_file:
             msg += f"  Expected file: {expected_file} (not visible in container)\n"
         msg += (
@@ -310,11 +306,13 @@ class DockerKicadRunner(IKicadRunner):
             for key, value in env.items():
                 cmd.extend(["-e", f"{key}={value}"])
 
-        cmd.extend([
-            self._docker_image,
-            self._kicad_bin,
-            *args,
-        ])
+        cmd.extend(
+            [
+                self._docker_image,
+                self._kicad_bin,
+                *args,
+            ]
+        )
 
         return cmd
 
@@ -593,9 +591,7 @@ class DockerKicadRunner(IKicadRunner):
         cmd = self._build_docker_command(full_args, cwd, env)
 
         # Determine effective timeout
-        effective_timeout: float | None = (
-            timeout if timeout is not None else self._default_timeout
-        )
+        effective_timeout: float | None = timeout if timeout is not None else self._default_timeout
         if effective_timeout is not None and effective_timeout <= 0:
             effective_timeout = None
 
@@ -647,9 +643,7 @@ class DockerKicadRunner(IKicadRunner):
         result = self.run(["--version"], cwd)
 
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to get kicad-cli version: {result.stderr or result.stdout}"
-            )
+            raise RuntimeError(f"Failed to get kicad-cli version: {result.stderr or result.stdout}")
 
         return parse_kicad_version(result.stdout)
 

@@ -38,6 +38,7 @@ def _is_ci_environment() -> bool:
     """Check if running in a CI environment (GitHub Actions, etc.)."""
     return os.environ.get("CI", "").lower() == "true" or os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
 
+
 # Root of the repository
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_SPECS_DIR = REPO_ROOT / "tests" / "golden_specs"
@@ -205,16 +206,12 @@ class TestGoldenSpecsExist:
     def test_f0_golden_specs_present(self) -> None:
         """REQ-M1-024: At least 10 F0 golden specs must exist."""
         f0_specs = list(GOLDEN_SPECS_DIR.glob(F0_PATTERN))
-        assert len(f0_specs) >= 10, (
-            f"Expected at least 10 F0 golden specs, found {len(f0_specs)}"
-        )
+        assert len(f0_specs) >= 10, f"Expected at least 10 F0 golden specs, found {len(f0_specs)}"
 
     def test_f1_golden_specs_present(self) -> None:
         """REQ-M1-024: At least 10 F1 golden specs must exist."""
         f1_specs = list(GOLDEN_SPECS_DIR.glob(F1_PATTERN))
-        assert len(f1_specs) >= 10, (
-            f"Expected at least 10 F1 golden specs, found {len(f1_specs)}"
-        )
+        assert len(f1_specs) >= 10, f"Expected at least 10 F1 golden specs, found {len(f1_specs)}"
 
 
 @pytest.mark.kicad_integration
@@ -296,25 +293,18 @@ class TestKicadDRCIntegration:
         )
 
         # Check build succeeded
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstdout: {result.stdout}\nstderr: {result.stderr}"
 
         # Find and verify DRC report
         drc_path = _find_drc_json(output_dir)
-        assert drc_path is not None, (
-            f"DRC report not found for {spec_name} in {output_dir}"
-        )
+        assert drc_path is not None, f"DRC report not found for {spec_name} in {output_dir}"
 
         # Parse DRC report and verify 0 violations
         drc_report = _parse_drc_json(drc_path)
         violation_count = _count_drc_violations(drc_report)
 
         assert violation_count == 0, (
-            f"DRC violations found for {spec_name}: {violation_count} violations\n"
-            f"DRC report: {json.dumps(drc_report, indent=2)}"
+            f"DRC violations found for {spec_name}: {violation_count} violations\nDRC report: {json.dumps(drc_report, indent=2)}"
         )
 
 
@@ -376,9 +366,7 @@ class TestDRCExitCodeSemantics:
         )
 
         # The build command should succeed
-        assert result.returncode == 0, (
-            f"Build failed: {result.stderr}"
-        )
+        assert result.returncode == 0, f"Build failed: {result.stderr}"
 
         # Parse the build output JSON to verify DRC passed
         try:
@@ -460,6 +448,4 @@ class TestDRCReportFormat:
         assert isinstance(violations, list), "violations must be a list"
 
         # For golden specs, violations should be empty
-        assert len(violations) == 0, (
-            f"Golden spec should have 0 violations, found {len(violations)}"
-        )
+        assert len(violations) == 0, f"Golden spec should have 0 violations, found {len(violations)}"

@@ -721,9 +721,7 @@ class TestStrictValidation:
     fields (no silent accept) under strict mode.
     """
 
-    def test_strict_validation_accepts_valid_f1_spec(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_accepts_valid_f1_spec(self, valid_spec_data: dict[str, Any]) -> None:
         """Strict mode accepts valid F1 spec with all required fields."""
         from formula_foundry.coupongen.spec import validate_strict
 
@@ -731,21 +729,16 @@ class TestStrictValidation:
         assert spec.coupon_family == "F1_SINGLE_ENDED_VIA"
         assert spec.discontinuity is not None
 
-    def test_strict_validation_rejects_extra_fields(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_rejects_extra_fields(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Strict mode rejects unknown/extra fields."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
         valid_spec_data["unknown_field"] = "should_fail"
         with pytest.raises(StrictValidationError) as exc_info:
             validate_strict(valid_spec_data)
-        assert any("unknown_field" in str(e).lower() or "additional" in str(e).lower()
-                   for e in exc_info.value.errors)
+        assert any("unknown_field" in str(e).lower() or "additional" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_strict_validation_rejects_nested_extra_fields(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_rejects_nested_extra_fields(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Strict mode rejects nested unknown fields."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -753,9 +746,7 @@ class TestStrictValidation:
         with pytest.raises(StrictValidationError):
             validate_strict(valid_spec_data)
 
-    def test_strict_validation_f0_cannot_have_discontinuity(
-        self, minimal_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_f0_cannot_have_discontinuity(self, minimal_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F0 cannot include F1-only blocks (discontinuity)."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -775,9 +766,7 @@ class TestStrictValidation:
             validate_strict(minimal_spec_data)
         assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_strict_validation_f1_requires_discontinuity(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_f1_requires_discontinuity(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F1 requires discontinuity block."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -788,9 +777,7 @@ class TestStrictValidation:
             validate_strict(valid_spec_data)
         assert any("discontinuity" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_strict_validation_f1_requires_via_transition_type(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_f1_requires_via_transition_type(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F1 discontinuity must have type VIA_TRANSITION."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -801,9 +788,7 @@ class TestStrictValidation:
             validate_strict(valid_spec_data)
         assert any("via_transition" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_strict_validation_f0_requires_length_right_nm(
-        self, minimal_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_f0_requires_length_right_nm(self, minimal_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F0 requires transmission_line.length_right_nm."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -815,9 +800,7 @@ class TestStrictValidation:
             validate_strict(minimal_spec_data)
         assert any("length_right_nm" in str(e).lower() for e in exc_info.value.errors)
 
-    def test_strict_validation_skip_family_constraints(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_validation_skip_family_constraints(self, valid_spec_data: dict[str, Any]) -> None:
         """Schema-only validation can skip family constraints."""
         from formula_foundry.coupongen.spec import validate_strict
 
@@ -864,9 +847,7 @@ class TestFamilyValidation:
             validate_family(spec)
         assert "unsupported" in str(exc_info.value).lower()
 
-    def test_family_validation_error_has_attributes(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_family_validation_error_has_attributes(self, valid_spec_data: dict[str, Any]) -> None:
         """FamilyValidationError provides detailed attributes."""
         from formula_foundry.coupongen.families import FamilyValidationError, validate_family
         from formula_foundry.coupongen.spec import load_couponspec
@@ -883,21 +864,21 @@ class TestFamilyValidation:
 
     def test_get_family_forbidden_fields_f0(self) -> None:
         """F0 forbids F1-only fields."""
-        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F0
+        from formula_foundry.coupongen.families import FAMILY_F0, get_family_forbidden_fields
 
         forbidden = get_family_forbidden_fields(FAMILY_F0)
         assert "discontinuity" in forbidden
 
     def test_get_family_forbidden_fields_f1(self) -> None:
         """F1 has no forbidden fields."""
-        from formula_foundry.coupongen.families import get_family_forbidden_fields, FAMILY_F1
+        from formula_foundry.coupongen.families import FAMILY_F1, get_family_forbidden_fields
 
         forbidden = get_family_forbidden_fields(FAMILY_F1)
         assert len(forbidden) == 0
 
     def test_get_family_required_fields_f0(self) -> None:
         """F0 requires specific fields."""
-        from formula_foundry.coupongen.families import get_family_required_fields, FAMILY_F0
+        from formula_foundry.coupongen.families import FAMILY_F0, get_family_required_fields
 
         required = get_family_required_fields(FAMILY_F0)
         assert "transmission_line.length_right_nm" in required
@@ -968,9 +949,7 @@ class TestSpecConsumption:
         assert summary["unused_provided_paths"] == ["d"]
         assert summary["unconsumed_expected_paths"] == ["c"]
 
-    def test_collect_provided_paths_from_spec(
-        self, minimal_spec_data: dict[str, Any]
-    ) -> None:
+    def test_collect_provided_paths_from_spec(self, minimal_spec_data: dict[str, Any]) -> None:
         """collect_provided_paths extracts all non-None leaf paths from spec."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.consumption import collect_provided_paths
@@ -1004,9 +983,7 @@ class TestSpecConsumption:
         # F1 derives length_right_nm, so it's not expected
         assert "transmission_line.length_right_nm" not in expected
 
-    def test_build_spec_consumption_f0(
-        self, minimal_spec_data: dict[str, Any]
-    ) -> None:
+    def test_build_spec_consumption_f0(self, minimal_spec_data: dict[str, Any]) -> None:
         """build_spec_consumption creates valid consumption for F0 spec."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.consumption import build_spec_consumption
@@ -1025,8 +1002,8 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_passes_on_valid(self) -> None:
         """enforce_spec_consumption does not raise for valid consumption."""
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         # All paths consumed, no unused or unconsumed
         consumption = SpecConsumption(
@@ -1039,11 +1016,11 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unused_provided(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if provided field is unused."""
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
         )
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a", "b"}),
@@ -1057,11 +1034,11 @@ class TestSpecConsumption:
 
     def test_enforce_spec_consumption_fails_on_unconsumed_expected(self) -> None:
         """REQ-M1-001: enforce_spec_consumption fails if expected field is unconsumed."""
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
         )
+        from formula_foundry.resolve.types import SpecConsumption
 
         consumption = SpecConsumption(
             consumed_paths=frozenset({"a"}),
@@ -1106,11 +1083,11 @@ class TestLintSpecCoverageCLI:
         there are unconsumed expected paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
         )
+        from formula_foundry.resolve.types import SpecConsumption
 
         # Create a consumption with unconsumed expected paths
         consumption = SpecConsumption(
@@ -1134,11 +1111,11 @@ class TestLintSpecCoverageCLI:
         there are unused provided paths in strict mode by directly testing the
         SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import (
             SpecConsumptionError,
             enforce_spec_consumption,
         )
+        from formula_foundry.resolve.types import SpecConsumption
 
         # Create a consumption with unused provided paths
         consumption = SpecConsumption(
@@ -1162,8 +1139,8 @@ class TestLintSpecCoverageCLI:
         all expected paths are consumed and no provided paths are unused by directly
         testing the SpecConsumption model and enforce_spec_consumption mechanism.
         """
-        from formula_foundry.resolve.types import SpecConsumption
         from formula_foundry.resolve.consumption import enforce_spec_consumption
+        from formula_foundry.resolve.types import SpecConsumption
 
         # Create a consumption with complete coverage (no issues)
         consumption = SpecConsumption(
@@ -1219,9 +1196,7 @@ class TestStrictModeExtraFieldRejection:
     accept) under strict mode.
     """
 
-    def test_strict_mode_rejects_unknown_top_level_field(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_mode_rejects_unknown_top_level_field(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Unknown top-level fields must be rejected."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -1229,9 +1204,7 @@ class TestStrictModeExtraFieldRejection:
         with pytest.raises(StrictValidationError):
             validate_strict(valid_spec_data)
 
-    def test_strict_mode_rejects_extra_nested_board_field(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_mode_rejects_extra_nested_board_field(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Extra nested fields in board section must be rejected."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -1239,9 +1212,7 @@ class TestStrictModeExtraFieldRejection:
         with pytest.raises(StrictValidationError):
             validate_strict(valid_spec_data)
 
-    def test_strict_mode_rejects_extra_transmission_line_field(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_mode_rejects_extra_transmission_line_field(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Extra transmission_line fields must be rejected."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -1249,9 +1220,7 @@ class TestStrictModeExtraFieldRejection:
         with pytest.raises(StrictValidationError):
             validate_strict(valid_spec_data)
 
-    def test_strict_mode_rejects_extra_discontinuity_field(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_strict_mode_rejects_extra_discontinuity_field(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: Extra discontinuity fields must be rejected."""
         from formula_foundry.coupongen.spec import StrictValidationError, validate_strict
 
@@ -1280,9 +1249,7 @@ class TestFamilyViolationRejection:
     (e.g., F0 cannot include F1-only blocks).
     """
 
-    def test_f0_with_discontinuity_raises_family_error(
-        self, minimal_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_with_discontinuity_raises_family_error(self, minimal_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F0 family cannot have discontinuity (F1-only feature)."""
         from formula_foundry.coupongen.families import FamilyValidationError, validate_family
         from formula_foundry.coupongen.spec import load_couponspec
@@ -1290,7 +1257,7 @@ class TestFamilyViolationRejection:
         minimal_spec_data["coupon_family"] = "F0_CAL_THRU_LINE"
         # Manually add discontinuity (which is F1-only)
         # First, load without discontinuity to get a valid spec
-        spec = load_couponspec(minimal_spec_data)
+        load_couponspec(minimal_spec_data)
 
         # Create a new spec data with discontinuity
         spec_with_disc = minimal_spec_data.copy()
@@ -1308,9 +1275,7 @@ class TestFamilyViolationRejection:
             validate_family(spec_disc)
         assert "discontinuity" in str(exc_info.value).lower()
 
-    def test_f1_without_discontinuity_raises_family_error(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f1_without_discontinuity_raises_family_error(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F1 family requires discontinuity block."""
         from formula_foundry.coupongen.families import FamilyValidationError, validate_family
         from formula_foundry.coupongen.spec import load_couponspec
@@ -1323,9 +1288,7 @@ class TestFamilyViolationRejection:
             validate_family(spec)
         assert "discontinuity" in str(exc_info.value).lower()
 
-    def test_f1_with_wrong_discontinuity_type_raises_error(
-        self, valid_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f1_with_wrong_discontinuity_type_raises_error(self, valid_spec_data: dict[str, Any]) -> None:
         """REQ-M1-002: F1 discontinuity.type must be VIA_TRANSITION."""
         from formula_foundry.coupongen.families import FamilyValidationError, validate_family
         from formula_foundry.coupongen.spec import load_couponspec
@@ -1355,19 +1318,19 @@ def test_schema() -> None:
     REQ-M1-018: The CLI MUST provide lint-spec-coverage (non-zero on coverage
                 failures) and explain commands.
     """
+    from formula_foundry.coupongen.cli_main import build_parser
     from formula_foundry.coupongen.spec import (
         COUPONSPEC_SCHEMA_PATH,
         CouponSpec,
+        StrictValidationError,
         get_json_schema,
         validate_strict,
-        StrictValidationError,
+    )
+    from formula_foundry.resolve.consumption import (
+        SpecConsumptionError,
+        enforce_spec_consumption,
     )
     from formula_foundry.resolve.types import SpecConsumption
-    from formula_foundry.resolve.consumption import (
-        enforce_spec_consumption,
-        SpecConsumptionError,
-    )
-    from formula_foundry.coupongen.cli_main import build_parser
 
     # REQ-M1-001: Schema file exists and is valid JSON
     assert COUPONSPEC_SCHEMA_PATH.exists(), "Schema file must exist"
@@ -1413,13 +1376,24 @@ def test_schema() -> None:
             "right": {"footprint": "SMA:SMA_V", "position_nm": [38000000, 0], "rotation_deg": 180},
         },
         "transmission_line": {
-            "type": "CPWG", "layer": "F.Cu", "w_nm": 200000, "gap_nm": 150000,
-            "length_left_nm": 15000000, "length_right_nm": 15000000,
+            "type": "CPWG",
+            "layer": "F.Cu",
+            "w_nm": 200000,
+            "gap_nm": 150000,
+            "length_left_nm": 15000000,
+            "length_right_nm": 15000000,
         },
-        "constraints": {"mode": "REJECT", "drc": {"must_pass": True, "severity": "all"},
-                        "symmetry": {"enforce": True}, "allow_unconnected_copper": False},
-        "export": {"gerbers": {"enabled": True, "format": "gerbers"},
-                   "drill": {"enabled": True, "format": "excellon"}, "outputs_dir": "output/"},
+        "constraints": {
+            "mode": "REJECT",
+            "drc": {"must_pass": True, "severity": "all"},
+            "symmetry": {"enforce": True},
+            "allow_unconnected_copper": False,
+        },
+        "export": {
+            "gerbers": {"enabled": True, "format": "gerbers"},
+            "drill": {"enabled": True, "format": "excellon"},
+            "outputs_dir": "output/",
+        },
     }
     with pytest.raises(StrictValidationError):
         validate_strict(spec_data)

@@ -10,14 +10,10 @@ FOOTPRINT_META_DIR = REPO_ROOT / "coupongen" / "libs" / "footprints_meta"
 def parse_footprint_path(footprint_path: str) -> tuple[str, str]:
     """Parse a footprint path of the form 'Lib:Name' into components."""
     if ":" not in footprint_path:
-        raise ValueError(
-            f"Footprint path must be 'Lib:Name', got {footprint_path!r}"
-        )
+        raise ValueError(f"Footprint path must be 'Lib:Name', got {footprint_path!r}")
     footprint_lib, footprint_name = footprint_path.split(":", 1)
     if not footprint_lib or not footprint_name:
-        raise ValueError(
-            f"Footprint path must be 'Lib:Name', got {footprint_path!r}"
-        )
+        raise ValueError(f"Footprint path must be 'Lib:Name', got {footprint_path!r}")
     return footprint_lib, footprint_name
 
 

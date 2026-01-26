@@ -241,11 +241,7 @@ def _get_export_hashes_from_manifest(manifest: dict[str, Any]) -> dict[str, str]
         Dictionary mapping export paths to their hashes.
     """
     exports = manifest.get("exports", [])
-    return {
-        export["path"]: export["hash"]
-        for export in exports
-        if "path" in export and "hash" in export
-    }
+    return {export["path"]: export["hash"] for export in exports if "path" in export and "hash" in export}
 
 
 def _get_copper_layers_from_spec(spec_path: Path) -> int:
@@ -288,16 +284,12 @@ class TestGoldenSpecsComplete:
     def test_f0_golden_specs_have_export_config(self) -> None:
         """REQ-M1-024: F0 golden specs must have export configuration."""
         f0_specs = list(GOLDEN_SPECS_DIR.glob(F0_PATTERN))
-        assert len(f0_specs) >= 10, (
-            f"Expected at least 10 F0 golden specs, found {len(f0_specs)}"
-        )
+        assert len(f0_specs) >= 10, f"Expected at least 10 F0 golden specs, found {len(f0_specs)}"
 
     def test_f1_golden_specs_have_export_config(self) -> None:
         """REQ-M1-024: F1 golden specs must have export configuration."""
         f1_specs = list(GOLDEN_SPECS_DIR.glob(F1_PATTERN))
-        assert len(f1_specs) >= 10, (
-            f"Expected at least 10 F1 golden specs, found {len(f1_specs)}"
-        )
+        assert len(f1_specs) >= 10, f"Expected at least 10 F1 golden specs, found {len(f1_specs)}"
 
 
 @pytest.mark.kicad_integration
@@ -370,16 +362,12 @@ class TestDesignHashDeterminism:
 
             # Check build succeeded
             assert result.returncode == 0, (
-                f"coupongen build failed for {spec_name} (run {run_idx + 1})\n"
-                f"stdout: {result.stdout}\n"
-                f"stderr: {result.stderr}"
+                f"coupongen build failed for {spec_name} (run {run_idx + 1})\nstdout: {result.stdout}\nstderr: {result.stderr}"
             )
 
             # Find and load manifest
             manifest_path = _find_manifest_json(output_dir)
-            assert manifest_path is not None, (
-                f"Manifest not found for {spec_name} in {output_dir}"
-            )
+            assert manifest_path is not None, f"Manifest not found for {spec_name} in {output_dir}"
 
             manifest = _load_manifest(manifest_path)
 
@@ -387,16 +375,13 @@ class TestDesignHashDeterminism:
             assert "design_hash" in manifest, "Manifest must contain 'design_hash'"
             design_hash = manifest["design_hash"]
             assert len(design_hash) == 64, "design_hash must be 64 hex chars"
-            assert all(c in "0123456789abcdef" for c in design_hash), (
-                "design_hash must be lowercase hex"
-            )
+            assert all(c in "0123456789abcdef" for c in design_hash), "design_hash must be lowercase hex"
 
             design_hashes.append(design_hash)
 
         # Verify all design hashes are identical
         assert len(set(design_hashes)) == 1, (
-            f"design_hash is not stable across {DETERMINISM_BUILD_COUNT} runs "
-            f"for {spec_name}: {design_hashes}"
+            f"design_hash is not stable across {DETERMINISM_BUILD_COUNT} runs for {spec_name}: {design_hashes}"
         )
 
 
@@ -468,10 +453,7 @@ class TestExportHashDeterminism:
                 timeout=180,
             )
 
-            assert result.returncode == 0, (
-                f"coupongen build failed for {spec_name} (run {run_idx + 1})\n"
-                f"stderr: {result.stderr}"
-            )
+            assert result.returncode == 0, f"coupongen build failed for {spec_name} (run {run_idx + 1})\nstderr: {result.stderr}"
 
             # Find and load manifest
             manifest_path = _find_manifest_json(output_dir)
@@ -480,9 +462,7 @@ class TestExportHashDeterminism:
             manifest = _load_manifest(manifest_path)
             export_hashes = _get_export_hashes_from_manifest(manifest)
 
-            assert len(export_hashes) > 0, (
-                f"No exports found in manifest for {spec_name}"
-            )
+            assert len(export_hashes) > 0, f"No exports found in manifest for {spec_name}"
 
             export_hashes_per_run.append(export_hashes)
 
@@ -561,29 +541,21 @@ class TestDrillOutputsExist:
             timeout=180,
         )
 
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstderr: {result.stderr}"
 
         # Find the build artifacts directory
         artifacts_dir = _find_build_artifacts_dir(output_dir)
-        assert artifacts_dir is not None, (
-            f"Build artifacts directory not found for {spec_name}"
-        )
+        assert artifacts_dir is not None, f"Build artifacts directory not found for {spec_name}"
 
         # Find drill files
         drill_files = _find_drill_files(artifacts_dir)
         assert len(drill_files) > 0, (
-            f"No drill files found for {spec_name} in {artifacts_dir}\n"
-            f"Contents: {list(artifacts_dir.rglob('*'))}"
+            f"No drill files found for {spec_name} in {artifacts_dir}\nContents: {list(artifacts_dir.rglob('*'))}"
         )
 
         # Verify at least one drill file is non-empty
         non_empty_drills = [f for f in drill_files if f.stat().st_size > 0]
-        assert len(non_empty_drills) > 0, (
-            f"All drill files are empty for {spec_name}"
-        )
+        assert len(non_empty_drills) > 0, f"All drill files are empty for {spec_name}"
 
 
 @pytest.mark.kicad_integration
@@ -662,10 +634,7 @@ class TestLayerSetValidation:
             timeout=180,
         )
 
-        assert result.returncode == 0, (
-            f"coupongen build failed for {spec_name}\n"
-            f"stderr: {result.stderr}"
-        )
+        assert result.returncode == 0, f"coupongen build failed for {spec_name}\nstderr: {result.stderr}"
 
         # Find and load manifest
         manifest_path = _find_manifest_json(output_dir)
@@ -685,14 +654,10 @@ class TestLayerSetValidation:
                 strict=True,
             )
             assert validation_result.passed, (
-                f"Layer set validation failed for {spec_name}: "
-                f"missing layers: {validation_result.missing_layers}"
+                f"Layer set validation failed for {spec_name}: missing layers: {validation_result.missing_layers}"
             )
         except LayerSetValidationError as e:
-            pytest.fail(
-                f"Layer set validation failed for {spec_name}: "
-                f"missing layers: {e.result.missing_layers}"
-            )
+            pytest.fail(f"Layer set validation failed for {spec_name}: missing layers: {e.result.missing_layers}")
 
 
 @pytest.mark.kicad_integration
@@ -756,8 +721,7 @@ class TestF0LayerSetComplete:
         gerber_exports = [p for p in export_paths if p.startswith("fab/gerbers/")]
 
         assert len(gerber_exports) >= len(layer_set.required), (
-            f"Expected at least {len(layer_set.required)} gerber exports, "
-            f"found {len(gerber_exports)}"
+            f"Expected at least {len(layer_set.required)} gerber exports, found {len(gerber_exports)}"
         )
 
 
@@ -828,8 +792,7 @@ class TestF1LayerSetComplete:
         gerber_exports = [p for p in export_paths if p.startswith("fab/gerbers/")]
 
         assert len(gerber_exports) >= len(layer_set.required), (
-            f"Expected at least {len(layer_set.required)} gerber exports, "
-            f"found {len(gerber_exports)}"
+            f"Expected at least {len(layer_set.required)} gerber exports, found {len(gerber_exports)}"
         )
 
 
@@ -892,9 +855,7 @@ class TestFullDeterminismSuite:
                 timeout=180,
             )
 
-            assert result.returncode == 0, (
-                f"Build failed (run {run_idx + 1}): {result.stderr}"
-            )
+            assert result.returncode == 0, f"Build failed (run {run_idx + 1}): {result.stderr}"
 
             manifest_path = _find_manifest_json(output_dir)
             assert manifest_path is not None, f"Manifest not found (run {run_idx + 1})"
@@ -918,22 +879,12 @@ class TestFullDeterminismSuite:
                 gerber_dir="fab/gerbers/",
                 strict=False,
             )
-            assert result_validation.passed, (
-                f"Layer validation failed (run {run_idx + 1}): "
-                f"{result_validation.missing_layers}"
-            )
+            assert result_validation.passed, f"Layer validation failed (run {run_idx + 1}): {result_validation.missing_layers}"
 
         # Verify design_hash stability
         design_hashes = [m["design_hash"] for m in manifests]
-        assert len(set(design_hashes)) == 1, (
-            f"design_hash not stable: {design_hashes}"
-        )
+        assert len(set(design_hashes)) == 1, f"design_hash not stable: {design_hashes}"
 
         # Verify export hash stability
-        export_hash_sets = [
-            frozenset(_get_export_hashes_from_manifest(m).items())
-            for m in manifests
-        ]
-        assert len(set(export_hash_sets)) == 1, (
-            "Export hashes not stable across runs"
-        )
+        export_hash_sets = [frozenset(_get_export_hashes_from_manifest(m).items()) for m in manifests]
+        assert len(set(export_hash_sets)) == 1, "Export hashes not stable across runs"

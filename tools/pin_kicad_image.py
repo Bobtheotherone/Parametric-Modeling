@@ -59,10 +59,10 @@ def get_image_digest(repository: str, tag: str, token: str) -> str | None:
             "Authorization": f"Bearer {token}",
             # Request manifest list or single manifest
             "Accept": "application/vnd.docker.distribution.manifest.v2+json, "
-                     "application/vnd.docker.distribution.manifest.list.v2+json, "
-                     "application/vnd.oci.image.index.v1+json, "
-                     "application/vnd.oci.image.manifest.v1+json"
-        }
+            "application/vnd.docker.distribution.manifest.list.v2+json, "
+            "application/vnd.oci.image.index.v1+json, "
+            "application/vnd.oci.image.manifest.v1+json",
+        },
     )
     try:
         with urllib.request.urlopen(req) as resp:
@@ -84,20 +84,14 @@ def compute_toolchain_hash(lock_data: dict) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Pin KiCad Docker image digest in the toolchain lock file"
-    )
+    parser = argparse.ArgumentParser(description="Pin KiCad Docker image digest in the toolchain lock file")
     parser.add_argument(
         "--lock-file",
         type=Path,
         default=Path(__file__).parent.parent / "toolchain" / "kicad.lock.json",
-        help="Path to the lock file (default: toolchain/kicad.lock.json)"
+        help="Path to the lock file (default: toolchain/kicad.lock.json)",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print the resolved reference without updating the file"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Print the resolved reference without updating the file")
     args = parser.parse_args()
 
     lock_path: Path = args.lock_file

@@ -118,9 +118,7 @@ class TestDeterminism:
         params_b = space.to_physical_batch(u.copy(), np)
 
         for name in params_a:
-            np.testing.assert_array_equal(
-                params_a[name], params_b[name], err_msg=f"{name} not deterministic"
-            )
+            np.testing.assert_array_equal(params_a[name], params_b[name], err_msg=f"{name} not deterministic")
 
     def test_parameter_space_reusable(self) -> None:
         """Same parameter space can be reused for multiple conversions."""

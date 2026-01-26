@@ -258,8 +258,7 @@ class ConstraintEngine:
             # support only CouponSpec input for full functionality.
             # ResolvedDesign input is primarily for evaluation-only.
             raise ValueError(
-                "validate_or_repair() requires a CouponSpec input for REPAIR mode. "
-                "Use evaluate() for ResolvedDesign inputs."
+                "validate_or_repair() requires a CouponSpec input for REPAIR mode. Use evaluate() for ResolvedDesign inputs."
             )
 
         # Input is CouponSpec

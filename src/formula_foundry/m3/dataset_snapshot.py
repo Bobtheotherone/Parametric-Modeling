@@ -1047,12 +1047,14 @@ class DatasetSnapshotReader:
         row_groups = []
         for i in range(metadata.num_row_groups):
             rg = metadata.row_group(i)
-            row_groups.append({
-                "index": i,
-                "num_rows": rg.num_rows,
-                "total_byte_size": rg.total_byte_size,
-                "columns": metadata.num_columns,
-            })
+            row_groups.append(
+                {
+                    "index": i,
+                    "num_rows": rg.num_rows,
+                    "total_byte_size": rg.total_byte_size,
+                    "columns": metadata.num_columns,
+                }
+            )
 
         return row_groups
 
@@ -1116,9 +1118,7 @@ class IncrementalSnapshotBuilder:
         self.description = description or parent.description
 
         # Copy parent members into a dict for efficient modification
-        self._members: dict[str, DatasetMember] = {
-            m.artifact_id: m for m in parent.members
-        }
+        self._members: dict[str, DatasetMember] = {m.artifact_id: m for m in parent.members}
         self._added: set[str] = set()
         self._removed: set[str] = set()
         self._source_runs: set[str] = set(parent.provenance.source_runs)

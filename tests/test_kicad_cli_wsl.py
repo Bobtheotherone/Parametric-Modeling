@@ -19,11 +19,11 @@ from unittest.mock import mock_open, patch
 import pytest
 
 from formula_foundry.coupongen.kicad.cli import (
+    _ENV_DISABLE_WSL_COPY,
+    _ENV_DOCKER_TMP_BASE,
     _docker_accessible_workdir,
     _is_path_docker_accessible,
     _is_wsl,
-    _ENV_DISABLE_WSL_COPY,
-    _ENV_DOCKER_TMP_BASE,
 )
 
 
@@ -58,18 +58,14 @@ class TestIsPathDockerAccessible:
 
     def test_all_paths_accessible_when_not_wsl(self) -> None:
         """On non-WSL systems, all paths should be considered accessible."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_wsl", return_value=False
-        ):
+        with patch("formula_foundry.coupongen.kicad.cli._is_wsl", return_value=False):
             assert _is_path_docker_accessible(Path("/tmp/foo")) is True
             assert _is_path_docker_accessible(Path("/var/lib/docker")) is True
             assert _is_path_docker_accessible(Path("/some/random/path")) is True
 
     def test_tmp_not_accessible_in_wsl(self) -> None:
         """In WSL, /tmp paths should not be considered accessible."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True
-        ):
+        with patch("formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True):
             # Clear env override
             env = os.environ.copy()
             env.pop(_ENV_DISABLE_WSL_COPY, None)
@@ -79,9 +75,7 @@ class TestIsPathDockerAccessible:
 
     def test_home_accessible_in_wsl(self) -> None:
         """In WSL, home directory paths should be accessible."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True
-        ):
+        with patch("formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True):
             home = Path.home()
             env = os.environ.copy()
             env.pop(_ENV_DISABLE_WSL_COPY, None)
@@ -91,9 +85,7 @@ class TestIsPathDockerAccessible:
 
     def test_mnt_accessible_in_wsl(self) -> None:
         """In WSL, /mnt paths (Windows filesystem) should be accessible."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True
-        ):
+        with patch("formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True):
             env = os.environ.copy()
             env.pop(_ENV_DISABLE_WSL_COPY, None)
             with patch.dict(os.environ, env, clear=True):
@@ -102,12 +94,12 @@ class TestIsPathDockerAccessible:
 
     def test_disable_env_var_overrides_wsl_check(self) -> None:
         """COUPONGEN_DISABLE_WSL_WORKDIR_COPY=1 should bypass the check."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True
+        with (
+            patch("formula_foundry.coupongen.kicad.cli._is_wsl", return_value=True),
+            patch.dict(os.environ, {_ENV_DISABLE_WSL_COPY: "1"}),
         ):
-            with patch.dict(os.environ, {_ENV_DISABLE_WSL_COPY: "1"}):
-                # Even /tmp should be "accessible" when override is set
-                assert _is_path_docker_accessible(Path("/tmp/foo")) is True
+            # Even /tmp should be "accessible" when override is set
+            assert _is_path_docker_accessible(Path("/tmp/foo")) is True
 
 
 class TestDockerAccessibleWorkdir:
@@ -115,12 +107,14 @@ class TestDockerAccessibleWorkdir:
 
     def test_yields_original_when_already_accessible(self, tmp_path: Path) -> None:
         """When path is already accessible, should yield it directly."""
-        with patch(
-            "formula_foundry.coupongen.kicad.cli._is_path_docker_accessible",
-            return_value=True,
+        with (
+            patch(
+                "formula_foundry.coupongen.kicad.cli._is_path_docker_accessible",
+                return_value=True,
+            ),
+            _docker_accessible_workdir(tmp_path) as workdir,
         ):
-            with _docker_accessible_workdir(tmp_path) as workdir:
-                assert workdir == tmp_path
+            assert workdir == tmp_path
 
     def test_copies_files_when_not_accessible(self, tmp_path: Path) -> None:
         """When path is not accessible, should copy files to temp location."""
@@ -160,6 +154,7 @@ class TestDockerAccessibleWorkdir:
 
         # Cleanup
         import shutil
+
         shutil.rmtree(custom_tmp, ignore_errors=True)
 
     def test_copies_back_modified_files(self, tmp_path: Path) -> None:
@@ -187,6 +182,7 @@ class TestDockerAccessibleWorkdir:
             assert (tmp_path / "input.txt").read_text() == "modified"
 
         import shutil
+
         shutil.rmtree(custom_tmp, ignore_errors=True)
 
     def test_cleans_up_temp_directory(self, tmp_path: Path) -> None:
@@ -214,6 +210,7 @@ class TestDockerAccessibleWorkdir:
             assert not temp_workdir.exists()
 
         import shutil
+
         shutil.rmtree(custom_tmp, ignore_errors=True)
 
 
@@ -238,4 +235,5 @@ class TestEnvVarOverrides:
         finally:
             cli._WSL_DOCKER_TMP_BASE = original_cache
             import shutil
+
             shutil.rmtree(custom_base, ignore_errors=True)

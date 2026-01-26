@@ -43,6 +43,196 @@ from tools import spec_lint
 
 
 @dataclass
+class SkippedTestInfo:
+    """Information about a skipped or xfail test."""
+
+    node_id: str
+    reason: str
+    kind: str  # 'skipped', 'xfail', or 'placeholder'
+
+
+def _detect_skipped_or_placeholder_tests(
+    project_root: Path,
+    test_node_ids: list[str],
+) -> list[SkippedTestInfo]:
+    """Run pytest --collect-only with skip markers and detect skipped/xfail/placeholder tests.
+
+    Args:
+        project_root: The project root path.
+        test_node_ids: List of test node IDs to check.
+
+    Returns:
+        List of SkippedTestInfo for tests that are skipped, xfail, or placeholder.
+    """
+    if not test_node_ids:
+        return []
+
+    # Run pytest --collect-only -q with the specific test IDs to see markers
+    cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-q",
+        *test_node_ids,
+    ]
+
+    env = os.environ.copy()
+    if _VERIFY_ENV:
+        env.update(_VERIFY_ENV)
+
+    try:
+        subprocess.run(
+            cmd,
+            cwd=str(project_root),
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+    skipped: list[SkippedTestInfo] = []
+
+    # Parse pytest output for skip markers
+    # Look for patterns like:
+    #   <Module tests/test_foo.py>
+    #     <Function test_bar>
+    #       <Skip reason='some reason'>
+    # or in -q output, skipped tests may show with 's' or 'x' in collection
+    for node_id in test_node_ids:
+        # Check if node has skip/xfail marker by running a dry-run
+        # We'll use --co (collect-only) with verbose to see markers
+        pass
+
+    # Better approach: run pytest --collect-only --quiet and look for skip info
+    # Or run each test with --collect-only and see the output
+
+    # Actually, let's parse the collection output more carefully
+    # In verbose mode, skipped tests show markers
+    cmd_verbose = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "--collect-only",
+        "-v",
+        *test_node_ids,
+    ]
+
+    try:
+        proc_v = subprocess.run(
+            cmd_verbose,
+            cwd=str(project_root),
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+
+    # Parse verbose output for skip/xfail markers
+    lines = proc_v.stdout.splitlines()
+    for line in lines:
+        line_stripped = line.strip()
+        # Look for lines with test IDs and skip/xfail markers
+        for node_id in test_node_ids:
+            if node_id in line_stripped:
+                lower = line_stripped.lower()
+                if "skip" in lower:
+                    reason = _extract_reason(line_stripped, "skip")
+                    skipped.append(SkippedTestInfo(node_id=node_id, reason=reason, kind="skipped"))
+                elif "xfail" in lower:
+                    reason = _extract_reason(line_stripped, "xfail")
+                    skipped.append(SkippedTestInfo(node_id=node_id, reason=reason, kind="xfail"))
+
+    # Also check for placeholder tests (tests with NotImplementedError or 'pass' only)
+    for node_id in test_node_ids:
+        if _is_placeholder_test(project_root, node_id):
+            skipped.append(SkippedTestInfo(node_id=node_id, reason="placeholder implementation", kind="placeholder"))
+
+    # Deduplicate
+    seen: set[str] = set()
+    result: list[SkippedTestInfo] = []
+    for info in skipped:
+        if info.node_id not in seen:
+            seen.add(info.node_id)
+            result.append(info)
+
+    return result
+
+
+def _extract_reason(line: str, marker_type: str) -> str:
+    """Extract the reason from a skip/xfail marker line."""
+    import re
+
+    # Look for reason='...' or reason="..."
+    match = re.search(r"reason=['\"]([^'\"]+)['\"]", line, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return f"{marker_type} marker present"
+
+
+def _is_placeholder_test(project_root: Path, node_id: str) -> bool:
+    """Check if a test is a placeholder (raises NotImplementedError or is just 'pass').
+
+    Args:
+        project_root: The project root path.
+        node_id: The pytest node ID (e.g., tests/test_foo.py::test_bar).
+
+    Returns:
+        True if the test appears to be a placeholder.
+    """
+    # Parse node_id to get file path and test name
+    if "::" not in node_id:
+        return False
+
+    parts = node_id.split("::")
+    file_path = project_root / parts[0]
+    if not file_path.exists():
+        return False
+
+    test_name = parts[-1]
+    # Handle parametrized tests
+    if "[" in test_name:
+        test_name = test_name.split("[")[0]
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    # Simple heuristic: find the test function and check if it's a placeholder
+    import re
+
+    # Match def test_name(...): followed by body
+    pattern = rf"def\s+{re.escape(test_name)}\s*\([^)]*\)\s*(?:->.*?)?\s*:\s*\n((?:\s+.*\n)*)"
+    match = re.search(pattern, content)
+    if not match:
+        return False
+
+    body = match.group(1).strip()
+    # Check for placeholder patterns
+    placeholder_patterns = [
+        r"^\s*pass\s*$",
+        r"^\s*raise\s+NotImplementedError",
+        r"^\s*\.\.\.\s*$",
+        r'^\s*""".*?"""\s*$',
+        r"^\s*#.*$",
+    ]
+
+    body_lines = [l.strip() for l in body.splitlines() if l.strip()]
+    if not body_lines:
+        return True  # Empty body
+    if len(body_lines) == 1:
+        for pat in placeholder_patterns:
+            if re.match(pat, body_lines[0]):
+                return True
+    return False
+
+
+@dataclass
 class GateResult:
     name: str
     passed: bool
@@ -112,8 +302,10 @@ def _run(cmd: list[str], cwd: Path, *, timeout_s: int | None = None) -> GateResu
         )
 
 
-def _gate_spec_lint(project_root: Path) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.spec_lint", "DESIGN_DOCUMENT.md", "--collect"]
+def _gate_spec_lint(project_root: Path, *, collect: bool = True) -> GateResult:
+    cmd = [sys.executable, "-m", "tools.spec_lint", "DESIGN_DOCUMENT.md"]
+    if collect:
+        cmd.append("--collect")
     res = _run(cmd, project_root)
     res.name = "spec_lint"
     return res
@@ -157,14 +349,14 @@ def _detect_milestone_id(project_root: Path) -> str | None:
 
 
 def _gate_m0_smoke(project_root: Path, *, timeout_s: int) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.m0", "smoke"]
+    cmd = [sys.executable, "-m", "tools.m0", "smoke", "--mode", "strict"]
     res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_smoke"
     return res
 
 
 def _gate_m0_repro_check(project_root: Path, *, timeout_s: int) -> GateResult:
-    cmd = [sys.executable, "-m", "tools.m0", "repro-check"]
+    cmd = [sys.executable, "-m", "tools.m0", "repro-check", "--mode", "strict"]
     res = _run(cmd, project_root, timeout_s=timeout_s)
     res.name = "m0_repro_check"
     return res
@@ -209,6 +401,73 @@ def _resolve_m0_timeout(args: argparse.Namespace) -> int:
         except ValueError:
             return DEFAULT_M0_GATE_TIMEOUT_S
     return DEFAULT_M0_GATE_TIMEOUT_S
+
+
+def _gate_no_skipped_tests(project_root: Path, milestone_id: str | None) -> GateResult:
+    """Gate that fails if any tests in the test matrix are skipped, xfail, or placeholder.
+
+    This prevents "green-but-incomplete" milestones where tests appear to pass
+    because they are skipped or not implemented.
+
+    Args:
+        project_root: The project root path.
+        milestone_id: The current milestone (e.g., "M0", "M1").
+
+    Returns:
+        GateResult indicating pass/fail status.
+    """
+    if milestone_id is None:
+        return GateResult(
+            name="no_skipped_tests",
+            passed=True,
+            note="no milestone detected, skipping check",
+        )
+
+    # Get test matrix from spec_lint
+    doc_path = project_root / "DESIGN_DOCUMENT.md"
+    lint_result = spec_lint.lint_design_document(doc_path)
+
+    if not lint_result.matrix_map:
+        return GateResult(
+            name="no_skipped_tests",
+            passed=True,
+            note="no test matrix found",
+        )
+
+    # Collect all test node IDs from the matrix
+    all_test_ids: list[str] = []
+    for req_id, test_ids in lint_result.matrix_map.items():
+        # Only check tests for the current milestone
+        if req_id.startswith(f"REQ-{milestone_id}-"):
+            all_test_ids.extend(test_ids)
+
+    if not all_test_ids:
+        return GateResult(
+            name="no_skipped_tests",
+            passed=True,
+            note=f"no tests mapped to {milestone_id} requirements",
+        )
+
+    # Check for skipped/xfail/placeholder tests
+    skipped = _detect_skipped_or_placeholder_tests(project_root, all_test_ids)
+
+    if skipped:
+        skipped_lines = []
+        for info in skipped:
+            skipped_lines.append(f"  - {info.node_id} ({info.kind}): {info.reason}")
+
+        return GateResult(
+            name="no_skipped_tests",
+            passed=False,
+            note=f"{len(skipped)} skipped/xfail/placeholder test(s) in {milestone_id} matrix",
+            stdout="\n".join(skipped_lines),
+        )
+
+    return GateResult(
+        name="no_skipped_tests",
+        passed=True,
+        note=f"all {len(all_test_ids)} {milestone_id} matrix tests are active",
+    )
 
 
 @dataclass(frozen=True)
@@ -599,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-pytest", action="store_true")
     ap.add_argument("--skip-quality", action="store_true")
     ap.add_argument("--skip-git", action="store_true")
+    ap.add_argument("--skip-no-skipped-tests", action="store_true", help="Skip the no-skipped-tests gate")
     ap.add_argument(
         "--include-m0",
         action="store_true",
@@ -620,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
     tempfile.tempdir = str(artifacts.tmp_dir)
 
     results: list[GateResult] = []
-    results.append(_gate_spec_lint(project_root))
+    results.append(_gate_spec_lint(project_root, collect=not args.skip_pytest))
 
     milestone_id = _detect_milestone_id(project_root)
     run_m0_gates = milestone_id == "M0" or args.include_m0
@@ -633,6 +893,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_pytest:
         results.append(_gate_pytest(project_root))
+
+    # Check for skipped/xfail/placeholder tests in the milestone test matrix
+    if not getattr(args, "skip_no_skipped_tests", False):
+        results.append(_gate_no_skipped_tests(project_root, milestone_id))
 
     # Optional quality gates.
     if not args.skip_quality:

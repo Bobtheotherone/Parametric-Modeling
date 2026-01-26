@@ -8,6 +8,7 @@ This module provides:
 - M2/M3 test collection gating (temporary, controllable via env vars)
 - sys.path sanitization for worktree isolation
 """
+
 from __future__ import annotations
 
 import json
@@ -26,16 +27,14 @@ import pytest
 # This can cause "not a package" and half-loaded module errors.
 # Ensure the canonical repo src/ is at the front and remove worktree paths.
 
+
 def _sanitize_sys_path() -> None:
     """Ensure canonical src/ is first; remove worktree src/ entries."""
     repo_root = Path(__file__).resolve().parent.parent
     canonical_src = repo_root / "src"
 
     # Remove any worktree src paths (paths containing /runs/ and /worktrees/)
-    sys.path = [
-        p for p in sys.path
-        if not ("/runs/" in p and "/worktrees/" in p and "/src" in p)
-    ]
+    sys.path = [p for p in sys.path if not ("/runs/" in p and "/worktrees/" in p and "/src" in p)]
 
     # Ensure canonical src is at the front
     canonical_src_str = str(canonical_src)
@@ -257,9 +256,7 @@ def fake_drc_runner():
             self.violations = violations or []
             self.calls: list[tuple[Path, Path]] = []
 
-        def run_drc(
-            self, board_path: Path, report_path: Path
-        ) -> subprocess.CompletedProcess[str]:
+        def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
             self.calls.append((board_path, report_path))
             report = {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -278,27 +275,17 @@ def fake_drc_runner():
                 stderr="" if self.returncode == 0 else "DRC violations found",
             )
 
-        def export_gerbers(
-            self, board_path: Path, out_dir: Path
-        ) -> subprocess.CompletedProcess[str]:
+        def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
             out_dir.mkdir(parents=True, exist_ok=True)
             board_name = board_path.stem
             for layer in ["F_Cu", "B_Cu", "In1_Cu", "In2_Cu", "F_Mask", "B_Mask", "Edge_Cuts"]:
-                (out_dir / f"{board_name}-{layer}.gbr").write_text(
-                    f"G04 Fake {layer}*\n", encoding="utf-8"
-                )
-            return subprocess.CompletedProcess(
-                args=["kicad-cli"], returncode=0, stdout="", stderr=""
-            )
+                (out_dir / f"{board_name}-{layer}.gbr").write_text(f"G04 Fake {layer}*\n", encoding="utf-8")
+            return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-        def export_drill(
-            self, board_path: Path, out_dir: Path
-        ) -> subprocess.CompletedProcess[str]:
+        def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "drill.drl").write_text("M48\n", encoding="utf-8")
-            return subprocess.CompletedProcess(
-                args=["kicad-cli"], returncode=0, stdout="", stderr=""
-            )
+            return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
     def factory(**kwargs: Any) -> FakeDrcRunner:
         return FakeDrcRunner(**kwargs)
@@ -311,9 +298,7 @@ def fake_drc_runner():
 # ---------------------------------------------------------------------------
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Mark tests appropriately based on requirements.
 
     - Skip kicad_integration tests if Docker is not available
@@ -324,6 +309,4 @@ def pytest_collection_modifyitems(
 
     for item in items:
         if "kicad_integration" in item.keywords and not has_docker:
-            item.add_marker(
-                pytest.mark.skip(reason="Docker not available for KiCad integration tests")
-            )
+            item.add_marker(pytest.mark.skip(reason="Docker not available for KiCad integration tests"))

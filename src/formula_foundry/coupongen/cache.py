@@ -40,7 +40,6 @@ from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 if TYPE_CHECKING:
     from .resolve import ResolvedDesign
-    from .spec import CouponSpec
 
 
 class CacheError(Exception):
@@ -102,10 +101,7 @@ class CacheKey:
 
     def matches_manifest(self, manifest: dict[str, Any]) -> bool:
         """Check if this cache key matches a manifest's hashes."""
-        return (
-            manifest.get("design_hash") == self.design_hash
-            and manifest.get("toolchain_hash") == self.toolchain_hash
-        )
+        return manifest.get("design_hash") == self.design_hash and manifest.get("toolchain_hash") == self.toolchain_hash
 
 
 @dataclass(frozen=True)

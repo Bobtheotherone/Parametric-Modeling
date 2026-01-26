@@ -622,7 +622,7 @@ class TestLayerMapping:
             "In2.Cu": "In2.Cu",
             "B.Cu": "B.Cu",
         }
-        assert SPEC_TO_KICAD_LAYER == expected_mappings
+        assert expected_mappings == SPEC_TO_KICAD_LAYER
 
 
 class TestBoardFileValidation:
@@ -642,9 +642,7 @@ class TestBoardFileValidation:
         board_path = write_board(f0_spec, resolved, tmp_path)
 
         content = board_path.read_text(encoding="utf-8")
-        assert content.strip().startswith("(kicad_pcb"), (
-            f"Board file should start with (kicad_pcb, got: {content[:50]!r}"
-        )
+        assert content.strip().startswith("(kicad_pcb"), f"Board file should start with (kicad_pcb, got: {content[:50]!r}"
 
     def test_board_file_balanced_parentheses(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
         """Generated board file should have balanced parentheses."""
@@ -654,9 +652,7 @@ class TestBoardFileValidation:
         content = board_path.read_text(encoding="utf-8")
         open_count = content.count("(")
         close_count = content.count(")")
-        assert open_count == close_count, (
-            f"Unbalanced parentheses: {open_count} open vs {close_count} close"
-        )
+        assert open_count == close_count, f"Unbalanced parentheses: {open_count} open vs {close_count} close"
 
     def test_board_file_parseable(self, f0_spec: CouponSpec, tmp_path: Path) -> None:
         """Generated board file should parse without errors."""
@@ -719,9 +715,7 @@ def f1_spec_with_logical_layers(f1_spec_data: dict) -> CouponSpec:
 class TestLayerMappingIntegration:
     """Integration tests verifying layer mapping works in board generation."""
 
-    def test_f1_logical_layers_mapped_to_kicad(
-        self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_f1_logical_layers_mapped_to_kicad(self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path) -> None:
         """F1 spec with L2/L3 layers should generate board with In1.Cu/In2.Cu."""
         resolved = resolve(f1_spec_with_logical_layers)
         board_path = write_board(f1_spec_with_logical_layers, resolved, tmp_path)
@@ -736,20 +730,14 @@ class TestLayerMappingIntegration:
                 continue
             # Check that L2 and L3 are not used as layer names
             # (layer L2) or (layer L3) should not appear
-            assert "(layer\n      L2)" not in line and "(layer L2)" not in line, (
-                f"Found invalid layer name L2 in: {line}"
-            )
-            assert "(layer\n      L3)" not in line and "(layer L3)" not in line, (
-                f"Found invalid layer name L3 in: {line}"
-            )
+            assert "(layer\n      L2)" not in line and "(layer L2)" not in line, f"Found invalid layer name L2 in: {line}"
+            assert "(layer\n      L3)" not in line and "(layer L3)" not in line, f"Found invalid layer name L3 in: {line}"
 
         # Should contain the correct KiCad layer names
         assert "In1.Cu" in content, "Should contain In1.Cu layer"
         assert "In2.Cu" in content, "Should contain In2.Cu layer"
 
-    def test_f1_logical_layers_zones_have_valid_kicad_layers(
-        self, f1_spec_with_logical_layers: CouponSpec
-    ) -> None:
+    def test_f1_logical_layers_zones_have_valid_kicad_layers(self, f1_spec_with_logical_layers: CouponSpec) -> None:
         """Zone elements should have valid KiCad layer names."""
         resolved = resolve(f1_spec_with_logical_layers)
         writer = BoardWriter(f1_spec_with_logical_layers, resolved)
@@ -768,13 +756,10 @@ class TestLayerMappingIntegration:
 
             layer_name = layer_elems[0][1]
             assert layer_name in valid_kicad_layers, (
-                f"Zone has invalid layer name: {layer_name!r}, "
-                f"expected one of {valid_kicad_layers}"
+                f"Zone has invalid layer name: {layer_name!r}, expected one of {valid_kicad_layers}"
             )
 
-    def test_board_file_kicad_loadable_layers(
-        self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_board_file_kicad_loadable_layers(self, f1_spec_with_logical_layers: CouponSpec, tmp_path: Path) -> None:
         """Generated board file should only use valid KiCad layer names.
 
         This is a regression test for the issue where L2/L3 logical layer
@@ -846,8 +831,7 @@ class TestAntipadKeeoutRules:
 
             vias_rule = vias_rules[0][1]
             assert vias_rule == "allowed", (
-                f"Antipad/cutout must allow vias (got '{vias_rule}'). "
-                f"Blocking vias causes 'items_not_allowed' DRC errors."
+                f"Antipad/cutout must allow vias (got '{vias_rule}'). Blocking vias causes 'items_not_allowed' DRC errors."
             )
 
     def test_antipad_blocks_copperpour(self, f1_spec: CouponSpec) -> None:
@@ -870,8 +854,7 @@ class TestAntipadKeeoutRules:
 
             copperpour_rule = copperpour_rules[0][1]
             assert copperpour_rule == "not_allowed", (
-                f"Antipad/cutout must block copperpour (got '{copperpour_rule}'). "
-                f"This creates the clearance in ground planes."
+                f"Antipad/cutout must block copperpour (got '{copperpour_rule}'). This creates the clearance in ground planes."
             )
 
     def test_antipad_allows_tracks_and_pads(self, f1_spec: CouponSpec) -> None:
@@ -1007,8 +990,8 @@ class TestSilkscreenAnnotations:
 
     def test_silkscreen_has_front_layer(self, f0_spec: CouponSpec) -> None:
         """Silkscreen annotations should appear on F.SilkS layer."""
-        from formula_foundry.coupongen.kicad import build_annotations_from_spec
         from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
+        from formula_foundry.coupongen.kicad import build_annotations_from_spec
 
         resolved = resolve(f0_spec)
         design_hash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -1121,9 +1104,7 @@ class TestRoundedBoardOutline:
         data["board"]["outline"]["corner_radius_nm"] = 0
         return CouponSpec.model_validate(data)
 
-    def test_rounded_outline_generates_lines_and_arcs(
-        self, spec_with_corner_radius: CouponSpec
-    ) -> None:
+    def test_rounded_outline_generates_lines_and_arcs(self, spec_with_corner_radius: CouponSpec) -> None:
         """Board with corner_radius > 0 should generate gr_line and gr_arc elements."""
         resolved = resolve(spec_with_corner_radius)
         writer = BoardWriter(spec_with_corner_radius, resolved)
@@ -1139,9 +1120,7 @@ class TestRoundedBoardOutline:
         assert len(gr_arc) == 4, f"Expected 4 gr_arc elements, got {len(gr_arc)}"
         assert len(gr_rect) == 0, "Should NOT have gr_rect when corner_radius > 0"
 
-    def test_sharp_corner_outline_generates_rect(
-        self, spec_without_corner_radius: CouponSpec
-    ) -> None:
+    def test_sharp_corner_outline_generates_rect(self, spec_without_corner_radius: CouponSpec) -> None:
         """Board with corner_radius = 0 should generate a simple gr_rect."""
         resolved = resolve(spec_without_corner_radius)
         writer = BoardWriter(spec_without_corner_radius, resolved)
@@ -1157,30 +1136,21 @@ class TestRoundedBoardOutline:
         assert len(gr_line) == 0, "Should NOT have gr_line when corner_radius = 0"
         assert len(gr_arc) == 0, "Should NOT have gr_arc when corner_radius = 0"
 
-    def test_rounded_outline_elements_on_edge_cuts(
-        self, spec_with_corner_radius: CouponSpec
-    ) -> None:
+    def test_rounded_outline_elements_on_edge_cuts(self, spec_with_corner_radius: CouponSpec) -> None:
         """All rounded outline elements should be on Edge.Cuts layer."""
         resolved = resolve(spec_with_corner_radius)
         writer = BoardWriter(spec_with_corner_radius, resolved)
         board = writer.build_board()
 
         # Find all outline elements
-        outline_elems = [
-            e for e in board
-            if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")
-        ]
+        outline_elems = [e for e in board if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")]
 
         for elem in outline_elems:
             layer_elem = [e for e in elem if isinstance(e, list) and e[0] == "layer"]
             assert layer_elem, f"Outline element missing layer: {elem}"
-            assert layer_elem[0][1] == "Edge.Cuts", (
-                f"Outline element should be on Edge.Cuts, got {layer_elem[0][1]}"
-            )
+            assert layer_elem[0][1] == "Edge.Cuts", f"Outline element should be on Edge.Cuts, got {layer_elem[0][1]}"
 
-    def test_rounded_outline_arc_has_start_mid_end(
-        self, spec_with_corner_radius: CouponSpec
-    ) -> None:
+    def test_rounded_outline_arc_has_start_mid_end(self, spec_with_corner_radius: CouponSpec) -> None:
         """Arc elements should have start, mid, and end points (KiCad format)."""
         resolved = resolve(spec_with_corner_radius)
         writer = BoardWriter(spec_with_corner_radius, resolved)
@@ -1197,9 +1167,7 @@ class TestRoundedBoardOutline:
             assert len(mid) == 1, f"Arc missing mid point: {arc}"
             assert len(end) == 1, f"Arc missing end point: {arc}"
 
-    def test_rounded_outline_deterministic(
-        self, spec_with_corner_radius: CouponSpec
-    ) -> None:
+    def test_rounded_outline_deterministic(self, spec_with_corner_radius: CouponSpec) -> None:
         """Rounded outline should be deterministic across multiple builds."""
         resolved = resolve(spec_with_corner_radius)
 
@@ -1211,10 +1179,7 @@ class TestRoundedBoardOutline:
 
         # Extract outline elements
         def get_outline(board: list) -> list:
-            return [
-                e for e in board
-                if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")
-            ]
+            return [e for e in board if isinstance(e, list) and e[0] in ("gr_line", "gr_arc")]
 
         outline1 = get_outline(board1)
         outline2 = get_outline(board2)
@@ -1223,9 +1188,7 @@ class TestRoundedBoardOutline:
         # Note: Deep comparison may need adjustment for UUID differences
         # The key is that geometry coordinates are identical
 
-    def test_rounded_outline_coordinates_integer_nm(
-        self, spec_with_corner_radius: CouponSpec
-    ) -> None:
+    def test_rounded_outline_coordinates_integer_nm(self, spec_with_corner_radius: CouponSpec) -> None:
         """Outline coordinates should be derived from integer-nm calculations."""
         from formula_foundry.coupongen.geom.cutouts import generate_rounded_outline
 
@@ -1240,13 +1203,13 @@ class TestRoundedBoardOutline:
 
         # Verify all coordinates are integers
         for elem in rounded.elements:
-            if hasattr(elem, 'start'):
+            if hasattr(elem, "start"):
                 assert isinstance(elem.start.x, int)
                 assert isinstance(elem.start.y, int)
-            if hasattr(elem, 'end'):
+            if hasattr(elem, "end"):
                 assert isinstance(elem.end.x, int)
                 assert isinstance(elem.end.y, int)
-            if hasattr(elem, 'mid'):
+            if hasattr(elem, "mid"):
                 assert isinstance(elem.mid.x, int)
                 assert isinstance(elem.mid.y, int)
 
@@ -1286,9 +1249,7 @@ class TestRoundedBoardOutline:
         assert len(rounded.elements) == 4
         assert all(isinstance(e, OutlineLine) for e in rounded.elements)
 
-    def test_file_output_rounded_outline(
-        self, spec_with_corner_radius: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_file_output_rounded_outline(self, spec_with_corner_radius: CouponSpec, tmp_path: Path) -> None:
         """Written board file should contain gr_line and gr_arc for rounded outline."""
         resolved = resolve(spec_with_corner_radius)
         board_path = write_board(spec_with_corner_radius, resolved, tmp_path)
@@ -1303,9 +1264,7 @@ class TestRoundedBoardOutline:
         # Should NOT have gr_rect
         assert "(gr_rect" not in content
 
-    def test_file_output_sharp_corner_outline(
-        self, spec_without_corner_radius: CouponSpec, tmp_path: Path
-    ) -> None:
+    def test_file_output_sharp_corner_outline(self, spec_without_corner_radius: CouponSpec, tmp_path: Path) -> None:
         """Written board file should contain gr_rect for sharp corner outline."""
         resolved = resolve(spec_without_corner_radius)
         board_path = write_board(spec_without_corner_radius, resolved, tmp_path)

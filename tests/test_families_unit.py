@@ -15,9 +15,7 @@ import pytest
 
 # Direct import to avoid broken import chain in formula_foundry.__init__
 _SRC_DIR = Path(__file__).resolve().parent.parent / "src"
-_families_spec = importlib.util.spec_from_file_location(
-    "families", _SRC_DIR / "formula_foundry" / "coupongen" / "families.py"
-)
+_families_spec = importlib.util.spec_from_file_location("families", _SRC_DIR / "formula_foundry" / "coupongen" / "families.py")
 _families = importlib.util.module_from_spec(_families_spec)  # type: ignore[arg-type]
 _families_spec.loader.exec_module(_families)  # type: ignore[union-attr]
 
@@ -151,9 +149,7 @@ class TestGetFamilyRequiredFields:
 class TestValidateFamilyF0:
     """Tests for validate_family with F0 family."""
 
-    def _make_f0_spec_mock(
-        self, discontinuity: Any = None
-    ) -> MagicMock:
+    def _make_f0_spec_mock(self, discontinuity: Any = None) -> MagicMock:
         """Create a mock F0 spec."""
         spec = MagicMock()
         spec.coupon_family = FAMILY_F0
@@ -182,9 +178,7 @@ class TestValidateFamilyF0:
 class TestValidateFamilyF1:
     """Tests for validate_family with F1 family."""
 
-    def _make_f1_spec_mock(
-        self, discontinuity: Any = None, disc_type: str = "VIA_TRANSITION"
-    ) -> MagicMock:
+    def _make_f1_spec_mock(self, discontinuity: Any = None, disc_type: str = "VIA_TRANSITION") -> MagicMock:
         """Create a mock F1 spec."""
         spec = MagicMock()
         spec.coupon_family = FAMILY_F1

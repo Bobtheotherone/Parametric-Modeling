@@ -387,9 +387,7 @@ class TestCmdAuditHashVerification:
 class TestCmdAuditProvenance:
     """Tests for provenance/tool version information in audit output."""
 
-    def test_audit_json_includes_provenance(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audit_json_includes_provenance(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Audit JSON output should include provenance (tool versions) for each artifact."""
         cmd_init(root=tmp_path, force=False, quiet=True)
 
@@ -437,9 +435,7 @@ class TestCmdAuditProvenance:
         assert artifact["provenance"]["generator_version"] == "2.0.0"
         assert "hostname" in artifact["provenance"]
 
-    def test_audit_json_includes_timestamps(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audit_json_includes_timestamps(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Audit JSON output should include timestamps for all artifacts."""
         cmd_init(root=tmp_path, force=False, quiet=True)
 

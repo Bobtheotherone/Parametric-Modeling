@@ -35,7 +35,6 @@ from typing import Literal
 
 from .policy import DEFAULT_ZONE_POLICY, ZonePolicy
 
-
 SeverityLevel = Literal["all", "error", "warning"]
 
 
@@ -83,14 +82,16 @@ def build_drc_flags(
     if use_refill:
         args.append(effective_policy.drc_refill_flag)
 
-    args.extend([
-        "--exit-code-violations",
-        "--format",
-        "json",
-        "--output",
-        str(report_path),
-        str(board_path),
-    ])
+    args.extend(
+        [
+            "--exit-code-violations",
+            "--format",
+            "json",
+            "--output",
+            str(report_path),
+            str(board_path),
+        ]
+    )
 
     return args
 
@@ -133,11 +134,13 @@ def build_export_gerber_flags(
     if use_check:
         args.append(effective_policy.export_check_flag)
 
-    args.extend([
-        "--output",
-        str(output_dir),
-        str(board_path),
-    ])
+    args.extend(
+        [
+            "--output",
+            str(output_dir),
+            str(board_path),
+        ]
+    )
 
     return args
 
@@ -180,11 +183,13 @@ def build_export_drill_flags(
     if use_check:
         args.append(effective_policy.export_check_flag)
 
-    args.extend([
-        "--output",
-        str(output_dir),
-        str(board_path),
-    ])
+    args.extend(
+        [
+            "--output",
+            str(output_dir),
+            str(board_path),
+        ]
+    )
 
     return args
 

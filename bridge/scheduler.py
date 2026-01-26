@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 class SchedulableTask(Protocol):
     """Protocol for tasks that can be scheduled."""
+
     id: str
     status: str
     solo: bool
@@ -33,6 +34,7 @@ class SchedulableTask(Protocol):
 @dataclass
 class SchedulerMetrics:
     """Metrics tracked by the scheduler for instrumentation."""
+
     start_time: float = field(default_factory=time.monotonic)
     total_tasks: int = 0
     completed_tasks: int = 0
@@ -68,11 +70,13 @@ class SchedulerMetrics:
 
     def record_stall(self, reason: str, task_ids: list[str]) -> None:
         """Record a stall event."""
-        self.stall_events.append({
-            "time": time.monotonic(),
-            "reason": reason,
-            "task_ids": task_ids,
-        })
+        self.stall_events.append(
+            {
+                "time": time.monotonic(),
+                "reason": reason,
+                "task_ids": task_ids,
+            }
+        )
 
     def record_retry(self, task_id: str) -> None:
         """Record a task retry."""
@@ -108,6 +112,7 @@ class SchedulerMetrics:
 @dataclass
 class LaneConfig:
     """Configuration for two-lane execution."""
+
     coding_lane_size: int  # Number of workers for coding tasks
     executor_lane_size: int = 1  # Number of workers for heavy/executor tasks
 
@@ -226,10 +231,7 @@ class TwoLaneScheduler:
 
     def _can_start_in_coding_lane(self, task: SchedulableTask) -> bool:
         """Check if task can start in coding lane."""
-        return (
-            not self._is_executor_lane_task(task)
-            and len(self.coding_lane_running) < self.lane_config.coding_lane_size
-        )
+        return not self._is_executor_lane_task(task) and len(self.coding_lane_running) < self.lane_config.coding_lane_size
 
     def _can_start_in_executor_lane(self, task: SchedulableTask) -> bool:
         """Check if task can start in executor lane."""
@@ -330,6 +332,7 @@ class TwoLaneScheduler:
 @dataclass
 class FillerTask:
     """A filler task generated for backfilling."""
+
     id: str
     title: str
     description: str
@@ -388,40 +391,68 @@ class BackfillGenerator:
 
     # Task types with scope-aware descriptions (bridge removed from defaults)
     TASK_TYPES = [
-        ("lint", "Fix linting issues in tests/",
-         "Run ruff check on tests/ directory and fix any issues. "
-         "MAX 3 files changed. Do NOT touch src/, bridge/, or any files outside tests/, docs/."),
-        ("test", "Add unit tests",
-         "Add missing unit tests for uncovered code in tests/ directory. "
-         "MAX 2 new test files. Do NOT touch src/ or any non-test files."),
-        ("type_hints", "Add type hints to tests/",
-         "Add type annotations to untyped functions in tests/ directory only. "
-         "MAX 3 files changed. Do NOT touch src/, bridge/, or anything outside tests/."),
-        ("docs", "Improve documentation",
-         "Add or improve docstrings in docs/ directory. "
-         "MAX 3 files changed. Do NOT touch src/ or bridge/."),
-        ("schema_lint", "Fix test schema issues",
-         "Validate and fix JSON schema issues in tests/ directory. "
-         "MAX 2 files changed. Do NOT touch src/ or bridge/."),
+        (
+            "lint",
+            "Fix linting issues in tests/",
+            "Run ruff check on tests/ directory and fix any issues. "
+            "MAX 3 files changed. Do NOT touch src/, bridge/, or any files outside tests/, docs/.",
+        ),
+        (
+            "test",
+            "Add unit tests",
+            "Add missing unit tests for uncovered code in tests/ directory. "
+            "MAX 2 new test files. Do NOT touch src/ or any non-test files.",
+        ),
+        (
+            "type_hints",
+            "Add type hints to tests/",
+            "Add type annotations to untyped functions in tests/ directory only. "
+            "MAX 3 files changed. Do NOT touch src/, bridge/, or anything outside tests/.",
+        ),
+        (
+            "docs",
+            "Improve documentation",
+            "Add or improve docstrings in docs/ directory. MAX 3 files changed. Do NOT touch src/ or bridge/.",
+        ),
+        (
+            "schema_lint",
+            "Fix test schema issues",
+            "Validate and fix JSON schema issues in tests/ directory. MAX 2 files changed. Do NOT touch src/ or bridge/.",
+        ),
     ]
 
     # Alternative task types when bridge is allowed
     TASK_TYPES_WITH_BRIDGE = [
-        ("lint", "Fix linting issues in tests/",
-         "Run ruff check on tests/ directory and fix any issues. "
-         "MAX 3 files changed. Do NOT touch src/, bridge/loop.py, bridge/patch_integration.py, DESIGN_DOCUMENT.md."),
-        ("test", "Add unit tests",
-         "Add missing unit tests for uncovered code in tests/ directory. "
-         "MAX 2 new test files. Do NOT touch src/ or any non-test files."),
-        ("type_hints", "Add type hints",
-         "Add type annotations to untyped functions in tests/ or safe bridge/ modules. "
-         "MAX 3 files. NEVER touch: bridge/loop.py, bridge/patch_integration.py, bridge/scheduler.py."),
-        ("docs", "Improve documentation",
-         "Add or improve docstrings in docs/ or safe bridge/ modules. "
-         "MAX 3 files. NEVER touch: bridge/loop.py, bridge/design_doc.py."),
-        ("schema_lint", "Fix schema issues",
-         "Validate and fix JSON schema issues in tests/ directory. "
-         "MAX 2 files changed. Do NOT touch src/ or orchestrator core files."),
+        (
+            "lint",
+            "Fix linting issues in tests/",
+            "Run ruff check on tests/ directory and fix any issues. "
+            "MAX 3 files changed. Do NOT touch src/, bridge/loop.py, bridge/patch_integration.py, DESIGN_DOCUMENT.md.",
+        ),
+        (
+            "test",
+            "Add unit tests",
+            "Add missing unit tests for uncovered code in tests/ directory. "
+            "MAX 2 new test files. Do NOT touch src/ or any non-test files.",
+        ),
+        (
+            "type_hints",
+            "Add type hints",
+            "Add type annotations to untyped functions in tests/ or safe bridge/ modules. "
+            "MAX 3 files. NEVER touch: bridge/loop.py, bridge/patch_integration.py, bridge/scheduler.py.",
+        ),
+        (
+            "docs",
+            "Improve documentation",
+            "Add or improve docstrings in docs/ or safe bridge/ modules. "
+            "MAX 3 files. NEVER touch: bridge/loop.py, bridge/design_doc.py.",
+        ),
+        (
+            "schema_lint",
+            "Fix schema issues",
+            "Validate and fix JSON schema issues in tests/ directory. "
+            "MAX 2 files changed. Do NOT touch src/ or orchestrator core files.",
+        ),
     ]
 
     def __init__(self, project_root: str, min_queue_depth: int = 10, allow_bridge: bool = False):
@@ -588,13 +619,15 @@ class BackfillGenerator:
                 "- bridge/design_doc.py (orchestrator core)\n"
             )
 
-            tasks.append(FillerTask(
-                id=task_id,
-                title=title,
-                description=description + exclusion_note,
-                task_type=task_type,
-                priority=-10,  # Low priority so real work takes precedence
-            ))
+            tasks.append(
+                FillerTask(
+                    id=task_id,
+                    title=title,
+                    description=description + exclusion_note,
+                    task_type=task_type,
+                    priority=-10,  # Low priority so real work takes precedence
+                )
+            )
 
         if len(tasks) < count:
             cooldown_status = self.get_cooldown_status()

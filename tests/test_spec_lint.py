@@ -102,8 +102,8 @@ def test_spec_consumption_model_empty_expected() -> None:
 
 def test_build_spec_consumption_from_coupon_spec() -> None:
     """REQ-M1-018: build_spec_consumption creates valid SpecConsumption."""
-    from formula_foundry.resolve.consumption import build_spec_consumption
     from formula_foundry.coupongen.spec import CouponSpec
+    from formula_foundry.resolve.consumption import build_spec_consumption
 
     spec_dict = {
         "schema_version": 1,
@@ -218,7 +218,7 @@ def test_enforce_spec_consumption_raises_on_failure() -> None:
 
     try:
         enforce_spec_consumption(consumption)
-        assert False, "Should have raised SpecConsumptionError"
+        raise AssertionError("Should have raised SpecConsumptionError")
     except SpecConsumptionError as e:
         assert e.unused_provided == frozenset({"c"})
         assert e.unconsumed_expected == frozenset({"b"})

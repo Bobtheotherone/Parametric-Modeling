@@ -75,9 +75,7 @@ class LaunchPlan:
         if self.trace_width_nm <= 0:
             raise ValueError(f"trace_width_nm must be positive, got {self.trace_width_nm}")
         if self.transition_length_nm < 0:
-            raise ValueError(
-                f"transition_length_nm must be non-negative, got {self.transition_length_nm}"
-            )
+            raise ValueError(f"transition_length_nm must be non-negative, got {self.transition_length_nm}")
 
 
 def build_launch_plan(
@@ -117,9 +115,7 @@ def build_launch_plan(
     dx_total = launch_point.x - pad_center.x
     dy_total = launch_point.y - pad_center.y
     if dy_total != 0:
-        raise ValueError(
-            "Launch transitions currently require horizontal pad-to-launch alignment."
-        )
+        raise ValueError("Launch transitions currently require horizontal pad-to-launch alignment.")
 
     transition_length_nm = abs(dx_total)
     segments: list[LaunchSegment] = []
@@ -182,9 +178,7 @@ def build_launch_plan(
                 layer=trace_layer,
                 net_id=1,
             )
-            pos_vias, neg_vias = generate_ground_via_fence(
-                pad_center, launch_point, cpwg_spec, fence_spec
-            )
+            pos_vias, neg_vias = generate_ground_via_fence(pad_center, launch_point, cpwg_spec, fence_spec)
             stitch_vias = tuple(pos_vias + neg_vias)
 
     return LaunchPlan(

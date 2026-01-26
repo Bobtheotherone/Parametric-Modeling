@@ -684,11 +684,7 @@ class GarbageCollector:
 
         # Check if this artifact is an ancestor of a pinned artifact
         # (protects lineage integrity - never break the chain to pinned artifacts)
-        if (
-            policy.keep_ancestors_of_pinned
-            and ancestors_of_pinned
-            and artifact_id in ancestors_of_pinned
-        ):
+        if policy.keep_ancestors_of_pinned and ancestors_of_pinned and artifact_id in ancestors_of_pinned:
             candidate.reasons_to_keep.append("ancestor_of_pinned")
             return candidate
 
@@ -766,9 +762,7 @@ class GarbageCollector:
         to_keep: list[GCCandidate] = []
 
         for artifact_id, _ in manifests_with_time:
-            candidate = self._evaluate_candidate(
-                artifact_id, policy, artifact_counts_by_type, ancestors_of_pinned
-            )
+            candidate = self._evaluate_candidate(artifact_id, policy, artifact_counts_by_type, ancestors_of_pinned)
 
             if candidate.should_delete:
                 to_delete.append(candidate)

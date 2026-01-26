@@ -22,11 +22,13 @@ from typing import Any
 
 class AtomicWriteError(Exception):
     """Raised when atomic write fails."""
+
     pass
 
 
 class JSONValidationError(Exception):
     """Raised when JSON validation fails."""
+
     pass
 
 

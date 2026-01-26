@@ -27,7 +27,6 @@ from formula_foundry.coupongen.constraints.drc import (
     run_drc,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test Data
 # ---------------------------------------------------------------------------
@@ -295,9 +294,7 @@ class TestRunDrc:
 
         # Mock runner with violations
         def write_report(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            report_path.write_text(
-                json.dumps(SAMPLE_DRC_REPORT_VIOLATIONS), encoding="utf-8"
-            )
+            report_path.write_text(json.dumps(SAMPLE_DRC_REPORT_VIOLATIONS), encoding="utf-8")
             return subprocess.CompletedProcess(
                 args=["kicad-cli", "pcb", "drc"],
                 returncode=5,
@@ -467,9 +464,7 @@ class TestTier4DrcChecker:
         error_result = next(r for r in results if r.constraint_id == "T4_DRC_ERROR_COUNT")
         assert error_result.passed is False
 
-        warning_result = next(
-            r for r in results if r.constraint_id == "T4_DRC_WARNING_COUNT"
-        )
+        warning_result = next(r for r in results if r.constraint_id == "T4_DRC_WARNING_COUNT")
         assert warning_result.passed is False
 
     def test_allow_warnings(self, tmp_path: Path) -> None:
@@ -520,9 +515,7 @@ class TestTier4DrcChecker:
         checker = Tier4DrcChecker(drc_result=drc_result)
         results = checker.check(None, {})
 
-        unconnected_result = next(
-            r for r in results if r.constraint_id == "T4_DRC_UNCONNECTED_COUNT"
-        )
+        unconnected_result = next(r for r in results if r.constraint_id == "T4_DRC_UNCONNECTED_COUNT")
         assert unconnected_result.passed is False
 
     def test_set_drc_result(self, tmp_path: Path) -> None:

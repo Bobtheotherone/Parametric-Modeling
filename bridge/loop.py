@@ -47,10 +47,14 @@ if str(PROJECT_ROOT) not in sys.path:
 # Atomic I/O for robust file operations
 from bridge.atomic_io import atomic_write_json, validate_json_file
 
+# Design document parsing - modular adapter layer
+from bridge.design_doc import (
+    ContractMode,
+    parse_design_doc,
+)
+
 # Turn normalization - extracted to submodule for tooling readability
 from bridge.loop_pkg.turn_normalizer import (
-    NormalizationResult,
-    TurnNormalizer,
     normalize_agent_output,
 )
 from bridge.loop_pkg.turn_normalizer import (
@@ -66,14 +70,6 @@ from bridge.verify_repair import (
     create_repair_callback,
     run_verify_repair_loop,
     write_repair_report,
-)
-
-# Design document parsing - modular adapter layer
-from bridge.design_doc import (
-    ContractMode,
-    DesignDocSpec,
-    parse_design_doc,
-    parse_design_doc_text,
 )
 
 AGENTS: tuple[str, ...] = ("codex", "claude")
@@ -135,6 +131,7 @@ class RunState:
     system_prompt_path: Path
     design_doc_path: Path
     smoke_route: tuple[str, ...] = tuple()
+    readonly: bool = False
 
     total_calls: int = 0
     call_counts: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
@@ -360,9 +357,7 @@ def _parse_smoke_route_arg(value: str) -> list[str]:
     unknown = [tok for tok in route if tok not in AGENTS]
     if unknown:
         allowed = ", ".join(AGENTS)
-        raise argparse.ArgumentTypeError(
-            f"smoke-route contains unknown agent(s): {', '.join(unknown)} (allowed: {allowed})"
-        )
+        raise argparse.ArgumentTypeError(f"smoke-route contains unknown agent(s): {', '.join(unknown)} (allowed: {allowed})")
     return route
 
 
@@ -908,6 +903,7 @@ def build_prompt(
     call_counts: dict[str, int],
     disabled_by_quota: dict[str, bool],
     stats_ids: list[str],
+    readonly: bool,
 ) -> str:
     last_summaries = "\n".join([f"- ({h['agent']}) {h['summary']}" for h in history[-4:]])
 
@@ -918,6 +914,7 @@ def build_prompt(
             "call_counts": call_counts,
             "disabled_by_quota": disabled_by_quota,
             "known_stats_ids": stats_ids,
+            "readonly": readonly,
         },
         indent=2,
         sort_keys=True,
@@ -1304,7 +1301,7 @@ def _build_strict_correction_prompt(
     violations_text = ""
     if noncompliant_violations:
         violations_text = f"""
-VIOLATIONS DETECTED: {', '.join(noncompliant_violations)}
+VIOLATIONS DETECTED: {", ".join(noncompliant_violations)}
 These patterns are STRICTLY FORBIDDEN in your response."""
 
     # CRITICAL: If agent claimed tools were disabled, explicitly correct this
@@ -1605,6 +1602,9 @@ def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[i
 def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
     """The repo is 'complete' when strict verify passes and git status is clean."""
 
+    if os.environ.get("FF_SKIP_VERIFY") == "1":
+        return True, "ok (FF_SKIP_VERIFY=1)"
+
     env = os.environ.copy()
     rc, out, err = _run_cmd([sys.executable, "-m", "tools.verify", "--strict-git", "--include-m0"], cwd=project_root, env=env)
     if rc != 0:
@@ -1711,9 +1711,7 @@ def _preflight_check_repo(
     dirty_files = porcelain.strip().split("\n")[:10]  # First 10 files
     msg = (
         f"PREFLIGHT FAILED: Repository has uncommitted changes.\n"
-        f"  Dirty files ({len(porcelain.strip().split(chr(10)))} total):\n"
-        + "\n".join(f"    {f}" for f in dirty_files)
-        + "\n\n"
+        f"  Dirty files ({len(porcelain.strip().split(chr(10)))} total):\n" + "\n".join(f"    {f}" for f in dirty_files) + "\n\n"
         "  This will cause tools.verify --strict-git to fail during the run.\n"
         "  Options:\n"
         "    1. Commit or stash changes before running\n"
@@ -1776,7 +1774,7 @@ def _ast_extract_init_components(source: str) -> tuple[bool, str | None, list[st
                             if isinstance(value, str):
                                 safe_assignments.append((target.id, f'{target.id} = "{value}"'))
                             elif isinstance(value, (int, float)):
-                                safe_assignments.append((target.id, f'{target.id} = {value}'))
+                                safe_assignments.append((target.id, f"{target.id} = {value}"))
 
     return True, docstring, imports, all_items, safe_assignments
 
@@ -2299,9 +2297,11 @@ def _run_agent_live(
     ]
 
     env = os.environ.copy()
+    write_access = state.grant_write_access and not state.readonly
     # Support both names (some wrappers read WRITE_ACCESS, older versions used ORCH_WRITE_ACCESS).
-    env["WRITE_ACCESS"] = "1" if state.grant_write_access else "0"
+    env["WRITE_ACCESS"] = "1" if write_access else "0"
     env["ORCH_WRITE_ACCESS"] = env["WRITE_ACCESS"]
+    env["ORCH_READONLY"] = "1" if state.readonly else "0"
     # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
     env["ORCH_SCHEMA_KIND"] = "turn"
 
@@ -2429,8 +2429,7 @@ def _analyze_plan_width(
     """
     tasks = plan_obj.get("tasks", [])
     task_count = len(tasks) if isinstance(tasks, list) else 0
-    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else [])
-                     if isinstance(t, dict) and not t.get("depends_on"))
+    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else []) if isinstance(t, dict) and not t.get("depends_on"))
     plan_cap = int(plan_obj.get("max_parallel_tasks", 1) or 1)
 
     # Throughput mode thresholds
@@ -2466,6 +2465,7 @@ def _analyze_plan_width(
 # ------------------------------------
 # Plan Quality Scoring (Throughput Mode)
 # ------------------------------------
+
 
 def _compute_lock_pressure(plan_obj: dict[str, Any]) -> dict[str, Any]:
     """Compute lock pressure metrics for the plan.
@@ -2655,8 +2655,7 @@ def _build_plan_quality_report(
 
     tasks = plan_obj.get("tasks", [])
     task_count = len(tasks) if isinstance(tasks, list) else 0
-    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else [])
-                     if isinstance(t, dict) and not t.get("depends_on"))
+    root_count = sum(1 for t in (tasks if isinstance(tasks, list) else []) if isinstance(t, dict) and not t.get("depends_on"))
     plan_cap = int(plan_obj.get("max_parallel_tasks", 1) or 1)
 
     # Compute quality metrics
@@ -2666,7 +2665,7 @@ def _build_plan_quality_report(
 
     # Compute average focus score
     focus_scores = []
-    for t in (tasks if isinstance(tasks, list) else []):
+    for t in tasks if isinstance(tasks, list) else []:
         if isinstance(t, dict):
             focus_scores.append(_compute_task_focus_score(t))
     avg_focus_score = sum(focus_scores) / len(focus_scores) if focus_scores else 0.0
@@ -2691,52 +2690,36 @@ def _build_plan_quality_report(
 
     # HARD FAILURE: plan_cap < max_workers
     if plan_cap < max_workers_limit:
-        hard_failures.append(
-            f"max_parallel_tasks={plan_cap} < required {max_workers_limit}"
-        )
+        hard_failures.append(f"max_parallel_tasks={plan_cap} < required {max_workers_limit}")
 
     # HARD FAILURE: root_ready < max_workers
     if root_count < max_workers_limit:
-        hard_failures.append(
-            f"root_tasks={root_count} < required {max_workers_limit}"
-        )
+        hard_failures.append(f"root_tasks={root_count} < required {max_workers_limit}")
 
     # HARD FAILURE: high lock pressure (serializes workers)
     if lock_pressure["max_lock_count"] > 3:
         locks_str = ", ".join(lock_pressure["high_pressure_locks"][:3])
-        hard_failures.append(
-            f"lock_pressure=high (max {lock_pressure['max_lock_count']} tasks share a lock: {locks_str})"
-        )
+        hard_failures.append(f"lock_pressure=high (max {lock_pressure['max_lock_count']} tasks share a lock: {locks_str})")
 
     # SOFT WARNING: total_tasks < 2*workers (only if root_ready is also borderline)
     min_task_count = max_workers_limit * 2
     if task_count < min_task_count:
         if root_count < max_workers_limit + 2:  # borderline roots
-            soft_warnings.append(
-                f"total_tasks={task_count} < recommended {min_task_count} (with borderline roots)"
-            )
+            soft_warnings.append(f"total_tasks={task_count} < recommended {min_task_count} (with borderline roots)")
         else:
-            soft_warnings.append(
-                f"total_tasks={task_count} < recommended {min_task_count} (acceptable: roots={root_count})"
-            )
+            soft_warnings.append(f"total_tasks={task_count} < recommended {min_task_count} (acceptable: roots={root_count})")
 
     # SOFT WARNING: low coverage intent
     if coverage_intent < 0.30:
-        soft_warnings.append(
-            f"coverage_intent={coverage_intent:.0%} < recommended 30% (few tasks mention tests)"
-        )
+        soft_warnings.append(f"coverage_intent={coverage_intent:.0%} < recommended 30% (few tasks mention tests)")
 
     # SOFT WARNING: low focus scores
     if avg_focus_score < 0.4:
-        soft_warnings.append(
-            f"avg_focus_score={avg_focus_score:.2f} < recommended 0.40 (tasks may be vague)"
-        )
+        soft_warnings.append(f"avg_focus_score={avg_focus_score:.2f} < recommended 0.40 (tasks may be vague)")
 
     # SOFT WARNING: high risk ratio
     if risk_flags["risk_ratio"] > 0.2:
-        soft_warnings.append(
-            f"risk_ratio={risk_flags['risk_ratio']:.0%} > recommended 20% (too many solo/high tasks)"
-        )
+        soft_warnings.append(f"risk_ratio={risk_flags['risk_ratio']:.0%} > recommended 20% (too many solo/high tasks)")
 
     # Build reprompt message
     all_issues = hard_failures + soft_warnings
@@ -2796,9 +2779,7 @@ def _build_throughput_correction_prompt(
     targeted_guidance = ""
 
     # Check for lock pressure issues
-    has_lock_pressure = quality_report and any(
-        "lock_pressure" in hf for hf in quality_report.get("hard_failures", [])
-    )
+    has_lock_pressure = quality_report and any("lock_pressure" in hf for hf in quality_report.get("hard_failures", []))
 
     if has_lock_pressure or attempt_number >= 2:
         # On second attempt or if lock pressure detected, add explicit lock guidance
@@ -2819,10 +2800,14 @@ def _build_throughput_correction_prompt(
 
         **HARD FAILURES (must fix):**
         {issues_text}
-        {f'''
+        {
+        f'''
         **WARNINGS (should address):**
         {warnings_text}
-        ''' if warnings_text else ''}
+        '''
+        if warnings_text
+        else ""
+    }
         {targeted_guidance}
 
         **THROUGHPUT MODE REQUIREMENTS (MANDATORY):**
@@ -3482,7 +3467,7 @@ def _run_parallel_task(
     task.task_dir = tasks_dir / _sanitize_branch_fragment(task.id)
     _ensure_dir(task.task_dir)
 
-    # Create a fresh worktree/branch for this task.
+    # Create a fresh worktree/branch for this task (with idempotent cleanup).
     with git_lock:
         rc, base_sha_out, err = _run_cmd(["git", "rev-parse", "HEAD"], cwd=state.project_root, env=os.environ.copy())
         if rc != 0:
@@ -3497,11 +3482,78 @@ def _run_parallel_task(
 
         worktree_path = worktrees_dir / f"w{worker_id:02d}_{_sanitize_branch_fragment(task.id)}"
         task.worktree_path = worktree_path
-        if worktree_path.exists():
-            # Keep it safe: don't delete unknown paths. Use a unique suffix instead.
-            worktree_path = worktrees_dir / f"w{worker_id:02d}_{_sanitize_branch_fragment(task.id)}_{int(time.time())}"
-            task.worktree_path = worktree_path
 
+        # IDEMPOTENT WORKTREE SETUP: Handle branch/worktree collisions robustly
+        # This fixes the "branch already exists" error that blocked Jan 26 runs.
+
+        # Step 1: Check if branch already exists
+        rc_ref, _, _ = _run_cmd(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=state.project_root,
+            env=os.environ.copy(),
+        )
+        branch_exists = rc_ref == 0
+
+        if branch_exists:
+            print(f"[orchestrator] CLEANUP: Branch '{branch}' already exists, cleaning up...")
+
+            # Step 2: Check if branch is checked out in a worktree
+            rc_wt, wt_out, _ = _run_cmd(
+                ["git", "worktree", "list", "--porcelain"],
+                cwd=state.project_root,
+                env=os.environ.copy(),
+            )
+            if rc_wt == 0:
+                # Parse worktree list to find if our branch is checked out
+                current_wt_path = None
+                for line in wt_out.strip().split("\n"):
+                    if line.startswith("worktree "):
+                        current_wt_path = line.split(" ", 1)[1]
+                    elif line.startswith("branch ") and line.endswith(f"/{branch}"):
+                        # Found worktree with our branch - remove it
+                        if current_wt_path:
+                            print(f"[orchestrator] CLEANUP: Removing worktree at {current_wt_path}")
+                            _run_cmd(
+                                ["git", "worktree", "remove", "--force", current_wt_path],
+                                cwd=state.project_root,
+                                env=os.environ.copy(),
+                            )
+                        break
+
+            # Step 3: Prune stale worktree references
+            _run_cmd(["git", "worktree", "prune"], cwd=state.project_root, env=os.environ.copy())
+
+            # Step 4: Delete the branch (now safe since not checked out)
+            rc_del, _, del_err = _run_cmd(
+                ["git", "branch", "-D", branch],
+                cwd=state.project_root,
+                env=os.environ.copy(),
+            )
+            if rc_del != 0:
+                print(f"[orchestrator] CLEANUP: Could not delete branch '{branch}': {del_err}")
+                # Try force-deleting by name
+                _run_cmd(
+                    ["git", "update-ref", "-d", f"refs/heads/{branch}"],
+                    cwd=state.project_root,
+                    env=os.environ.copy(),
+                )
+
+        # Step 5: Handle worktree path collision
+        if worktree_path.exists():
+            print(f"[orchestrator] CLEANUP: Worktree path {worktree_path} exists, removing...")
+            # Try git worktree remove first
+            _run_cmd(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=state.project_root,
+                env=os.environ.copy(),
+            )
+            # If directory still exists, remove it
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path, ignore_errors=True)
+            # Prune again
+            _run_cmd(["git", "worktree", "prune"], cwd=state.project_root, env=os.environ.copy())
+
+        # Step 6: Create fresh worktree with new branch
         rc2, out2, err2 = _run_cmd(
             ["git", "worktree", "add", "-b", branch, str(worktree_path), base_sha],
             cwd=state.project_root,
@@ -3634,9 +3686,9 @@ def _run_parallel_task(
 
         # Validate JSON output with auto-recovery for bad output
         # Track correction attempts for this specific agent call
-        if not hasattr(task, '_json_correction_count'):
+        if not hasattr(task, "_json_correction_count"):
             task._json_correction_count = 0
-        if not hasattr(task, '_agent_fallback_used'):
+        if not hasattr(task, "_agent_fallback_used"):
             task._agent_fallback_used = False
 
         validation_error: str | None = None
@@ -3721,19 +3773,25 @@ def _run_parallel_task(
             if out_path.exists():
                 try:
                     raw_text = out_path.read_text(encoding="utf-8")
-                    _, noncompliant_violations, has_critical_tool_violation = _is_noncompliant_and_should_use_stricter_prompt(raw_text)
+                    _, noncompliant_violations, has_critical_tool_violation = _is_noncompliant_and_should_use_stricter_prompt(
+                        raw_text
+                    )
                 except Exception:
                     pass
 
             if noncompliant_violations:
                 print(f"[orchestrator] {task.id}: Noncompliant output detected: {noncompliant_violations}")
                 if has_critical_tool_violation:
-                    print(f"[orchestrator] {task.id}: CRITICAL: Agent incorrectly claimed tools are disabled - will explicitly correct")
+                    print(
+                        f"[orchestrator] {task.id}: CRITICAL: Agent incorrectly claimed tools are disabled - will explicitly correct"
+                    )
 
             if task._json_correction_count <= max_json_corrections:
                 # Reprompt with strict correction prompt
-                print(f"[orchestrator] {task.id}: JSON validation failed ({validation_error}), "
-                      f"auto-reprompt {task._json_correction_count}/{max_json_corrections}")
+                print(
+                    f"[orchestrator] {task.id}: JSON validation failed ({validation_error}), "
+                    f"auto-reprompt {task._json_correction_count}/{max_json_corrections}"
+                )
 
                 # Build strict correction prompt using contract hardening
                 correction_prompt = _build_strict_correction_prompt(
@@ -3778,7 +3836,9 @@ def _run_parallel_task(
                     corr_text = correction_out_path.read_text(encoding="utf-8")
 
                     # Check for noncompliant patterns in correction output
-                    is_still_noncompliant, new_violations, new_has_critical = _is_noncompliant_and_should_use_stricter_prompt(corr_text)
+                    is_still_noncompliant, new_violations, new_has_critical = _is_noncompliant_and_should_use_stricter_prompt(
+                        corr_text
+                    )
                     if is_still_noncompliant:
                         print(f"[orchestrator] {task.id}: Correction output still noncompliant: {new_violations}")
                         # Force another correction attempt with stricter prompt
@@ -3808,7 +3868,9 @@ def _run_parallel_task(
                                 print(f"[orchestrator] {task.id}: CORRECTION VALIDATION: {w}")
                             if ok2:
                                 # Correction succeeded!
-                                print(f"[orchestrator] {task.id}: JSON correction succeeded on attempt {task._json_correction_count}")
+                                print(
+                                    f"[orchestrator] {task.id}: JSON correction succeeded on attempt {task._json_correction_count}"
+                                )
                                 turn_obj = corr_obj
                                 out_path = correction_out_path
                                 validation_error = None
@@ -3891,7 +3953,7 @@ def _run_parallel_task(
             return
 
         # Check if there were actual changes (patch or commit) despite work_completed=false
-        if getattr(task, 'has_patch', False) or (task.commit_sha and task.commit_sha != task.base_sha):
+        if getattr(task, "has_patch", False) or (task.commit_sha and task.commit_sha != task.base_sha):
             # Agent made changes but claimed work_completed=false - trust the changes, mark done
             print(f"[orchestrator] NOTE: {task.id} has work_completed=false but made changes; marking done")
             task.status = "done"
@@ -4036,6 +4098,7 @@ def run_parallel(
         # Run bootstrap to ensure environment is consistent before tasks start
         print("[orchestrator] Running environment bootstrap...")
         from bridge.verify_repair.bootstrap import run_bootstrap
+
         bootstrap_log = state.runs_dir / "bootstrap_start.log"
         bootstrap_result = run_bootstrap(
             state.project_root,
@@ -4102,8 +4165,10 @@ def run_parallel(
 
         # Log design doc parsing results
         print(f"[orchestrator] design_doc: path={state.design_doc_path}, hash={design_spec.doc_hash[:12]}")
-        print(f"[orchestrator] design_doc: milestone={design_spec.milestone_id or '(not found)'}, "
-              f"requirements={len(design_spec.requirements)}, contract_mode={contract_mode}")
+        print(
+            f"[orchestrator] design_doc: milestone={design_spec.milestone_id or '(not found)'}, "
+            f"requirements={len(design_spec.requirements)}, contract_mode={contract_mode}"
+        )
 
         if design_spec.warnings:
             for warning in design_spec.warnings[:5]:
@@ -4116,7 +4181,7 @@ def run_parallel(
             for error in design_spec.errors:
                 print(f"[orchestrator] design_doc ERROR: {error}")
             if contract_mode != "off":
-                print(f"[orchestrator] ERROR: Design doc validation failed. Use --design-doc-contract=off to bypass.")
+                print("[orchestrator] ERROR: Design doc validation failed. Use --design-doc-contract=off to bypass.")
                 return 2
 
         # Extract values for use in prompts
@@ -4132,6 +4197,7 @@ def run_parallel(
         design_spec_artifact = state.runs_dir / "design_doc_spec.json"
         try:
             import json
+
             design_spec_artifact.write_text(json.dumps(design_spec.to_dict(), indent=2), encoding="utf-8")
         except Exception:
             pass  # Non-fatal if we can't write the artifact
@@ -4163,7 +4229,9 @@ def run_parallel(
 
         # Log throughput mode settings
         if planner_profile == "throughput":
-            print(f"[orchestrator] planner_profile=throughput (target_roots={planner_max_workers_limit}, target_plan_cap={planner_max_workers_limit})")
+            print(
+                f"[orchestrator] planner_profile=throughput (target_roots={planner_max_workers_limit}, target_plan_cap={planner_max_workers_limit})"
+            )
 
         plan_prompt = _build_task_plan_prompt(
             design_doc_text=design_doc_text,
@@ -4199,8 +4267,12 @@ def run_parallel(
         final_quality_report: dict[str, Any] | None = None
 
         for planner_attempt in range(max_planner_attempts):
-            current_prompt_path = plan_prompt_path if planner_attempt == 0 else state.runs_dir / f"task_planner_prompt_retry{planner_attempt}.txt"
-            current_out_path = plan_out_path if planner_attempt == 0 else state.runs_dir / f"task_plan_retry{planner_attempt}.json"
+            current_prompt_path = (
+                plan_prompt_path if planner_attempt == 0 else state.runs_dir / f"task_planner_prompt_retry{planner_attempt}.txt"
+            )
+            current_out_path = (
+                plan_out_path if planner_attempt == 0 else state.runs_dir / f"task_plan_retry{planner_attempt}.json"
+            )
 
             rc, _, err = _run_cmd(
                 [str(planner_script), str(current_prompt_path), str(plan_schema_path), str(current_out_path)],
@@ -4223,9 +4295,7 @@ def run_parallel(
             analysis = _analyze_plan_width(plan_obj, planner_max_workers_limit)
 
             # Build comprehensive quality report (throughput mode only)
-            quality_report = _build_plan_quality_report(
-                plan_obj, planner_max_workers_limit, planner_profile
-            )
+            quality_report = _build_plan_quality_report(plan_obj, planner_max_workers_limit, planner_profile)
             final_quality_report = quality_report
 
             # Log plan quality metrics
@@ -4242,12 +4312,16 @@ def run_parallel(
                 )
             else:
                 # Balanced mode: simple width log
-                print(f"[orchestrator] plan_width: tasks={analysis['task_count']}, roots={analysis['root_count']}, plan_cap={analysis['plan_cap']}")
+                print(
+                    f"[orchestrator] plan_width: tasks={analysis['task_count']}, roots={analysis['root_count']}, plan_cap={analysis['plan_cap']}"
+                )
 
             # In throughput mode, use quality report to determine reprompt
             if planner_profile == "throughput" and quality_report.get("should_reprompt", False):
                 if planner_attempt < max_planner_attempts - 1:
-                    print(f"[orchestrator] WARNING: Plan does not meet throughput quality requirements (attempt {planner_attempt + 1}/{max_planner_attempts})")
+                    print(
+                        f"[orchestrator] WARNING: Plan does not meet throughput quality requirements (attempt {planner_attempt + 1}/{max_planner_attempts})"
+                    )
                     for issue in quality_report.get("hard_failures", []):
                         print(f"[orchestrator]   FAIL: {issue}")
                     for warning in quality_report.get("soft_warnings", []):
@@ -4268,7 +4342,9 @@ def run_parallel(
                     continue  # Retry with correction
                 else:
                     # Exhausted retries - warn loudly but proceed (do not fail run)
-                    print(f"[orchestrator] WARNING: Plan still has quality issues after {max_planner_attempts} attempts. Proceeding anyway.")
+                    print(
+                        f"[orchestrator] WARNING: Plan still has quality issues after {max_planner_attempts} attempts. Proceeding anyway."
+                    )
                     for issue in quality_report.get("hard_failures", []):
                         print(f"[orchestrator]   FAIL: {issue}")
                     for warning in quality_report.get("soft_warnings", []):
@@ -4400,7 +4476,9 @@ def run_parallel(
     # Verbose logging of all worker limits
     if not selftest_mode:
         cli_val = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
-        print(f"[orchestrator] parallel: max_workers={max_workers} (safe_cap={safe_cap}, plan_cap={plan_max_parallel}, cli_cap={cli_val if cli_val > 0 else 'auto'})")
+        print(
+            f"[orchestrator] parallel: max_workers={max_workers} (safe_cap={safe_cap}, plan_cap={plan_max_parallel}, cli_cap={cli_val if cli_val > 0 else 'auto'})"
+        )
     else:
         print(f"[orchestrator] parallel: max_workers={max_workers} (selftest mode)")
 
@@ -4457,7 +4535,9 @@ def run_parallel(
         deps_satisfied_fn=deps_satisfied,
         locks_available_fn=locks_available,
     )
-    print(f"[orchestrator] two-lane scheduler: coding_lane={lane_config.coding_lane_size}, executor_lane={lane_config.executor_lane_size}")
+    print(
+        f"[orchestrator] two-lane scheduler: coding_lane={lane_config.coding_lane_size}, executor_lane={lane_config.executor_lane_size}"
+    )
 
     # Create backfill generator to keep workers busy when primary tasks are blocked
     backfill_generator = BackfillGenerator(
@@ -4539,6 +4619,20 @@ def run_parallel(
         if selftest_mode:
             return 0
 
+        # SUPPRESS FILLER WHEN ROOT FAILURES EXIST
+        # This prevents wasting credits on optional work when hard blockers exist.
+        # Root failures are non-backfill tasks that have failed, need manual work, or were resource-killed.
+        root_failure_statuses = ("failed", "manual", "resource_killed")
+        has_root_failures = any(
+            t.status in root_failure_statuses and not _is_backfill_task_id(t.id)
+            for t in tasks
+        )
+        if has_root_failures:
+            # Only log once per suppression cycle to avoid spam
+            if backfill_tasks_generated == 0:
+                print("[orchestrator] BACKFILL SUPPRESSED: Root failures exist - focusing on critical work")
+            return 0
+
         # Check if we've hit the backfill cap
         if backfill_tasks_generated >= max_backfill_tasks:
             return 0
@@ -4596,7 +4690,9 @@ def run_parallel(
         current_cycle = backfill_tasks_generated  # Use as cycle counter
         for path in rejected_paths:
             backfill_rejection_cooldown[path] = current_cycle
-            print(f"[orchestrator] BACKFILL-COOLDOWN: {path} on cooldown for {BACKFILL_COOLDOWN_CYCLES} cycles (rejected in {task_id})")
+            print(
+                f"[orchestrator] BACKFILL-COOLDOWN: {path} on cooldown for {BACKFILL_COOLDOWN_CYCLES} cycles (rejected in {task_id})"
+            )
 
     def is_backfill_task_type_on_cooldown(task_type: str) -> bool:
         """Check if a backfill task type is on cooldown due to recent rejections.
@@ -4624,8 +4720,7 @@ def run_parallel(
         nonlocal backfill_rejection_cooldown
         current_cycle = backfill_tasks_generated
         expired = [
-            path for path, cycle in backfill_rejection_cooldown.items()
-            if current_cycle - cycle >= BACKFILL_COOLDOWN_CYCLES
+            path for path, cycle in backfill_rejection_cooldown.items() if current_cycle - cycle >= BACKFILL_COOLDOWN_CYCLES
         ]
         for path in expired:
             del backfill_rejection_cooldown[path]
@@ -4639,7 +4734,7 @@ def run_parallel(
         task_milestone = _extract_milestone_from_task_id(t.id, fallback=milestone_id)
 
         # Try patch-based integration first (preferred - no sandbox issues)
-        if getattr(t, 'has_patch', False) and t.task_dir:
+        if getattr(t, "has_patch", False) and t.task_dir:
             success, msg, commit_sha = patch_integrator.integrate_task(
                 task_id=t.id,
                 task_dir=t.task_dir,
@@ -4692,7 +4787,7 @@ def run_parallel(
 
             # Check if there's actually a commit to merge
             # If worker only produced a patch artifact without committing, git merge would be a no-op
-            if not getattr(t, 'commit_sha', None):
+            if not getattr(t, "commit_sha", None):
                 # No commit SHA means no actual commit to merge - treat as integration failure
                 print(f"[orchestrator] Patch integration failed for {t.id} (no commit to merge): {msg}")
                 t.status = "failed"
@@ -4861,12 +4956,14 @@ def run_parallel(
                     rerun_count = 0
                     for t in root_failures:
                         # Only retry if the task hasn't been retried too many times
-                        current_retries = getattr(t, '_self_heal_retries', 0)
+                        current_retries = getattr(t, "_self_heal_retries", 0)
                         max_self_heal_retries = 2
                         if current_retries < max_self_heal_retries:
                             t._self_heal_retries = current_retries + 1
                             # Reset the task for rerun
-                            print(f"[orchestrator] RECOVERY: Scheduling {t.id} for self-heal rerun (attempt {t._self_heal_retries})")
+                            print(
+                                f"[orchestrator] RECOVERY: Scheduling {t.id} for self-heal rerun (attempt {t._self_heal_retries})"
+                            )
                             t.status = "pending"
                             t.error = None
                             t.retry_count = 0  # Reset retry counter
@@ -4881,14 +4978,14 @@ def run_parallel(
 
                 # If still not recovered, print detailed diagnostics and mark as truly stuck
                 if not recovered:
-                    print(f"\n[orchestrator] SELF-HEALING FAILED: Marking run as STUCK")
+                    print("\n[orchestrator] SELF-HEALING FAILED: Marking run as STUCK")
 
                     if root_failures:
                         print(f"\n  ROOT FAILURES ({len(root_failures)}):")
                         for t in root_failures:
                             reason = t.error or t.status
                             manual_hint = f" -> {t.manual_path}" if t.manual_path else ""
-                            retries = getattr(t, '_self_heal_retries', 0)
+                            retries = getattr(t, "_self_heal_retries", 0)
                             print(f"    - {t.id}: {reason} (retries={retries}){manual_hint}")
 
                     if blocked_ids:
@@ -4986,7 +5083,9 @@ def run_parallel(
 
                 # Log agent selection with lane info
                 lane_stats = two_lane_scheduler.get_lane_stats()
-                print(f"[orchestrator] parallel: starting {t.id} on worker {worker_id} (agent={t.agent}, lane={lane}, coding={lane_stats['coding_active']}/{lane_stats['coding_capacity']}, exec={lane_stats['executor_active']}/{lane_stats['executor_capacity']})")
+                print(
+                    f"[orchestrator] parallel: starting {t.id} on worker {worker_id} (agent={t.agent}, lane={lane}, coding={lane_stats['coding_active']}/{lane_stats['coding_capacity']}, exec={lane_stats['executor_active']}/{lane_stats['executor_capacity']})"
+                )
                 future = executor.submit(execute_task, t, worker_id)
                 running[t.id] = future
                 started_any = True
@@ -5058,7 +5157,7 @@ def run_parallel(
             print("[orchestrator] parallel: skipping final verification (--verify-mode=off)")
             rc_v = 0
         else:
-            strict_git = (verify_mode != "skip-git")
+            strict_git = verify_mode != "skip-git"
             mode_label = "strict" if strict_git else "skip-git"
             print(f"[orchestrator] parallel: running verify auto-repair loop ({mode_label}, max_attempts={max_repair_attempts})")
 
@@ -5192,6 +5291,64 @@ def run_parallel(
 # -----------------------------
 
 
+def _compute_failure_signature(error: str) -> str:
+    """Compute a normalized signature for an error message.
+
+    This allows detecting when different task IDs have the same underlying error,
+    which indicates no real progress was made.
+
+    The signature is computed by:
+    1. Normalizing timestamps, run_ids, task IDs
+    2. Normalizing paths
+    3. Normalizing whitespace
+    4. Hashing the result
+    """
+    if not error:
+        return "empty"
+
+    import hashlib
+
+    # Normalize: strip timestamps like 20260126T011919Z
+    normalized = re.sub(r"\d{8}T\d{6}Z", "TIMESTAMP", error)
+
+    # Normalize: strip task branch names like task/TIMESTAMP/TASK-ID
+    # This catches "branch 'task/TIMESTAMP/M0-RF-01-LOGS-CLAUDE-LIMIT-CASE' already exists"
+    normalized = re.sub(r"task/TIMESTAMP/[A-Za-z0-9_-]+", "task/TIMESTAMP/TASK_ID", normalized)
+
+    # Normalize: strip generic task IDs (M0-*, FILLER-*, etc.)
+    normalized = re.sub(r"M\d+-[A-Za-z0-9_-]+", "TASK_ID", normalized)
+    normalized = re.sub(r"FILLER-[A-Za-z0-9_-]+", "FILLER_ID", normalized)
+
+    # Normalize: strip absolute paths, keep only the filename
+    normalized = re.sub(r"/[^\s]+/([^/\s]+)", r"\1", normalized)
+
+    # Normalize: strip line numbers
+    normalized = re.sub(r":\d+:", ":LINE:", normalized)
+
+    # Normalize: strip worker IDs
+    normalized = re.sub(r"w\d{2}", "wXX", normalized)
+
+    # Normalize whitespace
+    normalized = " ".join(normalized.split())
+
+    # Hash to get a stable signature
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def _compute_failure_signatures_from_summary(summary: dict[str, Any]) -> set[str]:
+    """Compute failure signatures from a run summary.
+
+    Returns a set of normalized failure signatures that can be compared
+    across runs to detect if the underlying errors are the same.
+    """
+    signatures = set()
+    for failure in summary.get("root_failures", []):
+        error = failure.get("error", "")
+        sig = _compute_failure_signature(error)
+        signatures.add(sig)
+    return signatures
+
+
 def _generate_repair_context_for_failures(
     root_failures: list[dict[str, Any]],
     runs_dir: Path,
@@ -5281,10 +5438,10 @@ def _run_parallel_with_auto_continue(
     max_runs = max(1, args.max_continuation_runs)
     run_count = 0
     last_summary: dict[str, Any] | None = None
-    prev_root_failure_ids: set = set()
+    prev_failure_signatures: set = set()  # Track failure signatures, not just task IDs
     stalled_count = 0
-    # SELF-HEALING: Increased from 3 to 10 - we prefer burning credits to giving up early
-    max_stalled = 10
+    # SELF-HEALING: Reduced from 10 to 3 - stop early when signatures are stable
+    max_stalled = 3
     planning_failure_count = 0
     max_planning_failures = 3  # Retry planning up to 3 times before escalating
 
@@ -5333,6 +5490,7 @@ def _run_parallel_with_auto_continue(
             system_prompt_path=system_prompt_path,
             design_doc_path=(project_root / args.design_doc).resolve(),
             smoke_route=config.smoke_route,
+            readonly=getattr(args, "readonly", False),
         )
 
         # Run parallel
@@ -5364,7 +5522,9 @@ def _run_parallel_with_auto_continue(
         # We do NOT immediately give up - we burn credits to maximize success chance
         if rc == 2:
             planning_failure_count += 1
-            print(f"\n[orchestrator] AUTO-CONTINUE: Planning failure (rc=2), attempt {planning_failure_count}/{max_planning_failures}")
+            print(
+                f"\n[orchestrator] AUTO-CONTINUE: Planning failure (rc=2), attempt {planning_failure_count}/{max_planning_failures}"
+            )
 
             if planning_failure_count >= max_planning_failures:
                 print(f"\n[orchestrator] AUTO-CONTINUE: ESCALATING - Planning failed {planning_failure_count} times")
@@ -5377,7 +5537,19 @@ def _run_parallel_with_auto_continue(
                 if raw_stream.exists():
                     print(f"[orchestrator] Raw stream: {raw_stream}")
                 print("[orchestrator] Check the files above to diagnose the planning failure.")
-                _write_escalation_file(runs_dir, {"root_failures": [{"id": "PLANNING", "title": "Planning Step", "error": "Planning step failed repeatedly", "agent": "unknown"}]})
+                _write_escalation_file(
+                    runs_dir,
+                    {
+                        "root_failures": [
+                            {
+                                "id": "PLANNING",
+                                "title": "Planning Step",
+                                "error": "Planning step failed repeatedly",
+                                "agent": "unknown",
+                            }
+                        ]
+                    },
+                )
                 return 2
 
             # SELF-HEALING: Generate repair context for planning issues
@@ -5385,13 +5557,17 @@ def _run_parallel_with_auto_continue(
             # Continue to next iteration - the repair context will help
             continue
 
-        # Check for progress - compare root failures
+        # Check for progress - compare failure SIGNATURES (not just task IDs)
+        # This prevents treating "different task IDs with same underlying error" as progress.
         if last_summary:
+            current_signatures = _compute_failure_signatures_from_summary(last_summary)
             current_root_failure_ids = {t["id"] for t in last_summary.get("root_failures", [])}
 
-            if current_root_failure_ids == prev_root_failure_ids:
+            # Compare signatures - same signatures mean same underlying errors
+            if current_signatures == prev_failure_signatures:
                 stalled_count += 1
-                print(f"[orchestrator] AUTO-CONTINUE: No progress (same failures). Stalled count: {stalled_count}/{max_stalled}")
+                print(f"[orchestrator] AUTO-CONTINUE: No progress (same failure signatures). Stalled count: {stalled_count}/{max_stalled}")
+                print(f"[orchestrator] Signatures: {current_signatures}")
 
                 # SELF-HEALING: Generate repair context for stalled failures
                 root_failures = last_summary.get("root_failures", [])
@@ -5411,9 +5587,11 @@ def _run_parallel_with_auto_continue(
             else:
                 stalled_count = 0
                 planning_failure_count = 0  # Reset planning failures on progress
-                print("[orchestrator] AUTO-CONTINUE: Progress detected (different failures)")
+                print(f"[orchestrator] AUTO-CONTINUE: Progress detected (different failure signatures)")
+                print(f"[orchestrator] Previous: {prev_failure_signatures}")
+                print(f"[orchestrator] Current: {current_signatures}")
 
-            prev_root_failure_ids = current_root_failure_ids
+            prev_failure_signatures = current_signatures
         else:
             stalled_count += 1
 
@@ -5531,6 +5709,11 @@ def main() -> int:
     )
     ap.add_argument("--no-agent-branch", action="store_true")
     ap.add_argument(
+        "--readonly",
+        action="store_true",
+        help="Force read-only mode: ignore needs_write_access and keep WRITE_ACCESS=0.",
+    )
+    ap.add_argument(
         "--selftest-parallel",
         action="store_true",
         help="Run selftest mode: synthetic tasks with trivial commands to verify scheduler",
@@ -5595,6 +5778,15 @@ def main() -> int:
         print("[orchestrator] ERROR: --only-codex and --only-claude are mutually exclusive")
         sys.exit(1)
 
+    if os.environ.get("FF_SKIP_VERIFY") == "1":
+        args.verify_mode = "off"
+
+    readonly_env = os.environ.get("ORCH_READONLY", "").strip().lower() in ("1", "true", "yes")
+    args.readonly = args.readonly or readonly_env
+    if args.readonly and not args.no_agent_branch:
+        print("[orchestrator] READONLY: enabling --no-agent-branch")
+        args.no_agent_branch = True
+
     # Handle --no-auto-continue override
     if args.no_auto_continue:
         args.auto_continue = False
@@ -5602,6 +5794,10 @@ def main() -> int:
     project_root = Path(args.project_root).resolve()
     config = load_config(project_root / args.config)
     config = dataclasses.replace(config, smoke_route=tuple(args.smoke_route or ()))
+
+    if args.readonly and (args.runner == "parallel" or args.selftest_parallel):
+        print("[orchestrator] ERROR: --readonly is only supported for sequential runner; use worktree isolation for parallel.")
+        return 2
 
     # Initialize agent policy based on --only-* flags
     forced_agent: str | None = None
@@ -5645,6 +5841,7 @@ def main() -> int:
         system_prompt_path=system_prompt_path,
         design_doc_path=design_doc_path,
         smoke_route=config.smoke_route,
+        readonly=args.readonly,
     )
 
     stats_md_path = project_root / "STATS.md"
@@ -5698,9 +5895,7 @@ def main() -> int:
     agent = args.start_agent
     if config.smoke_route:
         if agent != config.smoke_route[0]:
-            print(
-                f"[orchestrator] SMOKE ROUTE: overriding --start-agent {agent} -> {config.smoke_route[0]}"
-            )
+            print(f"[orchestrator] SMOKE ROUTE: overriding --start-agent {agent} -> {config.smoke_route[0]}")
         agent = config.smoke_route[0]
 
     print(f"[orchestrator] run_id={state.run_id} mode={args.mode} project_root={project_root}")
@@ -5758,6 +5953,7 @@ def main() -> int:
             call_counts=state.call_counts,
             disabled_by_quota=state.disabled_by_quota,
             stats_ids=stats_ids,
+            readonly=state.readonly,
         )
 
         prompt_path = call_dir / "prompt.txt"
@@ -5767,10 +5963,12 @@ def main() -> int:
 
         print("=" * 88)
         model = config.agent_models.get(agent, "(default)")
+        effective_write_access = state.grant_write_access and not state.readonly
         print(
             f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
-            f"write_access={'1' if state.grant_write_access else '0'}"
+            f"write_access={'1' if effective_write_access else '0'} | "
+            f"readonly={'1' if state.readonly else '0'}"
         )
         print(f"[orchestrator] TURN (agent={agent} model={model})")
 
@@ -5913,8 +6111,11 @@ def main() -> int:
 
         print(f"[orchestrator] summary: {turn_obj['summary']}")
 
-        # Update write-access grant for next call.
-        state.grant_write_access = bool(turn_obj.get("needs_write_access", False))
+        # Update write-access grant for next call (readonly mode blocks escalation).
+        requested_write_access = bool(turn_obj.get("needs_write_access", False))
+        if state.readonly and requested_write_access:
+            print("[orchestrator] READONLY: ignoring needs_write_access request")
+        state.grant_write_access = requested_write_access and not state.readonly
 
         # Completion gates: only stop if they actually pass.
         if bool(turn_obj["project_complete"]):

@@ -42,6 +42,7 @@ from formula_foundry.em.touchstone import (
     read_touchstone,
     write_touchstone,
 )
+from formula_foundry.postprocess.renormalize import renormalize_sparameters
 from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
 
 from .spec import FrequencySpec, PortSpec
@@ -215,12 +216,15 @@ def compute_window_metrics(config: WindowConfig, n_samples: int = 1024) -> dict[
 
     REQ-M2-006: Window function metrics for analysis.
     """
-    window = create_window(n_samples, WindowConfig(
-        window_type=config.window_type,
-        kaiser_beta=config.kaiser_beta,
-        tukey_alpha=config.tukey_alpha,
-        normalize=False,  # Use unnormalized for metrics
-    ))
+    window = create_window(
+        n_samples,
+        WindowConfig(
+            window_type=config.window_type,
+            kaiser_beta=config.kaiser_beta,
+            tukey_alpha=config.tukey_alpha,
+            normalize=False,  # Use unnormalized for metrics
+        ),
+    )
 
     # Coherent gain
     coherent_gain = np.sum(window) / n_samples
@@ -238,7 +242,7 @@ def compute_window_metrics(config: WindowConfig, n_samples: int = 1024) -> dict[
         WindowType.HAMMING: 1.75,
         WindowType.BLACKMAN: 1.10,
         WindowType.KAISER: 1.0,  # Varies with beta
-        WindowType.TUKEY: 2.0,   # Varies with alpha
+        WindowType.TUKEY: 2.0,  # Varies with alpha
     }
     scalloping_loss = scalloping_loss_table.get(config.window_type, 1.5)
 
@@ -258,6 +262,7 @@ class ExtractionConfig:
         frequency_spec: Frequency sweep specification.
         port_specs: List of port specifications.
         reference_impedance_ohm: Reference impedance for S-parameters.
+        renormalize_to_ohms: Optional impedance for renormalized exports.
         deembed_enabled: Whether de-embedding is enabled.
         output_format: Output format for S-parameters.
         window_config: Configuration for time-domain windowing (REQ-M2-006).
@@ -268,6 +273,7 @@ class ExtractionConfig:
     frequency_spec: FrequencySpec
     port_specs: list[PortSpec]
     reference_impedance_ohm: float = 50.0
+    renormalize_to_ohms: float | None = None
     deembed_enabled: bool = False
     output_format: Literal["touchstone", "csv", "both"] = "touchstone"
     window_config: WindowConfig = field(default_factory=lambda: WindowConfig())
@@ -575,9 +581,7 @@ def extract_sparams_from_port_signals(
 
         # Interpolate to target frequencies using linear interpolation
         # in real/imag domain for smoothness
-        s_col = _interpolate_complex_spectrum(
-            fft_freqs, b_j, a_excite, target_freqs
-        )
+        s_col = _interpolate_complex_spectrum(fft_freqs, b_j, a_excite, target_freqs)
 
         s_parameters[:, j, excite_idx] = s_col
 
@@ -757,10 +761,7 @@ def extract_full_sparam_matrix(
         port_signals = signal_sets.get_signals_for_excitation(excite_port_id)
 
         if len(port_signals) != n_ports:
-            raise ValueError(
-                f"Expected {n_ports} signals for excitation at {excite_port_id}, "
-                f"got {len(port_signals)}"
-            )
+            raise ValueError(f"Expected {n_ports} signals for excitation at {excite_port_id}, got {len(port_signals)}")
 
         # Extract S-parameters for this excitation
         result = extract_sparams_from_port_signals(
@@ -969,6 +970,53 @@ def write_extraction_result(
     _write_metrics_json(result, metrics_path)
     output_paths["metrics"] = metrics_path
 
+    if result.extraction_config.renormalize_to_ohms is not None:
+        renorm_target = float(result.extraction_config.renormalize_to_ohms)
+        renorm_data = renormalize_sparameters(result.s_parameters, renorm_target)
+        renorm_label = _format_ohms_label(renorm_target)
+        renorm_base = f"{base_name}_renorm_{renorm_label}ohm"
+
+        renorm_config = ExtractionConfig(
+            frequency_spec=result.extraction_config.frequency_spec,
+            port_specs=result.extraction_config.port_specs,
+            reference_impedance_ohm=renorm_target,
+            renormalize_to_ohms=None,
+            deembed_enabled=result.extraction_config.deembed_enabled,
+            output_format=result.extraction_config.output_format,
+            window_config=result.extraction_config.window_config,
+        )
+        renorm_canonical = _sparam_canonical_json(renorm_data)
+        renorm_hash = sha256_bytes(renorm_canonical.encode("utf-8"))
+        renorm_result = ExtractionResult(
+            s_parameters=renorm_data,
+            extraction_config=renorm_config,
+            source_files=result.source_files,
+            canonical_hash=renorm_hash,
+            metrics=_compute_extraction_metrics(renorm_data),
+        )
+
+        if fmt in ("touchstone", "both"):
+            ts_path = output_dir / f"{renorm_base}.s{renorm_data.n_ports}p"
+            write_touchstone(
+                renorm_data,
+                ts_path,
+                TouchstoneOptions(
+                    frequency_unit=FrequencyUnit.HZ,
+                    parameter_format=SParameterFormat.RI,
+                    reference_impedance_ohm=renorm_data.reference_impedance_ohm,
+                ),
+            )
+            output_paths["touchstone_renormalized"] = ts_path
+
+        if fmt in ("csv", "both"):
+            csv_path = output_dir / f"{renorm_base}.csv"
+            _write_sparam_csv(renorm_data, csv_path)
+            output_paths["csv_renormalized"] = csv_path
+
+        renorm_metrics_path = output_dir / f"{renorm_base}_metrics.json"
+        _write_metrics_json(renorm_result, renorm_metrics_path)
+        output_paths["metrics_renormalized"] = renorm_metrics_path
+
     return output_paths
 
 
@@ -1004,6 +1052,12 @@ def build_manifest_entry(result: ExtractionResult) -> dict[str, Any]:
 # =============================================================================
 # Private Helper Functions
 # =============================================================================
+
+
+def _format_ohms_label(ohms: float) -> str:
+    """Format impedance for file naming."""
+    label = f"{ohms:.6g}".replace(".", "p")
+    return label
 
 
 def _sparam_canonical_json(sparam_data: SParameterData) -> str:
@@ -1127,6 +1181,7 @@ def _write_metrics_json(result: ExtractionResult, path: Path) -> None:
             "f_start_hz": float(result.extraction_config.frequency_spec.f_start_hz),
             "f_stop_hz": float(result.extraction_config.frequency_spec.f_stop_hz),
             "reference_impedance_ohm": result.extraction_config.reference_impedance_ohm,
+            "renormalize_to_ohms": result.extraction_config.renormalize_to_ohms,
             "output_format": result.extraction_config.output_format,
         },
     }

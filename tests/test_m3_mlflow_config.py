@@ -577,11 +577,13 @@ class TestSRRunTracking:
             stage_name="symbolic_regression",
         ) as ctx:
             # Log batch metrics
-            ctx.log_metrics({
-                "rmse": 0.03,
-                "r_squared": 0.97,
-                "formula_complexity_score": 5.2,
-            })
+            ctx.log_metrics(
+                {
+                    "rmse": 0.03,
+                    "r_squared": 0.97,
+                    "formula_complexity_score": 5.2,
+                }
+            )
 
             # Verify all metrics logged
             assert "rmse" in ctx.metadata.metrics
@@ -684,7 +686,7 @@ tracking:
   default_experiment: "test"
 """)
 
-        config = setup_mlflow_environment(project_root=tmp_path)
+        setup_mlflow_environment(project_root=tmp_path)
 
         # Verify directories created
         assert (tmp_path / "data" / "mlflow" / "artifacts").exists()

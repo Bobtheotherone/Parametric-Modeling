@@ -32,50 +32,37 @@ class TestToolsDisabledContradiction:
         content = script_path.read_text()
 
         # Verify the script distinguishes between task_plan and turn modes
-        assert 'ORCH_SCHEMA_KIND' in content, "Script should check ORCH_SCHEMA_KIND"
+        assert "ORCH_SCHEMA_KIND" in content, "Script should check ORCH_SCHEMA_KIND"
 
         # Verify turn mode explicitly states tools are ENABLED
-        assert 'Tools ARE ENABLED' in content, \
-            "Turn mode should explicitly state tools ARE ENABLED"
-        assert 'Do NOT claim tools are disabled' in content, \
-            "Turn mode should warn against claiming tools are disabled"
+        assert "Tools ARE ENABLED" in content, "Turn mode should explicitly state tools ARE ENABLED"
+        assert "Do NOT claim tools are disabled" in content, "Turn mode should warn against claiming tools are disabled"
 
         # Verify the old contradiction is NOT present in turn mode
         # The old text was in both modes; now it should only be in task_plan mode
-        task_plan_section_match = re.search(
-            r'if.*ORCH_SCHEMA_KIND.*task_plan.*then(.*?)else',
-            content,
-            re.DOTALL
-        )
-        turn_section_match = re.search(
-            r'else\s*#.*[Ee]xecution mode(.*?)fi',
-            content,
-            re.DOTALL
-        )
+        re.search(r"if.*ORCH_SCHEMA_KIND.*task_plan.*then(.*?)else", content, re.DOTALL)
+        turn_section_match = re.search(r"else\s*#.*[Ee]xecution mode(.*?)fi", content, re.DOTALL)
 
         if turn_section_match:
             turn_section = turn_section_match.group(1)
-            assert 'Tools are DISABLED' not in turn_section, \
-                "Turn mode should NOT claim tools are DISABLED"
+            assert "Tools are DISABLED" not in turn_section, "Turn mode should NOT claim tools are DISABLED"
 
     def test_noncompliant_patterns_include_tools_disabled(self):
         """Verify noncompliance detection patterns catch 'tools disabled' claims."""
-        from bridge.loop import NONCOMPLIANT_OUTPUT_PATTERNS, CRITICAL_TOOL_VIOLATIONS
+        from bridge.loop import CRITICAL_TOOL_VIOLATIONS, NONCOMPLIANT_OUTPUT_PATTERNS
 
         # Check that tool-related patterns exist
         pattern_types = {desc for _, desc in NONCOMPLIANT_OUTPUT_PATTERNS}
-        tool_patterns = {p for p in pattern_types if 'tools' in p.lower()}
+        tool_patterns = {p for p in pattern_types if "tools" in p.lower()}
 
-        assert len(tool_patterns) > 0, \
-            "Should have patterns to detect 'tools disabled' claims"
-        assert 'tools_disabled_claim' in pattern_types or any('disabled' in p for p in pattern_types), \
+        assert len(tool_patterns) > 0, "Should have patterns to detect 'tools disabled' claims"
+        assert "tools_disabled_claim" in pattern_types or any("disabled" in p for p in pattern_types), (
             "Should detect 'tools disabled' claims"
+        )
 
         # Verify critical violations include tool claims
-        assert len(CRITICAL_TOOL_VIOLATIONS) > 0, \
-            "CRITICAL_TOOL_VIOLATIONS should not be empty"
-        assert any('tool' in v for v in CRITICAL_TOOL_VIOLATIONS), \
-            "Critical violations should include tool-related patterns"
+        assert len(CRITICAL_TOOL_VIOLATIONS) > 0, "CRITICAL_TOOL_VIOLATIONS should not be empty"
+        assert any("tool" in v for v in CRITICAL_TOOL_VIOLATIONS), "Critical violations should include tool-related patterns"
 
     def test_detect_noncompliant_output_catches_tools_disabled(self):
         """Verify _detect_noncompliant_output flags 'tools are disabled' text."""
@@ -90,11 +77,9 @@ class TestToolsDisabledContradiction:
 
         for text, expected_noncompliant, expected_critical in test_cases:
             is_noncompliant, violations, has_critical = _detect_noncompliant_output(text)
-            assert is_noncompliant == expected_noncompliant, \
-                f"Expected noncompliant={expected_noncompliant} for: {text[:50]}"
+            assert is_noncompliant == expected_noncompliant, f"Expected noncompliant={expected_noncompliant} for: {text[:50]}"
             if expected_critical:
-                assert has_critical, \
-                    f"Expected critical tool violation for: {text[:50]}"
+                assert has_critical, f"Expected critical tool violation for: {text[:50]}"
 
 
 class TestMergeConflictResolution:
@@ -126,8 +111,9 @@ class TestMergeConflictResolution:
         content = integrator_path.read_text()
 
         # Check that merge_resolver is imported and used
-        assert 'merge_resolver' in content or 'attempt_agent_merge_resolution' in content, \
+        assert "merge_resolver" in content or "attempt_agent_merge_resolution" in content, (
             "PatchIntegrator should use merge_resolver"
+        )
 
     def test_auto_merge_resolution_uses_agent_resolver(self):
         """Verify _attempt_auto_merge_resolution uses agent-based resolution."""
@@ -135,16 +121,13 @@ class TestMergeConflictResolution:
         content = loop_path.read_text()
 
         # Find the _attempt_auto_merge_resolution function
-        func_match = re.search(
-            r'def _attempt_auto_merge_resolution\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def _attempt_auto_merge_resolution\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "_attempt_auto_merge_resolution function not found"
 
         func_body = func_match.group(0)
-        assert 'attempt_agent_merge_resolution' in func_body or 'merge_resolver' in func_body, \
+        assert "attempt_agent_merge_resolution" in func_body or "merge_resolver" in func_body, (
             "_attempt_auto_merge_resolution should use agent-based merge resolver"
+        )
 
 
 class TestAutoContinueSelfHealing:
@@ -156,21 +139,16 @@ class TestAutoContinueSelfHealing:
         content = loop_path.read_text()
 
         # Find the _run_parallel_with_auto_continue function
-        func_match = re.search(
-            r'def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "_run_parallel_with_auto_continue function not found"
 
         func_body = func_match.group(0)
 
         # Check max_stalled value - should be >= 5 (was 3, now should be 10)
-        max_stalled_match = re.search(r'max_stalled\s*=\s*(\d+)', func_body)
+        max_stalled_match = re.search(r"max_stalled\s*=\s*(\d+)", func_body)
         assert max_stalled_match, "max_stalled assignment not found"
         max_stalled = int(max_stalled_match.group(1))
-        assert max_stalled >= 5, \
-            f"max_stalled should be >= 5 for self-healing (got {max_stalled})"
+        assert max_stalled >= 5, f"max_stalled should be >= 5 for self-healing (got {max_stalled})"
 
     def test_auto_continue_does_not_immediately_exit_on_rc2(self):
         """Verify auto-continue doesn't immediately exit on rc==2."""
@@ -178,11 +156,7 @@ class TestAutoContinueSelfHealing:
         content = loop_path.read_text()
 
         # Find the _run_parallel_with_auto_continue function
-        func_match = re.search(
-            r'def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "_run_parallel_with_auto_continue function not found"
 
         func_body = func_match.group(0)
@@ -190,17 +164,12 @@ class TestAutoContinueSelfHealing:
         # Check that rc==2 handling includes retry logic, not immediate return
         # The old code had: "if rc == 2:\n...return 2"
         # The new code should have planning_failure_count and retry logic
-        assert 'planning_failure_count' in func_body, \
-            "Should track planning_failure_count for retries"
+        assert "planning_failure_count" in func_body, "Should track planning_failure_count for retries"
 
         # Should NOT immediately return 2 on first planning failure
         # Look for pattern that would indicate immediate return
-        immediate_return_pattern = re.search(
-            r'if\s+rc\s*==\s*2:\s*\n\s*print.*\n\s*return\s+2',
-            func_body
-        )
-        assert not immediate_return_pattern, \
-            "Should NOT immediately return 2 on planning failure"
+        immediate_return_pattern = re.search(r"if\s+rc\s*==\s*2:\s*\n\s*print.*\n\s*return\s+2", func_body)
+        assert not immediate_return_pattern, "Should NOT immediately return 2 on planning failure"
 
     def test_auto_continue_has_repair_context_generation(self):
         """Verify auto-continue generates repair context for failures."""
@@ -208,18 +177,14 @@ class TestAutoContinueSelfHealing:
         content = loop_path.read_text()
 
         # Check that repair context generation function exists
-        assert '_generate_repair_context_for_failures' in content, \
-            "Should have _generate_repair_context_for_failures function"
+        assert "_generate_repair_context_for_failures" in content, "Should have _generate_repair_context_for_failures function"
 
         # Check it's used in auto-continue
-        func_match = re.search(
-            r'def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def _run_parallel_with_auto_continue\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         func_body = func_match.group(0) if func_match else ""
-        assert '_generate_repair_context_for_failures' in func_body or 'repair_context' in func_body, \
+        assert "_generate_repair_context_for_failures" in func_body or "repair_context" in func_body, (
             "auto-continue should use repair context generation"
+        )
 
 
 class TestBackfillGenerator:
@@ -230,8 +195,7 @@ class TestBackfillGenerator:
         loop_path = Path(__file__).parent.parent / "bridge" / "loop.py"
         content = loop_path.read_text()
 
-        assert 'BackfillGenerator' in content, \
-            "BackfillGenerator should be imported in loop.py"
+        assert "BackfillGenerator" in content, "BackfillGenerator should be imported in loop.py"
 
     def test_backfill_generator_integrated_in_run_parallel(self):
         """Verify BackfillGenerator is instantiated in run_parallel."""
@@ -239,30 +203,27 @@ class TestBackfillGenerator:
         content = loop_path.read_text()
 
         # Find run_parallel function
-        func_match = re.search(
-            r'def run_parallel\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def run_parallel\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "run_parallel function not found"
 
         func_body = func_match.group(0)
 
         # Check BackfillGenerator is instantiated
-        assert 'backfill_generator' in func_body.lower() or 'BackfillGenerator' in func_body, \
+        assert "backfill_generator" in func_body.lower() or "BackfillGenerator" in func_body, (
             "run_parallel should instantiate BackfillGenerator"
+        )
 
         # Check maybe_generate_backfill is called
-        assert 'maybe_generate_backfill' in func_body or 'backfill' in func_body, \
+        assert "maybe_generate_backfill" in func_body or "backfill" in func_body, (
             "run_parallel should have backfill generation logic"
+        )
 
     def test_scheduler_has_update_tasks_method(self):
         """Verify TwoLaneScheduler has update_tasks method for backfill."""
         from bridge.scheduler import TwoLaneScheduler
 
         # Check the method exists
-        assert hasattr(TwoLaneScheduler, 'update_tasks'), \
-            "TwoLaneScheduler should have update_tasks method"
+        assert hasattr(TwoLaneScheduler, "update_tasks"), "TwoLaneScheduler should have update_tasks method"
 
     def test_backfill_generator_filler_tasks(self):
         """Verify BackfillGenerator generates safe filler tasks."""
@@ -289,23 +250,21 @@ class TestStuckDetectionSelfHealing:
         content = loop_path.read_text()
 
         # Find run_parallel function
-        func_match = re.search(
-            r'def run_parallel\([^)]+\).*?(?=\ndef |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def run_parallel\([^)]+\).*?(?=\ndef |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "run_parallel function not found"
 
         func_body = func_match.group(0)
 
         # Check for self-healing keywords
-        assert 'SELF-HEALING' in func_body or 'self_heal' in func_body or 'recovery' in func_body.lower(), \
+        assert "SELF-HEALING" in func_body or "self_heal" in func_body or "recovery" in func_body.lower(), (
             "STUCK detection should have self-healing logic"
+        )
 
         # Check that STUCK detection doesn't immediately mark as stuck
         # It should attempt recovery first
-        assert 'recovered' in func_body.lower() or 'recovery_reason' in func_body, \
+        assert "recovered" in func_body.lower() or "recovery_reason" in func_body, (
             "STUCK detection should track recovery attempts"
+        )
 
 
 class TestConfigCapabilities:
@@ -321,8 +280,9 @@ class TestConfigCapabilities:
 
         for agent_name, agent_cfg in agents.items():
             # Verify new capability flags exist
-            assert "supports_tools" in agent_cfg or "supports_write_access" in agent_cfg, \
+            assert "supports_tools" in agent_cfg or "supports_write_access" in agent_cfg, (
                 f"Agent {agent_name} should have capability flags"
+            )
 
 
 class TestMergeResolverSchemaKind:
@@ -334,12 +294,12 @@ class TestMergeResolverSchemaKind:
         content = resolver_path.read_text()
 
         # Check that task_plan is NOT used (it should be "json" now)
-        assert 'ORCH_SCHEMA_KIND"] = "task_plan"' not in content, \
+        assert 'ORCH_SCHEMA_KIND"] = "task_plan"' not in content, (
             "merge_resolver should NOT use task_plan schema kind (use 'json' instead)"
+        )
 
         # Check that "json" mode is used
-        assert 'ORCH_SCHEMA_KIND"] = "json"' in content, \
-            "merge_resolver should use 'json' schema kind"
+        assert 'ORCH_SCHEMA_KIND"] = "json"' in content, "merge_resolver should use 'json' schema kind"
 
     def test_claude_sh_json_mode_does_not_mention_task_plan_keys(self):
         """Verify claude.sh json mode reminder doesn't mention task_plan-required keys."""
@@ -347,22 +307,19 @@ class TestMergeResolverSchemaKind:
         content = script_path.read_text()
 
         # Find the json mode section
-        json_section_match = re.search(
-            r'ORCH_SCHEMA_KIND.*==.*"json".*then(.*?)(?:elif|else|fi)',
-            content,
-            re.DOTALL
-        )
+        json_section_match = re.search(r'ORCH_SCHEMA_KIND.*==.*"json".*then(.*?)(?:elif|else|fi)', content, re.DOTALL)
         assert json_section_match, "claude.sh should have json schema kind handling"
 
         json_section = json_section_match.group(1)
 
         # Verify json mode does NOT mention task_plan-specific keys
-        task_plan_keys = ['milestone_id', 'max_parallel_tasks', 'rationale', 'preferred_agent']
+        task_plan_keys = ["milestone_id", "max_parallel_tasks", "rationale", "preferred_agent"]
         for key in task_plan_keys:
             # Allow mentions of "do NOT include" but not prescriptive "must have"
-            required_pattern = f'{key}.*required|required.*{key}|Top-level.*{key}|must have.*{key}'
-            assert not re.search(required_pattern, json_section, re.IGNORECASE), \
+            required_pattern = f"{key}.*required|required.*{key}|Top-level.*{key}|must have.*{key}"
+            assert not re.search(required_pattern, json_section, re.IGNORECASE), (
                 f"json mode should NOT prescribe task_plan key '{key}'"
+            )
 
 
 class TestBackfillScopeEnforcement:
@@ -372,10 +329,10 @@ class TestBackfillScopeEnforcement:
         """Verify is_backfill_task correctly identifies FILLER-* tasks."""
         from bridge.patch_integration import is_backfill_task
 
-        assert is_backfill_task("FILLER-LINT-001") == True
-        assert is_backfill_task("FILLER-TEST-002") == True
-        assert is_backfill_task("M1-IMPLEMENT-FOO") == False
-        assert is_backfill_task("REGULAR-TASK") == False
+        assert is_backfill_task("FILLER-LINT-001")
+        assert is_backfill_task("FILLER-TEST-002")
+        assert not is_backfill_task("M1-IMPLEMENT-FOO")
+        assert not is_backfill_task("REGULAR-TASK")
 
     def test_backfill_scope_guard_rejects_src_files(self):
         """Verify backfill scope guard rejects patches touching src/ directory.
@@ -409,23 +366,21 @@ class TestBackfillScopeEnforcement:
         content = loop_path.read_text()
 
         # Find the convert_filler_to_parallel_task function
-        func_match = re.search(
-            r'def convert_filler_to_parallel_task.*?(?=\n    def |\nclass |\Z)',
-            content,
-            re.DOTALL
-        )
+        func_match = re.search(r"def convert_filler_to_parallel_task.*?(?=\n    def |\nclass |\Z)", content, re.DOTALL)
         assert func_match, "convert_filler_to_parallel_task function not found"
 
         func_body = func_match.group(0)
 
         # Check that type-based locks are used (NOT global "backfill" lock)
         # The new design uses derive_backfill_lock to get type-specific locks
-        assert 'derive_backfill_lock' in func_body or 'task_locks' in func_body, \
+        assert "derive_backfill_lock" in func_body or "task_locks" in func_body, (
             "Filler tasks should use derive_backfill_lock for type-based locks"
+        )
 
         # Should NOT have global backfill lock anymore
-        assert 'locks=["backfill"]' not in func_body, \
+        assert 'locks=["backfill"]' not in func_body, (
             "Filler tasks should NOT use global 'backfill' lock (now uses type-based locks)"
+        )
 
     def test_backfill_scope_guard_allows_docs_directory(self):
         """Verify backfill scope guard allows docs/ directory."""
@@ -496,7 +451,6 @@ class TestBehavioralMergeConflictResolution:
     def test_merge_conflict_resolution_with_injected_callback(self):
         """Create a real git conflict and resolve it using dependency-injected callback."""
         import shutil
-        import tempfile
         from pathlib import Path
 
         from bridge.merge_resolver import MergeResolver, detect_conflict_files
@@ -545,8 +499,7 @@ class TestBehavioralMergeConflictResolution:
 
             # Should have conflict
             content_before = hello_path.read_text()
-            assert "<<<<<<" in content_before or result.returncode != 0, \
-                "Expected merge conflict but none found"
+            assert "<<<<<<" in content_before or result.returncode != 0, "Expected merge conflict but none found"
 
             # If no conflict markers (fast-forward), create artificial conflict
             if "<<<<<<" not in content_before:
@@ -555,12 +508,12 @@ class TestBehavioralMergeConflictResolution:
                 subprocess.run(["git", "reset", "--hard", "branch_b"], cwd=repo_path, capture_output=True, check=True)
                 # Modify file directly to create conflict markers
                 hello_path.write_text(
-                    'def greet():\n'
-                    '<<<<<<< HEAD\n'
+                    "def greet():\n"
+                    "<<<<<<< HEAD\n"
                     '    return "Hello from Branch B!"\n'
-                    '=======\n'
+                    "=======\n"
                     '    return "Hello from Branch A!"\n'
-                    '>>>>>>> branch_a\n'
+                    ">>>>>>> branch_a\n"
                 )
                 subprocess.run(["git", "add", "hello.py"], cwd=repo_path, capture_output=True)
                 # Mark as unmerged
@@ -576,11 +529,9 @@ class TestBehavioralMergeConflictResolution:
                 for cf in conflicts:
                     # Simple resolution: combine both versions
                     resolved_content = 'def greet():\n    return "Hello from Both Branches!"\n'
-                    resolutions.append({
-                        "path": cf.path,
-                        "resolved_content": resolved_content,
-                        "notes": "Combined both branch changes"
-                    })
+                    resolutions.append(
+                        {"path": cf.path, "resolved_content": resolved_content, "notes": "Combined both branch changes"}
+                    )
                 return {"resolutions": resolutions, "unresolvable": []}
 
             # Create resolver with injected callback
@@ -599,8 +550,9 @@ class TestBehavioralMergeConflictResolution:
             )
 
             # Verify results
-            assert result.success or "hello.py" in result.resolved_files, \
+            assert result.success or "hello.py" in result.resolved_files, (
                 f"Resolution should succeed. Error: {result.error}, Unresolved: {result.unresolved_files}"
+            )
 
             # Verify conflict markers removed
             content_after = hello_path.read_text()
@@ -611,10 +563,8 @@ class TestBehavioralMergeConflictResolution:
             # Verify file was resolved
             assert "Both Branches" in content_after, "Resolution content should be applied"
 
-
     def test_merge_conflict_deterministic_resolution_git_clean(self):
         """Deterministic test: create real git conflict, resolve it, verify git status clean."""
-        import tempfile
         from pathlib import Path
 
         from bridge.merge_resolver import (
@@ -637,20 +587,20 @@ class TestBehavioralMergeConflictResolution:
 
             # Create and commit base file
             test_file = repo_path / "module.py"
-            test_file.write_text('def foo():\n    return 1\n')
+            test_file.write_text("def foo():\n    return 1\n")
             subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True, check=True)
 
             # Create branch_a with modification
             subprocess.run(["git", "checkout", "-b", "branch_a"], cwd=repo_path, capture_output=True, check=True)
-            test_file.write_text('def foo():\n    return 2  # branch_a\n')
+            test_file.write_text("def foo():\n    return 2  # branch_a\n")
             subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "commit", "-m", "branch_a change"], cwd=repo_path, capture_output=True, check=True)
 
             # Go back to initial commit and create branch_b
             subprocess.run(["git", "checkout", "HEAD~1"], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "checkout", "-b", "branch_b"], cwd=repo_path, capture_output=True, check=True)
-            test_file.write_text('def foo():\n    return 3  # branch_b\n')
+            test_file.write_text("def foo():\n    return 3  # branch_b\n")
             subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "commit", "-m", "branch_b change"], cwd=repo_path, capture_output=True, check=True)
 
@@ -679,12 +629,10 @@ class TestBehavioralMergeConflictResolution:
                 """Return a deterministic resolution that combines both sides."""
                 resolutions = []
                 for cf in conflicts:
-                    resolved = 'def foo():\n    # Combined from both branches\n    return 2  # from branch_a\n'
-                    resolutions.append({
-                        "path": cf.path,
-                        "resolved_content": resolved,
-                        "notes": "Deterministically combined both versions"
-                    })
+                    resolved = "def foo():\n    # Combined from both branches\n    return 2  # from branch_a\n"
+                    resolutions.append(
+                        {"path": cf.path, "resolved_content": resolved, "notes": "Deterministically combined both versions"}
+                    )
                 return {"resolutions": resolutions, "unresolvable": []}
 
             # Create resolver with injected callback
@@ -703,8 +651,7 @@ class TestBehavioralMergeConflictResolution:
             )
 
             # Verify resolution succeeded
-            assert result.success or "module.py" in result.resolved_files, \
-                f"Resolution failed: {result.error}"
+            assert result.success or "module.py" in result.resolved_files, f"Resolution failed: {result.error}"
 
             # Verify conflict markers are GONE
             content_after = test_file.read_text()
@@ -730,7 +677,6 @@ class TestBehavioralMergeConflictResolution:
 
     def test_parse_conflict_file_unit(self):
         """Unit test for parse_conflict_file function with synthetic conflict markers."""
-        import tempfile
         from pathlib import Path
 
         from bridge.merge_resolver import parse_conflict_file
@@ -740,13 +686,13 @@ class TestBehavioralMergeConflictResolution:
 
             # Create a file with conflict markers
             test_file = repo_path / "test.py"
-            conflict_content = '''def foo():
+            conflict_content = """def foo():
 <<<<<<< HEAD
     return 2
 =======
     return 3
 >>>>>>> other_branch
-'''
+"""
             test_file.write_text(conflict_content)
 
             # Parse the conflict file
@@ -760,7 +706,6 @@ class TestBehavioralMergeConflictResolution:
 
     def test_merge_resolver_no_conflicts(self):
         """Test MergeResolver with a clean repo (no conflicts)."""
-        import tempfile
         from pathlib import Path
 
         from bridge.merge_resolver import MergeResolver
@@ -775,7 +720,7 @@ class TestBehavioralMergeConflictResolution:
             subprocess.run(["git", "init"], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_path, capture_output=True, check=True)
-            (repo_path / "clean.py").write_text('x = 1\n')
+            (repo_path / "clean.py").write_text("x = 1\n")
             subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
             subprocess.run(["git", "commit", "-m", "Initial"], cwd=repo_path, capture_output=True, check=True)
 
@@ -844,7 +789,7 @@ class TestHotFileGuardrail:
         )
 
         tasks = [task1, task2, task3]
-        result = _inject_hot_file_locks(tasks)
+        _inject_hot_file_locks(tasks)
 
         # Verify locks were injected for api.py
         assert "hot:api.py" in task1.locks, "Task 1 should have hot:api.py lock"
@@ -872,7 +817,7 @@ class TestHotFileGuardrail:
         )
 
         tasks = [task1, task2]
-        result = _inject_hot_file_locks(tasks)
+        _inject_hot_file_locks(tasks)
 
         # No locks should be injected - each hot file only touched by one task
         assert "hot:api.py" not in task1.locks, "No lock for api.py (only one task)"
@@ -906,7 +851,7 @@ class TestHotFileGuardrail:
         )
 
         tasks = [task1, task2, task3]
-        result = _inject_hot_file_locks(tasks)
+        _inject_hot_file_locks(tasks)
 
         # api.py touched by task1 and task2
         assert "hot:api.py" in task1.locks
@@ -939,12 +884,10 @@ class TestPathNormalizationBug:
 
         # The critical case: bridge/design_doc.py must stay bridge/design_doc.py
         result = normalize_diff_path("bridge/design_doc.py")
-        assert result == "bridge/design_doc.py", \
-            f"Path was corrupted: 'bridge/design_doc.py' became '{result}'"
+        assert result == "bridge/design_doc.py", f"Path was corrupted: 'bridge/design_doc.py' became '{result}'"
 
         # Must NOT become 'ridge/...'
-        assert not result.startswith("ridge/"), \
-            f"Path normalization bug: 'bridge/' became 'ridge/'"
+        assert not result.startswith("ridge/"), "Path normalization bug: 'bridge/' became 'ridge/'"
 
     def test_normalize_diff_path_removes_git_prefix_a(self):
         """Verify 'a/' prefix from git diff is correctly removed."""
@@ -952,8 +895,7 @@ class TestPathNormalizationBug:
 
         # Git diff uses a/ prefix for source file
         result = normalize_diff_path("a/bridge/design_doc.py")
-        assert result == "bridge/design_doc.py", \
-            f"'a/' prefix not properly removed: got '{result}'"
+        assert result == "bridge/design_doc.py", f"'a/' prefix not properly removed: got '{result}'"
 
     def test_normalize_diff_path_removes_git_prefix_b(self):
         """Verify 'b/' prefix from git diff is correctly removed."""
@@ -961,8 +903,7 @@ class TestPathNormalizationBug:
 
         # Git diff uses b/ prefix for destination file
         result = normalize_diff_path("b/bridge/design_doc.py")
-        assert result == "bridge/design_doc.py", \
-            f"'b/' prefix not properly removed: got '{result}'"
+        assert result == "bridge/design_doc.py", f"'b/' prefix not properly removed: got '{result}'"
 
     def test_normalize_diff_path_handles_various_paths(self):
         """Test various path normalization scenarios."""
@@ -987,8 +928,7 @@ class TestPathNormalizationBug:
 
         for input_path, expected in test_cases:
             result = normalize_diff_path(input_path)
-            assert result == expected, \
-                f"normalize_diff_path('{input_path}') = '{result}', expected '{expected}'"
+            assert result == expected, f"normalize_diff_path('{input_path}') = '{result}', expected '{expected}'"
 
     def test_scope_guard_uses_normalize_diff_path(self):
         """Verify ScopeGuard check_paths uses proper normalization."""
@@ -1001,12 +941,12 @@ class TestPathNormalizationBug:
 
         # This path should be allowed (it's in bridge/)
         result = guard.check_paths(["a/bridge/design_doc.py"])
-        assert result.allowed, \
-            f"bridge/ path was rejected after normalization: {result.violations}"
+        assert result.allowed, f"bridge/ path was rejected after normalization: {result.violations}"
 
         # The normalized path should be 'bridge/design_doc.py', NOT 'ridge/design_doc.py'
-        assert all(not v.path.startswith("ridge/") for v in result.violations), \
+        assert all(not v.path.startswith("ridge/") for v in result.violations), (
             "Path normalization bug: found 'ridge/' in violations"
+        )
 
 
 class TestDesignDocumentProtection:
@@ -1019,21 +959,20 @@ class TestDesignDocumentProtection:
         """Verify DESIGN_DOCUMENT.md is in USER_OWNED_FILES."""
         from bridge.patch_integration import USER_OWNED_FILES
 
-        assert "DESIGN_DOCUMENT.md" in USER_OWNED_FILES, \
-            "DESIGN_DOCUMENT.md should be in USER_OWNED_FILES"
+        assert "DESIGN_DOCUMENT.md" in USER_OWNED_FILES, "DESIGN_DOCUMENT.md should be in USER_OWNED_FILES"
 
     def test_is_user_owned_file_detects_design_doc(self):
         """Verify is_user_owned_file correctly identifies DESIGN_DOCUMENT.md."""
         from bridge.patch_integration import is_user_owned_file
 
-        assert is_user_owned_file("DESIGN_DOCUMENT.md") == True
-        assert is_user_owned_file("a/DESIGN_DOCUMENT.md") == True
-        assert is_user_owned_file("b/DESIGN_DOCUMENT.md") == True
-        assert is_user_owned_file("./DESIGN_DOCUMENT.md") == True
+        assert is_user_owned_file("DESIGN_DOCUMENT.md")
+        assert is_user_owned_file("a/DESIGN_DOCUMENT.md")
+        assert is_user_owned_file("b/DESIGN_DOCUMENT.md")
+        assert is_user_owned_file("./DESIGN_DOCUMENT.md")
 
         # Non-user-owned files
-        assert is_user_owned_file("README.md") == False
-        assert is_user_owned_file("bridge/loop.py") == False
+        assert not is_user_owned_file("README.md")
+        assert not is_user_owned_file("bridge/loop.py")
 
     def test_scope_guard_rejects_design_document(self):
         """Verify ScopeGuard rejects patches touching DESIGN_DOCUMENT.md."""
@@ -1047,8 +986,7 @@ class TestDesignDocumentProtection:
 
         result = guard.check_paths(["DESIGN_DOCUMENT.md"])
         assert not result.allowed, "DESIGN_DOCUMENT.md should be rejected"
-        assert any(v.reason == "user_owned_file" for v in result.violations), \
-            "Rejection reason should be 'user_owned_file'"
+        assert any(v.reason == "user_owned_file" for v in result.violations), "Rejection reason should be 'user_owned_file'"
 
     def test_backfill_scope_guard_rejects_design_document(self):
         """Verify backfill scope guard rejects DESIGN_DOCUMENT.md."""
@@ -1086,10 +1024,8 @@ class TestDynamicBackfillLocks:
         tasks = gen.generate_filler_tasks(3)
 
         for task in tasks:
-            assert "DESIGN_DOCUMENT.md" in task.description, \
-                f"Task {task.id} missing DESIGN_DOCUMENT.md exclusion note"
-            assert "bridge/loop.py" in task.description, \
-                f"Task {task.id} missing bridge/loop.py exclusion note"
+            assert "DESIGN_DOCUMENT.md" in task.description, f"Task {task.id} missing DESIGN_DOCUMENT.md exclusion note"
+            assert "bridge/loop.py" in task.description, f"Task {task.id} missing bridge/loop.py exclusion note"
 
     def test_backfill_generator_allow_bridge_option(self):
         """Test BackfillGenerator allow_bridge parameter."""
@@ -1098,8 +1034,8 @@ class TestDynamicBackfillLocks:
         gen_restricted = BackfillGenerator(project_root="/tmp", allow_bridge=False)
         gen_with_bridge = BackfillGenerator(project_root="/tmp", allow_bridge=True)
 
-        assert gen_restricted.allow_bridge == False
-        assert gen_with_bridge.allow_bridge == True
+        assert not gen_restricted.allow_bridge
+        assert gen_with_bridge.allow_bridge
 
         # Generate tasks and verify descriptions differ
         tasks_restricted = gen_restricted.generate_filler_tasks(3)
@@ -1157,13 +1093,11 @@ class TestOverlapLocking:
         # Both task1 and task2 should have the same file lock
         assert len(task1_file_locks) > 0, "Task 1 should have file lock"
         assert len(task2_file_locks) > 0, "Task 2 should have file lock"
-        assert set(task1_file_locks) == set(task2_file_locks), \
-            "Tasks 1 and 2 should have matching file locks"
+        assert set(task1_file_locks) == set(task2_file_locks), "Tasks 1 and 2 should have matching file locks"
 
         # Task 3 should NOT have the shared.py lock
         shared_lock = task1_file_locks[0] if task1_file_locks else None
-        assert shared_lock not in task3_file_locks, \
-            "Task 3 should NOT have the shared.py lock"
+        assert shared_lock not in task3_file_locks, "Task 3 should NOT have the shared.py lock"
 
     def test_overlap_locks_with_missing_touched_paths(self):
         """Verify tasks missing touched_paths get conservative locks."""
@@ -1251,10 +1185,7 @@ class TestBackfillConcurrency:
             return True
 
         def locks_available(t):
-            for lock in t.locks:
-                if lock in held_locks:
-                    return False
-            return True
+            return all(lock not in held_locks for lock in t.locks)
 
         lane_config = LaneConfig.from_max_workers(10)
         scheduler = TwoLaneScheduler(
@@ -1266,8 +1197,7 @@ class TestBackfillConcurrency:
 
         # All three tasks should be ready (different locks)
         ready = scheduler.get_ready_tasks()
-        assert len(ready) == 3, \
-            f"All 3 backfill tasks should be ready concurrently, got {len(ready)}"
+        assert len(ready) == 3, f"All 3 backfill tasks should be ready concurrently, got {len(ready)}"
 
         # Simulate running task1 - acquire its locks
         for lock in task1.locks:
@@ -1276,8 +1206,7 @@ class TestBackfillConcurrency:
 
         # task2 and task3 should still be ready (different locks)
         ready = scheduler.get_ready_tasks()
-        assert len(ready) == 2, \
-            f"2 remaining backfill tasks should be ready, got {len(ready)}"
+        assert len(ready) == 2, f"2 remaining backfill tasks should be ready, got {len(ready)}"
 
 
 class TestOrchestratorCoreExclusion:
@@ -1288,8 +1217,7 @@ class TestOrchestratorCoreExclusion:
         from bridge.patch_integration import BACKFILL_DENYLIST_CORE, ORCHESTRATOR_CORE_FILES
 
         for core_file in ORCHESTRATOR_CORE_FILES:
-            assert core_file in BACKFILL_DENYLIST_CORE, \
-                f"Core file {core_file} should be in BACKFILL_DENYLIST_CORE"
+            assert core_file in BACKFILL_DENYLIST_CORE, f"Core file {core_file} should be in BACKFILL_DENYLIST_CORE"
 
     def test_backfill_scope_guard_with_bridge_still_blocks_core(self):
         """Verify backfill scope guard blocks core files even with allow_bridge."""
@@ -1308,10 +1236,10 @@ class TestOrchestratorCoreExclusion:
 
         for core_file in core_files:
             result = guard.check_paths([core_file])
-            assert not result.allowed, \
-                f"Core file {core_file} should be rejected even with allow_bridge"
+            assert not result.allowed, f"Core file {core_file} should be rejected even with allow_bridge"
 
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

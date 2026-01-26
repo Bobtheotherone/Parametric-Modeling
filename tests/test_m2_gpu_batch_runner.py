@@ -70,7 +70,6 @@ from formula_foundry.openems.spec import (
     ToolchainSpec,
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -462,8 +461,7 @@ class TestGPUDetection:
         mock_run.return_value = subprocess.CompletedProcess(
             args=["nvidia-smi"],
             returncode=0,
-            stdout="0, NVIDIA A100, 40960, 38000, 2960, 15, 45, 100\n"
-            "1, NVIDIA A100, 40960, 39000, 1960, 10, 42, 90\n",
+            stdout="0, NVIDIA A100, 40960, 38000, 2960, 15, 45, 100\n1, NVIDIA A100, 40960, 39000, 1960, 10, 42, 90\n",
         )
         devices = detect_nvidia_gpus()
         assert len(devices) == 2
@@ -987,10 +985,6 @@ class TestGPUBatchIntegration:
 
         # With fail_fast, should stop after first failure
         assert result.batch_result.n_failed >= 1
-        total_processed = (
-            result.batch_result.n_completed
-            + result.batch_result.n_failed
-            + result.batch_result.n_skipped
-        )
+        total_processed = result.batch_result.n_completed + result.batch_result.n_failed + result.batch_result.n_skipped
         # Some jobs should be skipped
         assert total_processed == len(jobs)

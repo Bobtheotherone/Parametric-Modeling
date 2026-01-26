@@ -528,14 +528,11 @@ def validate_rounded_outline_feasibility(
     if height_nm <= 0:
         raise OutlineFeasibilityError(f"Height must be positive, got {height_nm} nm")
     if corner_radius_nm < 0:
-        raise OutlineFeasibilityError(
-            f"Corner radius must be non-negative, got {corner_radius_nm} nm"
-        )
+        raise OutlineFeasibilityError(f"Corner radius must be non-negative, got {corner_radius_nm} nm")
     max_radius = min(width_nm, height_nm) // 2
     if corner_radius_nm > max_radius:
         raise OutlineFeasibilityError(
-            f"Corner radius ({corner_radius_nm} nm) exceeds maximum "
-            f"({max_radius} nm = min({width_nm}, {height_nm}) / 2)"
+            f"Corner radius ({corner_radius_nm} nm) exceeds maximum ({max_radius} nm = min({width_nm}, {height_nm}) / 2)"
         )
 
 

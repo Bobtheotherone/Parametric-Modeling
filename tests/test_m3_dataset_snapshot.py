@@ -1226,9 +1226,7 @@ class TestDatasetSnapshotSlicing:
         reader = DatasetSnapshotReader(snapshot_path=output_dir / "predicate_test_v1.json")
 
         # Filter with predicates
-        table = reader.slice_parquet(
-            filters=[("feature_value", ">=", 5.0), ("feature_value", "<=", 10.0)]
-        )
+        table = reader.slice_parquet(filters=[("feature_value", ">=", 5.0), ("feature_value", "<=", 10.0)])
 
         # Should get values 5-10 (6 rows)
         assert len(table) == 6

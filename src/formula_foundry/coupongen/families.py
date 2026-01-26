@@ -85,8 +85,7 @@ def _validate_f0(spec: CouponSpec) -> None:
         raise FamilyValidationError(
             FAMILY_F0,
             "discontinuity",
-            "F0_CAL_THRU_LINE does not allow a discontinuity block "
-            "(discontinuity is an F1-only feature for via transitions)",
+            "F0_CAL_THRU_LINE does not allow a discontinuity block (discontinuity is an F1-only feature for via transitions)",
         )
 
 
@@ -108,8 +107,7 @@ def _validate_f1(spec: CouponSpec) -> None:
         raise FamilyValidationError(
             FAMILY_F1,
             "discontinuity",
-            "F1_SINGLE_ENDED_VIA requires a discontinuity block "
-            "(defines the via transition parameters)",
+            "F1_SINGLE_ENDED_VIA requires a discontinuity block (defines the via transition parameters)",
         )
 
     # F1 requires discontinuity.type == VIA_TRANSITION
@@ -117,8 +115,7 @@ def _validate_f1(spec: CouponSpec) -> None:
         raise FamilyValidationError(
             FAMILY_F1,
             "discontinuity.type",
-            f"F1_SINGLE_ENDED_VIA requires discontinuity.type='VIA_TRANSITION', "
-            f"got '{spec.discontinuity.type}'",
+            f"F1_SINGLE_ENDED_VIA requires discontinuity.type='VIA_TRANSITION', got '{spec.discontinuity.type}'",
         )
 
 

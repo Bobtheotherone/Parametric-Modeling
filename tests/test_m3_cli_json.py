@@ -38,9 +38,7 @@ class TestInitJsonOutput:
         assert "init_registry" in data["steps_completed"]
         assert "create_directories" in data["steps_completed"]
 
-    def test_init_json_output_already_initialized(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_init_json_output_already_initialized(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Init with --json should indicate already initialized."""
         # First init
         cmd_init(root=tmp_path, force=False, quiet=True, output_json=False)
@@ -107,9 +105,7 @@ class TestDatasetListCommand:
         args = parser.parse_args(["dataset", "list", "-l"])
         assert args.long_format is True
 
-    def test_dataset_list_empty_store(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_dataset_list_empty_store(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Dataset list with no datasets should return empty JSON list."""
         # Initialize store but don't create datasets
         cmd_init(root=tmp_path, force=False, quiet=True)
@@ -130,9 +126,7 @@ class TestDatasetListCommand:
         assert data["count"] == 0
         assert data["datasets"] == []
 
-    def test_dataset_list_with_datasets(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_dataset_list_with_datasets(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Dataset list should list existing datasets."""
         # Initialize store
         cmd_init(root=tmp_path, force=False, quiet=True)
@@ -182,9 +176,7 @@ class TestDatasetListCommand:
         assert len(data["datasets"]) == 1
         assert data["datasets"][0]["dataset_id"] == "test_dataset"
 
-    def test_dataset_list_name_filter(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_dataset_list_name_filter(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Dataset list with --name should filter datasets."""
         # Initialize store
         cmd_init(root=tmp_path, force=False, quiet=True)
@@ -242,9 +234,7 @@ class TestRunJsonOutput:
         args = parser.parse_args(["run", "test_stage", "--json"])
         assert args.output_json is True
 
-    def test_run_dry_run_json_output(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_run_dry_run_json_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Run --dry-run with --json should output valid JSON."""
         # Initialize store and create dvc.yaml
         cmd_init(root=tmp_path, force=False, quiet=True)
@@ -252,6 +242,7 @@ class TestRunJsonOutput:
 
         # Initialize git (required for run)
         import subprocess
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "test@test.com"],
@@ -299,9 +290,7 @@ class TestMainJsonFlags:
         data = json.loads(captured.out)
         assert data["status"] == "success"
 
-    def test_main_dataset_list_json(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_main_dataset_list_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Main with dataset list --json should output JSON."""
         cmd_init(root=tmp_path, force=False, quiet=True)
 

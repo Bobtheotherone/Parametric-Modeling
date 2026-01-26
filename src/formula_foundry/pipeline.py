@@ -9,6 +9,8 @@ from formula_foundry.coupongen.api import (
     ConstraintMode,
     KicadRunnerProtocol,
     ValidationMode,
+)
+from formula_foundry.coupongen.api import (
     run_build_pipeline as _run_build_pipeline,
 )
 from formula_foundry.coupongen.kicad import BackendA
