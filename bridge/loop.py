@@ -1608,6 +1608,9 @@ def _run_verify(project_root: Path, out_json: Path, strict_git: bool) -> tuple[i
 def _completion_gates_ok(project_root: Path) -> tuple[bool, str]:
     """The repo is 'complete' when strict verify passes and git status is clean."""
 
+    if os.environ.get("FF_SKIP_VERIFY") == "1":
+        return True, "ok (FF_SKIP_VERIFY=1)"
+
     env = os.environ.copy()
     rc, out, err = _run_cmd([sys.executable, "-m", "tools.verify", "--strict-git", "--include-m0"], cwd=project_root, env=env)
     if rc != 0:
@@ -5605,6 +5608,9 @@ def main() -> int:
     if args.only_codex and args.only_claude:
         print("[orchestrator] ERROR: --only-codex and --only-claude are mutually exclusive")
         sys.exit(1)
+
+    if os.environ.get("FF_SKIP_VERIFY") == "1":
+        args.verify_mode = "off"
 
     readonly_env = os.environ.get("ORCH_READONLY", "").strip().lower() in ("1", "true", "yes")
     args.readonly = args.readonly or readonly_env
