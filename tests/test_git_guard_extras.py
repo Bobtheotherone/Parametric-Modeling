@@ -17,15 +17,40 @@ import pytest
 from tools import git_guard
 
 
+def _join(*parts: str) -> str:
+    return "".join(parts)
+
+
+def _openai_key() -> str:
+    return _join("sk-", "abc123def456ghi789jkl0123456789")
+
+
+def _anthropic_key() -> str:
+    return _join("sk-ant-", "abc123-xyz789-01234")
+
+
+def _google_key() -> str:
+    return _join("AIza", "SyBcdefghijklmnopqrstuvwx")
+
+
+def _bearer_token() -> str:
+    return _join("eyJhbGciOiJI", "UzI1NiIsInR5cCI6")
+
+
+def _api_key_assignment(name: str, value: str, quote: str = "'") -> str:
+    return _join(name, "=", quote, value, quote)
+
+
 class TestSecretPatterns:
     """Tests for SECRET_PATTERNS regex matching."""
 
     def test_openai_key_pattern_matches(self) -> None:
         """Test OpenAI-style key pattern matches valid keys."""
         pattern = git_guard.SECRET_PATTERNS[0][1]
-        assert pattern.search("sk-abc123def456ghi789jkl0123456789")
-        assert pattern.search("  sk-abc123def456ghi789jkl0123456789  ")
-        assert pattern.search("API_KEY=sk-abc123def456ghi789jkl0123456789")
+        key = _openai_key()
+        assert pattern.search(key)
+        assert pattern.search(f"  {key}  ")
+        assert pattern.search(_join("API_KEY=", key))
 
     def test_openai_key_pattern_rejects_short(self) -> None:
         """Test OpenAI-style key pattern rejects keys that are too short."""
@@ -36,8 +61,8 @@ class TestSecretPatterns:
     def test_anthropic_key_pattern_matches(self) -> None:
         """Test Anthropic key pattern matches valid keys."""
         pattern = git_guard.SECRET_PATTERNS[1][1]
-        assert pattern.search("sk-ant-abc123-xyz789-01234")
-        assert pattern.search("  sk-ant-longerkeyvalue123456  ")
+        assert pattern.search(_anthropic_key())
+        assert pattern.search(f"  {_join('sk-ant-', 'longerkeyvalue123456')}  ")
 
     def test_anthropic_key_pattern_rejects_short(self) -> None:
         """Test Anthropic key pattern rejects keys that are too short."""
@@ -48,8 +73,9 @@ class TestSecretPatterns:
     def test_google_api_key_pattern_matches(self) -> None:
         """Test Google API key pattern matches valid keys."""
         pattern = git_guard.SECRET_PATTERNS[2][1]
-        assert pattern.search("AIzaSyBcdefghijklmnopqrstuvwx")
-        assert pattern.search("key=AIzaSyBcdefghijklmnopqrstuvwx")
+        key = _google_key()
+        assert pattern.search(key)
+        assert pattern.search(_join("key=", key))
 
     def test_google_api_key_pattern_rejects_invalid(self) -> None:
         """Test Google API key pattern rejects invalid formats."""
@@ -60,10 +86,12 @@ class TestSecretPatterns:
     def test_generic_api_key_pattern_matches(self) -> None:
         """Test generic API_KEY assignment pattern matches."""
         pattern = git_guard.SECRET_PATTERNS[3][1]
-        assert pattern.search("API_KEY='my_secret_value'")
-        assert pattern.search('API_KEY="my_secret_value"')
-        assert pattern.search('OPENAI_API_KEY = "sk_test_12345678"')
-        assert pattern.search('DATABASE_API_KEY="verysecretkey123"')
+        assert pattern.search(_api_key_assignment("API_KEY", _join("my_", "secret_value")))
+        assert pattern.search(
+            _api_key_assignment("API_KEY", _join("my_", "secret_value"), quote='"')
+        )
+        assert pattern.search(_api_key_assignment("OPENAI_API_KEY", _join("sk_test_", "12345678")))
+        assert pattern.search(_api_key_assignment("DATABASE_API_KEY", _join("very", "secretkey123")))
 
     def test_generic_api_key_pattern_rejects_short(self) -> None:
         """Test generic API_KEY pattern rejects short values."""
@@ -74,8 +102,10 @@ class TestSecretPatterns:
     def test_bearer_token_pattern_matches(self) -> None:
         """Test Bearer token pattern matches valid tokens."""
         pattern = git_guard.SECRET_PATTERNS[4][1]
-        assert pattern.search("Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6")
-        assert pattern.search("Authorization: Bearer abcdef123456789012345678")
+        assert pattern.search(_join("Bearer ", _bearer_token()))
+        assert pattern.search(
+            _join("Authorization: Bearer ", _join("abcdef1234567890", "12345678"))
+        )
 
     def test_bearer_token_pattern_rejects_short(self) -> None:
         """Test Bearer token pattern rejects short tokens."""
@@ -167,7 +197,7 @@ class TestScanFile:
         """File with OpenAI-style key is detected."""
         secret_file = tmp_path / "config.py"
         secret_file.write_text(
-            "key = 'sk-abc123def456ghi789jkl0123456789'\n",
+            f"key = '{_openai_key()}'\n",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(secret_file)
@@ -177,7 +207,7 @@ class TestScanFile:
         """File with Bearer token is detected."""
         secret_file = tmp_path / "auth.py"
         secret_file.write_text(
-            "headers = {'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6'}\n",
+            f"headers = {{'Authorization': 'Bearer {_bearer_token()}'}}\n",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(secret_file)
@@ -187,8 +217,8 @@ class TestScanFile:
         """File with multiple secret types is detected."""
         secret_file = tmp_path / "secrets.py"
         secret_file.write_text(
-            "openai_key = 'sk-abc123def456ghi789jkl0123456789'\n"
-            "google_key = 'AIzaSyBcdefghijklmnopqrstuvwx'\n",
+            f"openai_key = '{_openai_key()}'\n"
+            f"google_key = '{_google_key()}'\n",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(secret_file)

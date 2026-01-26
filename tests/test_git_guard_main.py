@@ -21,6 +21,26 @@ import pytest
 from tools import git_guard
 
 
+def _join(*parts: str) -> str:
+    return "".join(parts)
+
+
+def _openai_key() -> str:
+    return _join("sk-", "abc123def456ghi789jkl0123456789")
+
+
+def _anthropic_key() -> str:
+    return _join("sk-ant-", "api-key-12345678901234567890")
+
+
+def _google_key() -> str:
+    return _join("AIza", "SyB1234567890abcdefghij")
+
+
+def _api_key_assignment(name: str, value: str) -> str:
+    return _join(name, ' = "', value, '"')
+
+
 class TestRunHelper:
     """Tests for _run helper function."""
 
@@ -157,7 +177,7 @@ class TestMainFunction:
 
         # Create a file with a secret
         secret_file = tmp_path / "secret.py"
-        secret_file.write_text("key = 'sk-abc123def456ghi789jkl0123456789'\n", encoding="utf-8")
+        secret_file.write_text(f"key = '{_openai_key()}'\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=str(tmp_path), check=True, capture_output=True)
 
         monkeypatch.chdir(tmp_path)
@@ -250,7 +270,7 @@ class TestSecretPatternMatching:
 
         # Test as string assignment
         test_file.write_text(
-            'OPENAI_KEY = "sk-abc123def456ghi789jkl0123456789"',
+            f'OPENAI_KEY = "{_openai_key()}"',
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
@@ -258,7 +278,7 @@ class TestSecretPatternMatching:
 
         # Test in dict
         test_file.write_text(
-            "config = {'key': 'sk-abc123def456ghi789jkl0123456789'}",
+            f"config = {{'key': '{_openai_key()}'}}",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
@@ -270,7 +290,7 @@ class TestSecretPatternMatching:
 
         # Standard format
         test_file.write_text(
-            "key = 'sk-ant-api-key-12345678901234567890'",
+            f"key = '{_anthropic_key()}'",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
@@ -281,7 +301,7 @@ class TestSecretPatternMatching:
         test_file = tmp_path / "test.py"
 
         test_file.write_text(
-            "GOOGLE_KEY = 'AIzaSyB1234567890abcdefghij'",
+            f"GOOGLE_KEY = '{_google_key()}'",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
@@ -292,7 +312,7 @@ class TestSecretPatternMatching:
         test_file = tmp_path / "test.py"
 
         test_file.write_text(
-            'MY_API_KEY = "super_secret_value_12345"',
+            _api_key_assignment("MY_API_KEY", _join("super_", "secret_value_12345")),
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
@@ -304,7 +324,7 @@ class TestSecretPatternMatching:
 
         # Even in comments, we want to flag potential secrets
         test_file.write_text(
-            "# Example: sk-abc123def456ghi789jkl0123456789",
+            f"# Example: {_openai_key()}",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(test_file)
