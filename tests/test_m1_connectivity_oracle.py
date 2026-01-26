@@ -113,14 +113,10 @@ class TestConnectivityOracle:
         """Adding nodes should increment indices."""
         oracle = ConnectivityOracle()
         idx1 = oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="a"
-            )
+            ConnectivityNode(x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="a")
         )
         idx2 = oracle.add_node(
-            ConnectivityNode(
-                x_nm=1_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="b"
-            )
+            ConnectivityNode(x_nm=1_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="b")
         )
         assert idx1 == 0
         assert idx2 == 1
@@ -181,16 +177,8 @@ class TestConnectivityOracle:
     def test_different_nets_not_adjacent(self) -> None:
         """Nodes on different nets should not be adjacent."""
         oracle = ConnectivityOracle()
-        oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="sig"
-            )
-        )
-        oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="GND", label="gnd"
-            )
-        )
+        oracle.add_node(ConnectivityNode(x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="sig"))
+        oracle.add_node(ConnectivityNode(x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="GND", label="gnd"))
         oracle.build_adjacencies()
         assert not oracle.is_connected("sig", "gnd")
 
@@ -199,9 +187,7 @@ class TestConnectivityOracle:
         oracle = ConnectivityOracle()
         # Create a simple chain: pad -> segment start -> segment end -> pad
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="left_pad"
-            )
+            ConnectivityNode(x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="left_pad")
         )
         oracle.add_node(
             ConnectivityNode(
@@ -214,9 +200,7 @@ class TestConnectivityOracle:
             )
         )
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=10_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="right_pad"
-            )
+            ConnectivityNode(x_nm=10_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="right_pad")
         )
         oracle.build_adjacencies()
 
@@ -233,9 +217,7 @@ class TestConnectivityOracle:
         """Disconnected SIG net should fail validation."""
         oracle = ConnectivityOracle()
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="left_pad"
-            )
+            ConnectivityNode(x_nm=0, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="left_pad")
         )
         oracle.add_node(
             ConnectivityNode(
@@ -257,19 +239,13 @@ class TestConnectivityOracle:
         """Should return all nodes in the same component."""
         oracle = ConnectivityOracle()
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=100_000, node_type=NodeType.PORT_PAD, net_name="SIG", label="a"
-            )
+            ConnectivityNode(x_nm=0, y_nm=0, radius_nm=100_000, node_type=NodeType.PORT_PAD, net_name="SIG", label="a")
         )
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=50_000, y_nm=0, radius_nm=100_000, node_type=NodeType.SEGMENT_START, net_name="SIG", label="b"
-            )
+            ConnectivityNode(x_nm=50_000, y_nm=0, radius_nm=100_000, node_type=NodeType.SEGMENT_START, net_name="SIG", label="b")
         )
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=10_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="c"
-            )
+            ConnectivityNode(x_nm=10_000_000, y_nm=0, radius_nm=0, node_type=NodeType.PORT_PAD, net_name="SIG", label="c")
         )
         oracle.build_adjacencies()
 
@@ -350,6 +326,7 @@ class TestConnectivityChecker:
 
     def _make_resolved_with_layout(self, layout: LayoutPlan):
         """Create a mock resolved design with layout plan."""
+
         class MockResolved:
             def __init__(self, lp: LayoutPlan):
                 self._layout_plan = lp
@@ -362,6 +339,7 @@ class TestConnectivityChecker:
 
     def _make_spec_with_discontinuity(self):
         """Create a mock spec with discontinuity."""
+
         class MockVia:
             pad_diameter_nm = 900_000
 
@@ -543,9 +521,7 @@ class TestEdgeCases:
         oracle = ConnectivityOracle()
         # Component 1
         oracle.add_node(
-            ConnectivityNode(
-                x_nm=0, y_nm=0, radius_nm=100_000, node_type=NodeType.PORT_PAD, net_name="SIG", label="c1_a"
-            )
+            ConnectivityNode(x_nm=0, y_nm=0, radius_nm=100_000, node_type=NodeType.PORT_PAD, net_name="SIG", label="c1_a")
         )
         oracle.add_node(
             ConnectivityNode(

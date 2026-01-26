@@ -1,14 +1,3 @@
-from .sim_config_validation import (
-    SimConfigValidationReport,
-    ValidationResult,
-    ValidationStatus,
-    compute_fdtd_timestep_limit_ps,
-    load_sim_config,
-    validate_nyquist_compliance,
-    validate_pml_adequacy,
-    validate_sim_config,
-    write_sim_config,
-)
 from .batch_runner import (
     BatchConfig,
     BatchProgress,
@@ -22,12 +11,6 @@ from .batch_runner import (
     estimate_batch_time,
     load_batch_result_summary,
     write_batch_result,
-)
-from .oracle_adapter import (
-    OpenEMSAdapter,
-    OracleAdapter,
-    SimulationSetup,
-    ThirdsRuleConfig,
 )
 from .cli_main import build_parser
 from .convergence import (
@@ -110,6 +93,12 @@ from .mesh_generator import (
     generate_z_mesh_lines,
     mesh_line_summary,
 )
+from .oracle_adapter import (
+    OpenEMSAdapter,
+    OracleAdapter,
+    SimulationSetup,
+    ThirdsRuleConfig,
+)
 from .ports import (
     DeembedSpec,
     DeembedType,
@@ -129,6 +118,38 @@ from .ports import (
     waveguide_port_to_basic_port_spec,
 )
 from .runner import OpenEMSMode, OpenEMSRunner, parse_openems_version_output
+from .sim_cache import (
+    CacheCorruptionError,
+    CachedSimulationResult,
+    CacheInvalidationError,
+    CacheMissError,
+    CacheStats,
+    SimulationCache,
+    SimulationCacheError,
+    SimulationCacheKey,
+    SolverVersion,
+    compute_sim_config_hash,
+    should_invalidate_cache,
+)
+from .sim_config_validation import (
+    DEFAULT_MIN_CELLS_PER_WAVELENGTH,
+    DEFAULT_MIN_PML_WAVELENGTHS,
+    RECOMMENDED_CELLS_PER_WAVELENGTH,
+    RECOMMENDED_MIN_PML_WAVELENGTHS,
+    SimConfigValidationReport,
+    ValidationResult,
+    ValidationStatus,
+    compute_fdtd_timestep_limit_ps,
+    load_sim_config,
+    load_sim_config_json,
+    validate_gpu_config,
+    validate_nyquist_compliance,
+    validate_pml_adequacy,
+    validate_sim_config,
+    write_sim_config,
+    write_sim_config_json,
+    write_validation_report,
+)
 from .sim_runner import (
     SimulationError,
     SimulationExecutionError,
@@ -192,35 +213,6 @@ from .toolchain import (
     load_openems_toolchain,
     parse_docker_image_ref,
     validate_openems_version,
-)
-from .sim_cache import (
-    CachedSimulationResult,
-    CacheMissError,
-    CacheCorruptionError,
-    CacheInvalidationError,
-    CacheStats,
-    SimulationCache,
-    SimulationCacheError,
-    SimulationCacheKey,
-    SolverVersion,
-    compute_sim_config_hash,
-    should_invalidate_cache,
-)
-from .sim_config_validation import (
-    DEFAULT_MIN_CELLS_PER_WAVELENGTH,
-    DEFAULT_MIN_PML_WAVELENGTHS,
-    RECOMMENDED_CELLS_PER_WAVELENGTH,
-    RECOMMENDED_MIN_PML_WAVELENGTHS,
-    SimConfigValidationReport,
-    ValidationResult,
-    ValidationStatus,
-    load_sim_config_json,
-    validate_gpu_config,
-    validate_nyquist_compliance,
-    validate_pml_adequacy,
-    validate_sim_config,
-    write_sim_config_json,
-    write_validation_report,
 )
 from .units import FrequencyHz, TimePS, parse_frequency_hz, parse_time_ps
 

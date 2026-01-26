@@ -28,6 +28,7 @@ from typing import Any
 @dataclass
 class AdapterResult:
     """Result from provider output adapter."""
+
     success: bool
     turn: dict[str, Any] | None
     raw_output: str
@@ -40,6 +41,7 @@ class AdapterResult:
 @dataclass
 class RepairResult:
     """Result from repair attempt."""
+
     success: bool
     repaired_output: str
     error: str | None = None
@@ -158,7 +160,7 @@ class OpenAIOutputAdapter(ProviderOutputAdapter):
                     "name": "turn",
                     "strict": True,
                     "schema": schema,
-                }
+                },
             }
         }
 
@@ -205,7 +207,7 @@ class OpenAIOutputAdapter(ProviderOutputAdapter):
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = text[start:i + 1]
+                        candidate = text[start : i + 1]
                         return self._try_parse_json(candidate)
         return None
 
@@ -232,10 +234,18 @@ class OpenAIOutputAdapter(ProviderOutputAdapter):
     def _check_required_fields(self, turn: dict) -> list[str]:
         """Check for missing required fields."""
         required = [
-            "summary", "work_completed", "project_complete",
-            "phase", "next_agent", "next_prompt", "delegate_rationale",
-            "stats_refs", "needs_write_access", "artifacts",
-            "gates_passed", "requirement_progress",
+            "summary",
+            "work_completed",
+            "project_complete",
+            "phase",
+            "next_agent",
+            "next_prompt",
+            "delegate_rationale",
+            "stats_refs",
+            "needs_write_access",
+            "artifacts",
+            "gates_passed",
+            "requirement_progress",
         ]
         return [f for f in required if f not in turn]
 
@@ -326,11 +336,13 @@ class ClaudeOutputAdapter(ProviderOutputAdapter):
         Returns configuration for tool/function calling.
         """
         return {
-            "tools": [{
-                "name": "submit_turn",
-                "description": "Submit the turn result with structured output",
-                "input_schema": schema,
-            }],
+            "tools": [
+                {
+                    "name": "submit_turn",
+                    "description": "Submit the turn result with structured output",
+                    "input_schema": schema,
+                }
+            ],
             "tool_choice": {"type": "tool", "name": "submit_turn"},
         }
 
@@ -437,7 +449,7 @@ class ClaudeOutputAdapter(ProviderOutputAdapter):
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = text[start:i + 1]
+                        candidate = text[start : i + 1]
                         return self._try_parse_json(candidate)
         return None
 
@@ -485,7 +497,9 @@ class ClaudeOutputAdapter(ProviderOutputAdapter):
     def _check_required_fields(self, turn: dict) -> list[str]:
         """Check for missing required fields."""
         required = [
-            "summary", "work_completed", "project_complete",
+            "summary",
+            "work_completed",
+            "project_complete",
         ]
         return [f for f in required if f not in turn]
 
@@ -588,7 +602,7 @@ class OutputRepairService:
                     elif ch == "}":
                         depth -= 1
                         if depth == 0:
-                            candidate = text[start:i + 1]
+                            candidate = text[start : i + 1]
                             try:
                                 obj = json.loads(candidate)
                                 if isinstance(obj, dict):

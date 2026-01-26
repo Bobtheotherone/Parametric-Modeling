@@ -898,11 +898,7 @@ class LineageGraph:
             )
         """
         subgraph = self.get_ancestors(artifact_id, max_depth=max_depth)
-        return [
-            node
-            for node in subgraph.nodes.values()
-            if node.artifact_type == artifact_type
-        ]
+        return [node for node in subgraph.nodes.values() if node.artifact_type == artifact_type]
 
     def find_descendants_by_type(
         self,
@@ -926,11 +922,7 @@ class LineageGraph:
             NodeNotFoundError: If the starting node is not found.
         """
         subgraph = self.get_descendants(artifact_id, max_depth=max_depth)
-        return [
-            node
-            for node in subgraph.nodes.values()
-            if node.artifact_type == artifact_type
-        ]
+        return [node for node in subgraph.nodes.values() if node.artifact_type == artifact_type]
 
     def find_ancestors_by_role(
         self,
@@ -1055,11 +1047,7 @@ class LineageGraph:
         geometry_types = {"resolved_design", "coupon_spec"}
         subgraph = self.get_ancestors(sparam_artifact_id)
 
-        return [
-            node
-            for node in subgraph.nodes.values()
-            if node.artifact_type in geometry_types
-        ]
+        return [node for node in subgraph.nodes.values() if node.artifact_type in geometry_types]
 
     def get_full_lineage_chain(
         self,

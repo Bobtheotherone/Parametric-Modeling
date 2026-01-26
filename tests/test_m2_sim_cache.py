@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from formula_foundry.openems.sim_cache import (
-    CachedSimulationResult,
     CacheCorruptionError,
+    CachedSimulationResult,
     CacheMissError,
     CacheStats,
     SimulationCache,
@@ -27,7 +27,6 @@ from formula_foundry.openems.sim_cache import (
     should_invalidate_cache,
 )
 from formula_foundry.substrate import canonical_json_dumps
-
 
 # =============================================================================
 # Test fixtures
@@ -129,7 +128,17 @@ def _example_manifest() -> dict[str, Any]:
             "resolution": {"lambda_resolution": 20, "metal_edge_resolution_nm": 50000, "via_resolution_nm": 25000},
             "smoothing": {"max_ratio": 1.5, "smooth_mesh_lines": True},
         },
-        "ports": [{"id": "P1", "type": "lumped", "impedance_ohm": 50.0, "excite": True, "position_nm": [0, 0, 0], "direction": "x", "deembed_enabled": False}],
+        "ports": [
+            {
+                "id": "P1",
+                "type": "lumped",
+                "impedance_ohm": 50.0,
+                "excite": True,
+                "position_nm": [0, 0, 0],
+                "direction": "x",
+                "deembed_enabled": False,
+            }
+        ],
         "outputs": [],
         "lineage": {"git_sha": "f" * 40, "timestamp_utc": "2026-01-21T00:00:00Z"},
         "sim_config_hash": "b" * 64,

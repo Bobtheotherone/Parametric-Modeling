@@ -531,9 +531,7 @@ class TestGoldenSpecPlaceholderResolution:
         placeholder_spec_image = "kicad/kicad:9.0.7@sha256:" + "0" * 63 + "1"
 
         # Resolve should use lock file digest
-        resolved = resolve_docker_image_ref(
-            placeholder_spec_image, lock_path=lock_path, mode="docker"
-        )
+        resolved = resolve_docker_image_ref(placeholder_spec_image, lock_path=lock_path, mode="docker")
 
         assert resolved == f"kicad/kicad:9.0.7@{real_digest}"
         assert "000000" not in resolved  # No placeholder in result

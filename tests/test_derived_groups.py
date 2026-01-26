@@ -222,9 +222,7 @@ class TestGetSubstrateHeight:
 
         assert height == 800_000  # core thickness
 
-    def test_with_l1_to_l2_naming(
-        self, spec_with_l1_to_l2_stackup: dict[str, Any]
-    ) -> None:
+    def test_with_l1_to_l2_naming(self, spec_with_l1_to_l2_stackup: dict[str, Any]) -> None:
         """Returns L1_to_L2 thickness when using new naming convention."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import _get_substrate_height
@@ -323,9 +321,7 @@ class TestComputeCpwgGroups:
 class TestComputeViaGroups:
     """Tests for compute_via_groups function."""
 
-    def test_returns_empty_without_discontinuity(
-        self, spec_with_l1_to_l2_stackup: dict[str, Any]
-    ) -> None:
+    def test_returns_empty_without_discontinuity(self, spec_with_l1_to_l2_stackup: dict[str, Any]) -> None:
         """Returns empty dict when no discontinuity is present."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_via_groups
@@ -393,9 +389,7 @@ class TestComputeViaGroups:
 class TestComputeFenceGroups:
     """Tests for compute_fence_groups function."""
 
-    def test_returns_empty_without_fence(
-        self, spec_with_l1_to_l2_stackup: dict[str, Any]
-    ) -> None:
+    def test_returns_empty_without_fence(self, spec_with_l1_to_l2_stackup: dict[str, Any]) -> None:
         """Returns empty dict when no fence is present."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_fence_groups
@@ -456,9 +450,7 @@ class TestComputeFenceGroups:
         assert groups["fence_via_diam_over_pitch"] == pytest.approx(600_000 / 1_500_000)
         assert groups["fence_via_drill_over_diam"] == pytest.approx(300_000 / 600_000)
 
-    def test_disabled_fence_returns_empty(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_disabled_fence_returns_empty(self, full_f1_spec_data: dict[str, Any]) -> None:
         """Returns empty dict when fence is disabled."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_fence_groups
@@ -609,9 +601,7 @@ class TestComputeStackupGroups:
         # copper=35000, core=800000
         assert groups["stackup_copper_over_core"] == pytest.approx(35_000 / 800_000)
 
-    def test_l_style_layer_ratios(
-        self, spec_with_l1_to_l2_stackup: dict[str, Any]
-    ) -> None:
+    def test_l_style_layer_ratios(self, spec_with_l1_to_l2_stackup: dict[str, Any]) -> None:
         """L1_to_L2 style layer ratios are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_stackup_groups
@@ -634,9 +624,7 @@ class TestComputeStackupGroups:
 class TestDerivedGroupsDeterminism:
     """Tests for deterministic output of derived groups."""
 
-    def test_cpwg_groups_deterministic(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_cpwg_groups_deterministic(self, full_f1_spec_data: dict[str, Any]) -> None:
         """CPWG groups are deterministic across multiple calls."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_cpwg_groups
@@ -648,9 +636,7 @@ class TestDerivedGroupsDeterminism:
 
         assert groups_1 == groups_2
 
-    def test_via_groups_deterministic(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_via_groups_deterministic(self, full_f1_spec_data: dict[str, Any]) -> None:
         """Via groups are deterministic across multiple calls."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_via_groups
@@ -662,9 +648,7 @@ class TestDerivedGroupsDeterminism:
 
         assert groups_1 == groups_2
 
-    def test_fence_groups_deterministic(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_fence_groups_deterministic(self, full_f1_spec_data: dict[str, Any]) -> None:
         """Fence groups are deterministic across multiple calls."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_fence_groups
@@ -676,9 +660,7 @@ class TestDerivedGroupsDeterminism:
 
         assert groups_1 == groups_2
 
-    def test_launch_groups_deterministic(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_launch_groups_deterministic(self, full_f1_spec_data: dict[str, Any]) -> None:
         """Launch groups are deterministic across multiple calls."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_launch_groups
@@ -690,9 +672,7 @@ class TestDerivedGroupsDeterminism:
 
         assert groups_1 == groups_2
 
-    def test_stackup_groups_deterministic(
-        self, full_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_stackup_groups_deterministic(self, full_f1_spec_data: dict[str, Any]) -> None:
         """Stackup groups are deterministic across multiple calls."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.resolve.derived_groups import compute_stackup_groups

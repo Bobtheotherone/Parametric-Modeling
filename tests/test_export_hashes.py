@@ -196,11 +196,7 @@ class TestCanonicalization:
 
     def test_canonicalize_export_removes_dates(self) -> None:
         """Canonicalization should remove date patterns."""
-        gerber = (
-            "%TF.CreationDate,2026-01-19T10:00:00*%\n"
-            "G04 CreationDate: 2026-01-19 10:00:00*\n"
-            "X0Y0D02*\n"
-        )
+        gerber = "%TF.CreationDate,2026-01-19T10:00:00*%\nG04 CreationDate: 2026-01-19 10:00:00*\nX0Y0D02*\n"
         canonical = canonicalize_export_text(gerber)
 
         assert "2026-01-19" not in canonical
@@ -582,10 +578,7 @@ class TestSilkscreenAnnotationsInExports:
 
         # Verify silkscreen exports exist
         silkscreen_exports = [p for p in export_paths if "SilkS" in p]
-        assert len(silkscreen_exports) >= 1, (
-            f"REQ-M1-010: Expected silkscreen exports for {specs[0].name}, "
-            f"got: {export_paths}"
-        )
+        assert len(silkscreen_exports) >= 1, f"REQ-M1-010: Expected silkscreen exports for {specs[0].name}, got: {export_paths}"
 
 
 class TestSilkscreenCouponIdAndHashMarker:
@@ -623,9 +616,7 @@ class TestSilkscreenCouponIdAndHashMarker:
 
         # REQ-M1-010: Board should contain silkscreen text elements (gr_text on F.SilkS)
         assert "gr_text" in board_content, "REQ-M1-010: Board should contain gr_text elements"
-        assert "F.SilkS" in board_content or "B.SilkS" in board_content, (
-            "REQ-M1-010: Board should have silkscreen layer text"
-        )
+        assert "F.SilkS" in board_content or "B.SilkS" in board_content, "REQ-M1-010: Board should have silkscreen layer text"
 
     def test_silkscreen_includes_coupon_id(self, tmp_path: Path) -> None:
         """REQ-M1-010: Silkscreen should include the coupon_id."""
@@ -655,9 +646,7 @@ class TestSilkscreenCouponIdAndHashMarker:
         # REQ-M1-010: The coupon_id should appear in the board file
         # The coupon_id is the first 12 chars of the design hash
         coupon_id = result.coupon_id
-        assert coupon_id in board_content, (
-            f"REQ-M1-010: Silkscreen should include coupon_id '{coupon_id}' in board text"
-        )
+        assert coupon_id in board_content, f"REQ-M1-010: Silkscreen should include coupon_id '{coupon_id}' in board text"
 
     def test_silkscreen_includes_hash_marker(self, tmp_path: Path) -> None:
         """REQ-M1-010: Silkscreen should include a short hash marker."""
@@ -687,9 +676,7 @@ class TestSilkscreenCouponIdAndHashMarker:
         # REQ-M1-010: The design hash prefix (first 8 chars) should appear
         design_hash = result.design_hash
         short_hash = design_hash[:8]
-        assert short_hash in board_content, (
-            f"REQ-M1-010: Silkscreen should include hash marker '{short_hash}' in board text"
-        )
+        assert short_hash in board_content, f"REQ-M1-010: Silkscreen should include hash marker '{short_hash}' in board text"
 
     def test_silkscreen_annotations_are_deterministic(self, tmp_path: Path) -> None:
         """REQ-M1-010: Silkscreen annotations should be deterministic across builds."""
@@ -705,22 +692,14 @@ class TestSilkscreenCouponIdAndHashMarker:
         runner_a = _FakeExportRunner(seed="silk_determinism")
         runner_b = _FakeExportRunner(seed="silk_determinism")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         # Both builds should produce the same coupon_id
-        assert result_a.coupon_id == result_b.coupon_id, (
-            "REQ-M1-010: Coupon ID should be deterministic"
-        )
+        assert result_a.coupon_id == result_b.coupon_id, "REQ-M1-010: Coupon ID should be deterministic"
 
         # Both builds should produce the same design hash
-        assert result_a.design_hash == result_b.design_hash, (
-            "REQ-M1-010: Design hash should be deterministic"
-        )
+        assert result_a.design_hash == result_b.design_hash, "REQ-M1-010: Design hash should be deterministic"
 
     def test_manifest_records_coupon_id(self, tmp_path: Path) -> None:
         """REQ-M1-010: Manifest should record the coupon_id for traceability."""
@@ -745,15 +724,14 @@ class TestSilkscreenCouponIdAndHashMarker:
 
         # REQ-M1-010: Manifest must include coupon_id
         assert "coupon_id" in manifest, "REQ-M1-010: Manifest must include coupon_id"
-        assert manifest["coupon_id"] == result.coupon_id, (
-            "REQ-M1-010: Manifest coupon_id should match BuildResult"
-        )
+        assert manifest["coupon_id"] == result.coupon_id, "REQ-M1-010: Manifest coupon_id should match BuildResult"
 
         # Verify coupon_id is derived from design_hash
         assert "design_hash" in manifest, "Manifest must include design_hash"
         design_hash = manifest["design_hash"]
         # coupon_id is base32-encoded (first 12 chars) from design_hash bytes
         from formula_foundry.coupongen.hashing import coupon_id_from_design_hash
+
         expected_coupon_id = coupon_id_from_design_hash(design_hash)
         assert result.coupon_id == expected_coupon_id, (
             "REQ-M1-010: coupon_id should be derived from design_hash via base32 encoding"
@@ -813,12 +791,8 @@ class TestManifestSpecCoverage:
         runner_a = _FakeExportRunner(seed="spec_consumption_a")
         runner_b = _FakeExportRunner(seed="spec_consumption_a")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
         manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
@@ -906,12 +880,8 @@ class TestManifestProvenance:
         runner_a = _FakeExportRunner(seed="prov_a")
         runner_b = _FakeExportRunner(seed="prov_a")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
         manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
@@ -1006,12 +976,8 @@ class TestZonePolicyInManifest:
         runner_a = _FakeExportRunner(seed="zone_test")
         runner_b = _FakeExportRunner(seed="zone_test")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
         manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
@@ -1043,17 +1009,11 @@ class TestExportHashStabilityWithProvenance:
         runner_a = _FakeExportRunner(seed="stability_test")
         runner_b = _FakeExportRunner(seed="stability_test")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         # Design hashes must be identical
-        assert result_a.design_hash == result_b.design_hash, (
-            "REQ-M1-017: Design hash should be stable across builds"
-        )
+        assert result_a.design_hash == result_b.design_hash, "REQ-M1-017: Design hash should be stable across builds"
 
     def test_export_hashes_stability_with_provenance(self, tmp_path: Path) -> None:
         """REQ-M1-017: Export hashes should be stable with provenance data."""
@@ -1069,12 +1029,8 @@ class TestExportHashStabilityWithProvenance:
         runner_a = _FakeExportRunner(seed="export_prov_test")
         runner_b = _FakeExportRunner(seed="export_prov_test")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
         manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
@@ -1083,9 +1039,7 @@ class TestExportHashStabilityWithProvenance:
         exports_a = {e["path"]: e["hash"] for e in manifest_a["exports"]}
         exports_b = {e["path"]: e["hash"] for e in manifest_b["exports"]}
 
-        assert exports_a == exports_b, (
-            "REQ-M1-017: Export hashes should be stable with provenance"
-        )
+        assert exports_a == exports_b, "REQ-M1-017: Export hashes should be stable with provenance"
 
     def test_manifest_hash_stability(self, tmp_path: Path) -> None:
         """REQ-M1-017: Complete manifest should be stable across builds."""
@@ -1101,12 +1055,8 @@ class TestExportHashStabilityWithProvenance:
         runner_a = _FakeExportRunner(seed="manifest_stability")
         runner_b = _FakeExportRunner(seed="manifest_stability")
 
-        result_a = build_coupon(
-            spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7"
-        )
-        result_b = build_coupon(
-            spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7"
-        )
+        result_a = build_coupon(spec, out_root=tmp_path / "a", mode="docker", runner=runner_a, kicad_cli_version="9.0.7")
+        result_b = build_coupon(spec, out_root=tmp_path / "b", mode="docker", runner=runner_b, kicad_cli_version="9.0.7")
 
         manifest_a = json.loads(result_a.manifest_path.read_text(encoding="utf-8"))
         manifest_b = json.loads(result_b.manifest_path.read_text(encoding="utf-8"))
@@ -1159,18 +1109,14 @@ def test_export_hashes() -> None:
 
         # REQ-M1-010: Silkscreen Gerber files should be in exports
         silkscreen_files = [p for p in hashes_a if "SilkS" in p]
-        assert len(silkscreen_files) >= 1, (
-            "REQ-M1-010: Expected silkscreen Gerber files in exports"
-        )
+        assert len(silkscreen_files) >= 1, "REQ-M1-010: Expected silkscreen Gerber files in exports"
 
         # REQ-M1-017: Export again with same seed for stability check
         runner_b = _FakeExportRunner(seed="wrapper_test")
         hashes_b = export_fab(board_path, tmp_path / "fab_b", toolchain, runner=runner_b)
 
         # REQ-M1-017: Hashes should be stable
-        assert hashes_a == hashes_b, (
-            "REQ-M1-017: Export hashes must be stable across repeated builds"
-        )
+        assert hashes_a == hashes_b, "REQ-M1-017: Export hashes must be stable across repeated builds"
 
     # REQ-M1-013: Verify toolchain structure for zone policy
     assert toolchain.version == "9.0.7", "REQ-M1-013: Toolchain version must be recorded"

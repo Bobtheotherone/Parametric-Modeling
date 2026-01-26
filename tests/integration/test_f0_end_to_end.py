@@ -518,9 +518,9 @@ class TestF0EndToEndPipeline:
 
         # Convert back to nm for comparison
         start_x_nm = int(float(start_elem[1]) * 1_000_000)
-        start_y_nm = int(float(start_elem[2]) * 1_000_000)
+        int(float(start_elem[2]) * 1_000_000)
         end_x_nm = int(float(end_elem[1]) * 1_000_000)
-        end_y_nm = int(float(end_elem[2]) * 1_000_000)
+        int(float(end_elem[2]) * 1_000_000)
 
         # Should match LayoutPlan board dimensions
         assert start_x_nm == layout.x_board_left_edge_nm

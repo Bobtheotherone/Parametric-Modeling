@@ -199,7 +199,6 @@ class TestFileLockTimeout:
         lock_path = tmp_path / "test.lock"
         lock1 = FileLock(lock_path)
         lock2 = FileLock(lock_path)
-        acquired = []
 
         def release_after_delay() -> None:
             time.sleep(0.1)

@@ -218,9 +218,9 @@ class TestKicadFootprint:
                 break
 
         assert at_elem is not None
-        assert at_elem[1] == "5"     # 5mm
-        assert at_elem[2] == "10"    # 10mm
-        assert at_elem[3] == 180     # rotation
+        assert at_elem[1] == "5"  # 5mm
+        assert at_elem[2] == "10"  # 10mm
+        assert at_elem[3] == 180  # rotation
 
     def test_footprint_with_children(self) -> None:
         """Footprint should include children elements."""
@@ -229,12 +229,12 @@ class TestKicadFootprint:
 
         result = sexpr.kicad_footprint(
             "Test:FP",  # name (positional)
-            "F.Cu",     # layer (positional)
-            0,          # at_x_nm (positional)
-            0,          # at_y_nm (positional)
-            0,          # rotation_deg (positional)
+            "F.Cu",  # layer (positional)
+            0,  # at_x_nm (positional)
+            0,  # at_y_nm (positional)
+            0,  # rotation_deg (positional)
             "fp-uuid",  # tstamp (positional)
-            child1,     # children
+            child1,  # children
             child2,
         )
 
@@ -330,7 +330,7 @@ class TestSExprWriter:
 
         # Should be single line
         assert "\n" not in result
-        assert "(at 10.5 20.5 90)" == result
+        assert result == "(at 10.5 20.5 90)"
 
 
 class TestSExprParseErrorPosition:

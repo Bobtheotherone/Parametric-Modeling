@@ -95,7 +95,7 @@ class ZonePolicy:
             record["kicad_cli_version"] = self.kicad_cli_version
         return record
 
-    def with_kicad_cli_version(self, version: str | None) -> "ZonePolicy":
+    def with_kicad_cli_version(self, version: str | None) -> ZonePolicy:
         """Return a new policy with the specified kicad-cli version.
 
         This is used to stamp the policy with toolchain version info

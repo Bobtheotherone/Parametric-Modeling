@@ -87,22 +87,24 @@ def _build_import_error_task(
         desc_parts.append("")
 
     # Add reproduction commands
-    desc_parts.extend([
-        "## Reproduction",
-        "",
-        "Run the following to reproduce:",
-        "```bash",
-        "python -m pytest -q --collect-only 2>&1 | head -100",
-        "```",
-        "",
-        "## Requirements",
-        "",
-        "1. Fix ONLY the import errors listed above",
-        "2. Do NOT add new features or refactor unrelated code",
-        "3. Do NOT modify tests - fix the source modules",
-        "4. Verify your fix with: `python -m pytest -q --collect-only`",
-        "",
-    ])
+    desc_parts.extend(
+        [
+            "## Reproduction",
+            "",
+            "Run the following to reproduce:",
+            "```bash",
+            "python -m pytest -q --collect-only 2>&1 | head -100",
+            "```",
+            "",
+            "## Requirements",
+            "",
+            "1. Fix ONLY the import errors listed above",
+            "2. Do NOT add new features or refactor unrelated code",
+            "3. Do NOT modify tests - fix the source modules",
+            "4. Verify your fix with: `python -m pytest -q --collect-only`",
+            "",
+        ]
+    )
 
     # Get target files from error context
     target_files: list[str] = []
@@ -154,22 +156,24 @@ def _build_mypy_error_task(
         desc_parts.append(f"- `{err['file']}:{err['line']}`: {err['message']}")
         target_files.add(err["file"])
 
-    desc_parts.extend([
-        "",
-        "## Reproduction",
-        "",
-        "```bash",
-        "mypy .",
-        "```",
-        "",
-        "## Requirements",
-        "",
-        "1. Fix ONLY the type errors listed above",
-        "2. Use proper type annotations, not `# type: ignore`",
-        "3. If a type error reveals a real bug, fix the bug",
-        "4. Do NOT change unrelated code",
-        "",
-    ])
+    desc_parts.extend(
+        [
+            "",
+            "## Reproduction",
+            "",
+            "```bash",
+            "mypy .",
+            "```",
+            "",
+            "## Requirements",
+            "",
+            "1. Fix ONLY the type errors listed above",
+            "2. Use proper type annotations, not `# type: ignore`",
+            "3. If a type error reveals a real bug, fix the bug",
+            "4. Do NOT change unrelated code",
+            "",
+        ]
+    )
 
     return RepairTask(
         id="REPAIR-MYPY-ERRORS",
@@ -220,22 +224,24 @@ def _build_test_failure_task(
     for test in failed_tests[:10]:
         desc_parts.append(f"- `{test}`")
 
-    desc_parts.extend([
-        "",
-        "## Reproduction",
-        "",
-        "```bash",
-        "python -m pytest -q",
-        "```",
-        "",
-        "## Requirements",
-        "",
-        "1. Analyze WHY the tests are failing",
-        "2. Fix the SOURCE CODE if there's a bug",
-        "3. Fix the TEST if the test is incorrect",
-        "4. Do NOT delete or skip tests",
-        "",
-    ])
+    desc_parts.extend(
+        [
+            "",
+            "## Reproduction",
+            "",
+            "```bash",
+            "python -m pytest -q",
+            "```",
+            "",
+            "## Requirements",
+            "",
+            "1. Analyze WHY the tests are failing",
+            "2. Fix the SOURCE CODE if there's a bug",
+            "3. Fix the TEST if the test is incorrect",
+            "4. Do NOT delete or skip tests",
+            "",
+        ]
+    )
 
     return RepairTask(
         id="REPAIR-TEST-FAILURES",
@@ -317,23 +323,27 @@ def build_repair_task_prompt(task: RepairTask) -> str:
         prompt_parts.append(f"- {constraint}")
 
     if task.do_not_touch:
-        prompt_parts.extend([
-            "",
-            "## DO NOT MODIFY",
-            "",
-        ])
+        prompt_parts.extend(
+            [
+                "",
+                "## DO NOT MODIFY",
+                "",
+            ]
+        )
         for pattern in task.do_not_touch:
             prompt_parts.append(f"- `{pattern}`")
 
-    prompt_parts.extend([
-        "",
-        "## Expected Output",
-        "",
-        "1. A brief analysis of the root cause",
-        "2. The specific files you will modify",
-        "3. The changes (as diffs or complete new content)",
-        "4. Verification that the fix works",
-        "",
-    ])
+    prompt_parts.extend(
+        [
+            "",
+            "## Expected Output",
+            "",
+            "1. A brief analysis of the root cause",
+            "2. The specific files you will modify",
+            "3. The changes (as diffs or complete new content)",
+            "4. Verification that the fix works",
+            "",
+        ]
+    )
 
     return "\n".join(prompt_parts)

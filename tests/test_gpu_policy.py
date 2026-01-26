@@ -113,7 +113,7 @@ class TestGpuPolicyLockfile:
         optional_pattern = r"\[project\.optional-dependencies\].*?(?=\n\[|\Z)"
         optional_match = re.search(optional_pattern, content, re.DOTALL)
         if optional_match:
-            optional_section = optional_match.group(0)
+            optional_match.group(0)
             # Ensure cupy is in required deps (tested above), not just optional
             # If cupy appears in optional AND required, that's OK (for extras)
             # But it must be in required

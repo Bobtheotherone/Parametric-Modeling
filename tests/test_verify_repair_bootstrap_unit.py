@@ -189,7 +189,7 @@ class TestRunBootstrap:
                 stdout="Install complete",
                 stderr="",
             )
-            result = run_bootstrap(tmp_path, log_path=log_path, force=True, verbose=False)
+            run_bootstrap(tmp_path, log_path=log_path, force=True, verbose=False)
 
         assert log_path.exists()
         log_content = log_path.read_text()

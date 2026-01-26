@@ -14,8 +14,8 @@ import pytest
 
 from formula_foundry.coupongen.kicad import (
     DEFAULT_ZONE_POLICY,
-    ZonePolicy,
     SeverityLevel,
+    ZonePolicy,
     build_drc_flags,
     build_export_drill_flags,
     build_export_gerber_flags,

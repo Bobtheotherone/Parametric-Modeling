@@ -32,10 +32,11 @@ import fcntl
 import os
 import threading
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Literal
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -163,8 +164,7 @@ class FileLock:
                             self._fd = None
                             self._thread_lock.release()
                             raise LockAcquisitionError(
-                                f"Timeout acquiring {lock_type} lock on {self.lock_path} "
-                                f"after {timeout:.2f}s"
+                                f"Timeout acquiring {lock_type} lock on {self.lock_path} after {timeout:.2f}s"
                             )
                         # Sleep briefly before retrying
                         time.sleep(min(0.01, timeout - elapsed))

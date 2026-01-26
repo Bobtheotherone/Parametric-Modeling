@@ -49,6 +49,7 @@ FabProfiles = Union[dict[str, int], "FabCapabilityProfile"]
 # NVRTC compilation or GPU memory allocation during test collection.
 try:
     import cupy as cp
+
     _CUPY_IMPORTED = True
 except ImportError:
     cp = None  # type: ignore[assignment]

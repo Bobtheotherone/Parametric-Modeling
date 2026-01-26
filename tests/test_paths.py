@@ -13,9 +13,7 @@ import pytest
 
 # Direct import to avoid broken import chain in formula_foundry.__init__
 _SRC_DIR = Path(__file__).resolve().parent.parent / "src"
-_paths_spec = importlib.util.spec_from_file_location(
-    "paths", _SRC_DIR / "formula_foundry" / "coupongen" / "paths.py"
-)
+_paths_spec = importlib.util.spec_from_file_location("paths", _SRC_DIR / "formula_foundry" / "coupongen" / "paths.py")
 _paths = importlib.util.module_from_spec(_paths_spec)  # type: ignore[arg-type]
 _paths_spec.loader.exec_module(_paths)  # type: ignore[union-attr]
 

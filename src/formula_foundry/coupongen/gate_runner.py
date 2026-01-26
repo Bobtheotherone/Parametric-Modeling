@@ -17,6 +17,7 @@ Usage:
     audit-m1 list  # List available gates
     audit-m1 summary --input audit_report.json  # Summarize report
 """
+
 from __future__ import annotations
 
 import argparse
@@ -234,12 +235,7 @@ def parse_junit_xml(xml_path: Path) -> dict[str, Any]:
         summary["failed"] = int(testsuite.get("failures", 0))
         summary["errors"] = int(testsuite.get("errors", 0))
         summary["skipped"] = int(testsuite.get("skipped", 0))
-        summary["passed"] = (
-            summary["total"]
-            - summary["failed"]
-            - summary["errors"]
-            - summary["skipped"]
-        )
+        summary["passed"] = summary["total"] - summary["failed"] - summary["errors"] - summary["skipped"]
 
         # Parse individual testcases
         for testcase in testsuite.findall(".//testcase"):
@@ -284,9 +280,7 @@ def categorize_tests_by_gate(tests: list[dict[str, Any]]) -> dict[str, list[dict
     Returns:
         Dictionary mapping gate ID to tests for that gate
     """
-    gate_tests: dict[str, list[dict[str, Any]]] = {
-        f"G{i}": [] for i in range(1, 6)
-    }
+    gate_tests: dict[str, list[dict[str, Any]]] = {f"G{i}": [] for i in range(1, 6)}
 
     for test in tests:
         gate_id = _infer_gate_id(test)
@@ -378,9 +372,7 @@ def build_audit_report(
     # Compute overall status
     all_passed = all(g["status"] == "passed" for g in gate_results.values())
     any_failed = any(g["status"] == "failed" for g in gate_results.values())
-    overall_status: Literal["passed", "failed", "partial"] = (
-        "passed" if all_passed else "failed" if any_failed else "partial"
-    )
+    overall_status: Literal["passed", "failed", "partial"] = "passed" if all_passed else "failed" if any_failed else "partial"
 
     report: dict[str, Any] = {
         "schema_version": "1.0.0",

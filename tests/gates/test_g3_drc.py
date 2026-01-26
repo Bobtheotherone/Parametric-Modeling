@@ -16,6 +16,7 @@ Pytest marker: gate_g3
 Note: Real KiCad DRC integration tests are in tests/integration/test_kicad_drc_integration.py
 and require Docker. These tests verify the DRC pipeline logic without Docker.
 """
+
 from __future__ import annotations
 
 import json
@@ -83,9 +84,7 @@ class _FakeDrcRunner:
         self.violations = violations or []
         self.calls: list[tuple[Path, Path]] = []
 
-    def run_drc(
-        self, board_path: Path, report_path: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
         """Simulate DRC execution and write a fake report."""
         self.calls.append((board_path, report_path))
 
@@ -107,30 +106,20 @@ class _FakeDrcRunner:
             stderr="" if self.returncode == 0 else "DRC violations found",
         )
 
-    def export_gerbers(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate Gerber export."""
         out_dir.mkdir(parents=True, exist_ok=True)
         board_name = board_path.stem
         # Generate all required layers with KiCad naming: board-F_Cu.gbr
         for layer in ["F_Cu", "B_Cu", "In1_Cu", "In2_Cu", "F_Mask", "B_Mask", "Edge_Cuts"]:
-            (out_dir / f"{board_name}-{layer}.gbr").write_text(
-                f"G04 Fake {layer}*\n", encoding="utf-8"
-            )
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+            (out_dir / f"{board_name}-{layer}.gbr").write_text(f"G04 Fake {layer}*\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-    def export_drill(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate drill file export."""
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "drill.drl").write_text("M48\n", encoding="utf-8")
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +157,7 @@ class TestG3GoldenSpecCoverage:
 
     def test_total_golden_specs_for_drc(self, golden_specs: list[Path]) -> None:
         """Verify at least 20 total golden specs exist for DRC testing."""
-        assert len(golden_specs) >= 20, (
-            f"Expected ≥20 total golden specs for DRC gate, found {len(golden_specs)}"
-        )
+        assert len(golden_specs) >= 20, f"Expected ≥20 total golden specs for DRC gate, found {len(golden_specs)}"
 
 
 # ---------------------------------------------------------------------------
@@ -199,9 +186,7 @@ class TestG3DrcArgumentConstruction:
         report = tmp_path / "drc.json"
         args = build_drc_args(board, report)
 
-        assert "--exit-code-violations" in args, (
-            "DRC must use --exit-code-violations flag"
-        )
+        assert "--exit-code-violations" in args, "DRC must use --exit-code-violations flag"
 
     def test_drc_args_use_json_format(self, tmp_path: Path) -> None:
         """DRC must output JSON for programmatic parsing."""
@@ -357,9 +342,7 @@ class TestG3GoldenSpecsDrcCompatibility:
     Real KiCad DRC is tested in integration tests.
     """
 
-    def test_golden_specs_specify_drc_must_pass(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_specify_drc_must_pass(self, golden_specs: list[Path]) -> None:
         """All golden specs should require DRC to pass."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -367,9 +350,7 @@ class TestG3GoldenSpecsDrcCompatibility:
                 f"Golden spec {spec_path.name} must have constraints.drc.must_pass=True"
             )
 
-    def test_golden_specs_specify_drc_severity(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_specify_drc_severity(self, golden_specs: list[Path]) -> None:
         """All golden specs should specify DRC severity level."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -377,16 +358,13 @@ class TestG3GoldenSpecsDrcCompatibility:
                 f"Golden spec {spec_path.name} has invalid DRC severity"
             )
 
-    def test_golden_specs_use_digest_pinned_docker_image(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_use_digest_pinned_docker_image(self, golden_specs: list[Path]) -> None:
         """All golden specs must use digest-pinned Docker images."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
             docker_image = spec.toolchain.kicad.docker_image
             assert "@sha256:" in docker_image, (
-                f"Golden spec {spec_path.name} must use digest-pinned Docker image, "
-                f"got: {docker_image}"
+                f"Golden spec {spec_path.name} must use digest-pinned Docker image, got: {docker_image}"
             )
 
     @pytest.mark.parametrize(
@@ -394,9 +372,7 @@ class TestG3GoldenSpecsDrcCompatibility:
         _collect_golden_specs(),
         ids=lambda p: p.name,
     )
-    def test_golden_spec_drc_clean_with_fake_runner(
-        self, spec_path: Path, tmp_path: Path
-    ) -> None:
+    def test_golden_spec_drc_clean_with_fake_runner(self, spec_path: Path, tmp_path: Path) -> None:
         """Each golden spec should pass DRC (using fake runner).
 
         This verifies the DRC pipeline is correctly wired for each golden spec.

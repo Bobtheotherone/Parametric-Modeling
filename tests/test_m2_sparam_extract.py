@@ -814,9 +814,7 @@ class TestWindowedSParameterExtraction:
 
         # Override with Blackman
         window_config = WindowConfig(window_type=WindowType.BLACKMAN)
-        result = extract_sparams_from_port_signals(
-            signals, "P1", config, window_config=window_config
-        )
+        result = extract_sparams_from_port_signals(signals, "P1", config, window_config=window_config)
 
         assert result.metrics["windowing"]["window_type"] == "blackman"
 
@@ -836,19 +834,14 @@ class TestWindowedSParameterExtraction:
         ]
 
         result_none = extract_sparams_from_port_signals(
-            signals, "P1", config,
-            window_config=WindowConfig(window_type=WindowType.NONE)
+            signals, "P1", config, window_config=WindowConfig(window_type=WindowType.NONE)
         )
         result_hann = extract_sparams_from_port_signals(
-            signals, "P1", config,
-            window_config=WindowConfig(window_type=WindowType.HANN)
+            signals, "P1", config, window_config=WindowConfig(window_type=WindowType.HANN)
         )
 
         # Results should be different
-        assert not np.allclose(
-            result_none.s_parameters.s_parameters,
-            result_hann.s_parameters.s_parameters
-        )
+        assert not np.allclose(result_none.s_parameters.s_parameters, result_hann.s_parameters.s_parameters)
 
     def test_extract_kaiser_includes_beta_in_metrics(self) -> None:
         """REQ-M2-006: Kaiser window includes beta in metrics."""
@@ -866,9 +859,7 @@ class TestWindowedSParameterExtraction:
         ]
 
         window_config = WindowConfig(window_type=WindowType.KAISER, kaiser_beta=10.5)
-        result = extract_sparams_from_port_signals(
-            signals, "P1", config, window_config=window_config
-        )
+        result = extract_sparams_from_port_signals(signals, "P1", config, window_config=window_config)
 
         assert result.metrics["windowing"]["window_type"] == "kaiser"
         assert result.metrics["windowing"]["kaiser_beta"] == 10.5
@@ -889,9 +880,7 @@ class TestWindowedSParameterExtraction:
         ]
 
         window_config = WindowConfig(window_type=WindowType.TUKEY, tukey_alpha=0.3)
-        result = extract_sparams_from_port_signals(
-            signals, "P1", config, window_config=window_config
-        )
+        result = extract_sparams_from_port_signals(signals, "P1", config, window_config=window_config)
 
         assert result.metrics["windowing"]["window_type"] == "tukey"
         assert result.metrics["windowing"]["tukey_alpha"] == 0.3

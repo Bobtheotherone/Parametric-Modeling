@@ -453,21 +453,41 @@ class TestF1LayoutInvariant:
     def test_f1_left_segment_must_end_at_discontinuity(self) -> None:
         """F1 left segment end must equal discontinuity X."""
         left_port = PortPlan(
-            x_ref_nm=5_000_000, y_ref_nm=0, signal_pad_x_nm=8_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=0, side="left",
+            x_ref_nm=5_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=8_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=0,
+            side="left",
         )
         right_port = PortPlan(
-            x_ref_nm=75_000_000, y_ref_nm=0, signal_pad_x_nm=72_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=180000, side="right",
+            x_ref_nm=75_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=72_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=180000,
+            side="right",
         )
         # Left segment ends at wrong position
         left_seg = SegmentPlan(
-            x_start_nm=8_000_000, x_end_nm=30_000_000,  # Should be 40_000_000
-            y_nm=0, width_nm=300_000, layer="F.Cu", net_name="SIG", label="left",
+            x_start_nm=8_000_000,
+            x_end_nm=30_000_000,  # Should be 40_000_000
+            y_nm=0,
+            width_nm=300_000,
+            layer="F.Cu",
+            net_name="SIG",
+            label="left",
         )
         right_seg = SegmentPlan(
-            x_start_nm=40_000_000, x_end_nm=72_000_000,
-            y_nm=0, width_nm=300_000, layer="B.Cu", net_name="SIG", label="right",
+            x_start_nm=40_000_000,
+            x_end_nm=72_000_000,
+            y_nm=0,
+            width_nm=300_000,
+            layer="B.Cu",
+            net_name="SIG",
+            label="right",
         )
 
         with pytest.raises(ValueError, match="Left segment end"):
@@ -487,21 +507,41 @@ class TestF1LayoutInvariant:
     def test_f1_right_segment_must_start_at_discontinuity(self) -> None:
         """F1 right segment start must equal discontinuity X."""
         left_port = PortPlan(
-            x_ref_nm=5_000_000, y_ref_nm=0, signal_pad_x_nm=8_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=0, side="left",
+            x_ref_nm=5_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=8_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=0,
+            side="left",
         )
         right_port = PortPlan(
-            x_ref_nm=75_000_000, y_ref_nm=0, signal_pad_x_nm=72_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=180000, side="right",
+            x_ref_nm=75_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=72_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=180000,
+            side="right",
         )
         left_seg = SegmentPlan(
-            x_start_nm=8_000_000, x_end_nm=40_000_000,
-            y_nm=0, width_nm=300_000, layer="F.Cu", net_name="SIG", label="left",
+            x_start_nm=8_000_000,
+            x_end_nm=40_000_000,
+            y_nm=0,
+            width_nm=300_000,
+            layer="F.Cu",
+            net_name="SIG",
+            label="left",
         )
         # Right segment starts at wrong position
         right_seg = SegmentPlan(
-            x_start_nm=45_000_000, x_end_nm=72_000_000,  # Should be 40_000_000
-            y_nm=0, width_nm=300_000, layer="B.Cu", net_name="SIG", label="right",
+            x_start_nm=45_000_000,
+            x_end_nm=72_000_000,  # Should be 40_000_000
+            y_nm=0,
+            width_nm=300_000,
+            layer="B.Cu",
+            net_name="SIG",
+            label="right",
         )
 
         with pytest.raises(ValueError, match="Right segment start"):
@@ -521,20 +561,40 @@ class TestF1LayoutInvariant:
     def test_f1_valid_layout_passes_invariant(self) -> None:
         """Valid F1 layout passes continuity invariant check."""
         left_port = PortPlan(
-            x_ref_nm=5_000_000, y_ref_nm=0, signal_pad_x_nm=8_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=0, side="left",
+            x_ref_nm=5_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=8_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=0,
+            side="left",
         )
         right_port = PortPlan(
-            x_ref_nm=75_000_000, y_ref_nm=0, signal_pad_x_nm=72_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=180000, side="right",
+            x_ref_nm=75_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=72_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=180000,
+            side="right",
         )
         left_seg = SegmentPlan(
-            x_start_nm=8_000_000, x_end_nm=40_000_000,
-            y_nm=0, width_nm=300_000, layer="F.Cu", net_name="SIG", label="left",
+            x_start_nm=8_000_000,
+            x_end_nm=40_000_000,
+            y_nm=0,
+            width_nm=300_000,
+            layer="F.Cu",
+            net_name="SIG",
+            label="left",
         )
         right_seg = SegmentPlan(
-            x_start_nm=40_000_000, x_end_nm=72_000_000,
-            y_nm=0, width_nm=300_000, layer="B.Cu", net_name="SIG", label="right",
+            x_start_nm=40_000_000,
+            x_end_nm=72_000_000,
+            y_nm=0,
+            width_nm=300_000,
+            layer="B.Cu",
+            net_name="SIG",
+            label="right",
         )
 
         # Should not raise
@@ -565,16 +625,31 @@ class TestValidateConnectivity:
     def test_valid_f0_layout_no_errors(self) -> None:
         """Valid F0 layout passes connectivity validation."""
         left_port = PortPlan(
-            x_ref_nm=5_000_000, y_ref_nm=0, signal_pad_x_nm=8_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=0, side="left",
+            x_ref_nm=5_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=8_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=0,
+            side="left",
         )
         right_port = PortPlan(
-            x_ref_nm=75_000_000, y_ref_nm=0, signal_pad_x_nm=72_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=180000, side="right",
+            x_ref_nm=75_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=72_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=180000,
+            side="right",
         )
         through_seg = SegmentPlan(
-            x_start_nm=8_000_000, x_end_nm=72_000_000,
-            y_nm=0, width_nm=300_000, layer="F.Cu", net_name="SIG", label="through",
+            x_start_nm=8_000_000,
+            x_end_nm=72_000_000,
+            y_nm=0,
+            width_nm=300_000,
+            layer="F.Cu",
+            net_name="SIG",
+            label="through",
         )
 
         layout = LayoutPlan(
@@ -595,17 +670,32 @@ class TestValidateConnectivity:
     def test_segment_not_connected_to_left_port(self) -> None:
         """Segment not starting at left port signal pad is flagged."""
         left_port = PortPlan(
-            x_ref_nm=5_000_000, y_ref_nm=0, signal_pad_x_nm=8_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=0, side="left",
+            x_ref_nm=5_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=8_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=0,
+            side="left",
         )
         right_port = PortPlan(
-            x_ref_nm=75_000_000, y_ref_nm=0, signal_pad_x_nm=72_000_000,
-            signal_pad_y_nm=0, footprint="Test:FP", rotation_mdeg=180000, side="right",
+            x_ref_nm=75_000_000,
+            y_ref_nm=0,
+            signal_pad_x_nm=72_000_000,
+            signal_pad_y_nm=0,
+            footprint="Test:FP",
+            rotation_mdeg=180000,
+            side="right",
         )
         # Segment starts at wrong position
         through_seg = SegmentPlan(
-            x_start_nm=10_000_000, x_end_nm=72_000_000,  # Should start at 8_000_000
-            y_nm=0, width_nm=300_000, layer="F.Cu", net_name="SIG", label="through",
+            x_start_nm=10_000_000,
+            x_end_nm=72_000_000,  # Should start at 8_000_000
+            y_nm=0,
+            width_nm=300_000,
+            layer="F.Cu",
+            net_name="SIG",
+            label="through",
         )
 
         layout = LayoutPlan(

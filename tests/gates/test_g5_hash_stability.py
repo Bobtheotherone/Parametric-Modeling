@@ -23,6 +23,7 @@ Pytest marker: gate_g5
 Note: Real KiCad integration tests are in tests/integration/test_export_determinism_integration.py
 and require Docker. These tests verify hash stability logic without Docker.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -101,22 +102,14 @@ class _FakeStabilityRunner:
         self.seed = seed
         self.run_count = 0
 
-    def run_drc(
-        self, board_path: Path, report_path: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
         """Simulate DRC execution."""
         self.run_count += 1
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps({"violations": []}), encoding="utf-8"
-        )
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        report_path.write_text(json.dumps({"violations": []}), encoding="utf-8")
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-    def export_gerbers(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate Gerber export with deterministic content based on seed."""
         self.run_count += 1
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -134,35 +127,23 @@ class _FakeStabilityRunner:
 
         for kicad_layer, layer in layers:
             # Deterministic content based on seed and layer
-            content_hash = hashlib.sha256(
-                f"{self.seed}:{layer}".encode()
-            ).hexdigest()[:16]
+            content_hash = hashlib.sha256(f"{self.seed}:{layer}".encode()).hexdigest()[:16]
             content = f"G04 Layer {layer}*\nG04 Hash={content_hash}*\nX0Y0D02*\nX1000Y0D01*\nM02*\n"
             # Use KiCad naming: board-F_Cu.gbr
             (out_dir / f"{board_name}-{kicad_layer}.gbr").write_text(content, encoding="utf-8")
 
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-    def export_drill(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate drill export with deterministic content."""
         self.run_count += 1
         out_dir.mkdir(parents=True, exist_ok=True)
 
         content_hash = hashlib.sha256(f"{self.seed}:drill".encode()).hexdigest()[:16]
-        (out_dir / "drill.drl").write_text(
-            f"M48\n; Hash={content_hash}\nT1C0.3\n%\nM30\n", encoding="utf-8"
-        )
-        (out_dir / "drill-NPTH.drl").write_text(
-            f"M48\n; NPTH Hash={content_hash}\n%\nM30\n", encoding="utf-8"
-        )
+        (out_dir / "drill.drl").write_text(f"M48\n; Hash={content_hash}\nT1C0.3\n%\nM30\n", encoding="utf-8")
+        (out_dir / "drill-NPTH.drl").write_text(f"M48\n; NPTH Hash={content_hash}\n%\nM30\n", encoding="utf-8")
 
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
 
 # ---------------------------------------------------------------------------
@@ -198,22 +179,16 @@ class TestG5GoldenSpecCoverage:
     def test_minimum_f0_golden_specs_for_stability(self) -> None:
         """Verify at least 10 F0 golden specs exist for stability testing."""
         specs = _collect_f0_specs()
-        assert len(specs) >= 10, (
-            f"Expected ≥10 F0 specs for stability gate, found {len(specs)}"
-        )
+        assert len(specs) >= 10, f"Expected ≥10 F0 specs for stability gate, found {len(specs)}"
 
     def test_minimum_f1_golden_specs_for_stability(self) -> None:
         """Verify at least 10 F1 golden specs exist for stability testing."""
         specs = _collect_f1_specs()
-        assert len(specs) >= 10, (
-            f"Expected ≥10 F1 specs for stability gate, found {len(specs)}"
-        )
+        assert len(specs) >= 10, f"Expected ≥10 F1 specs for stability gate, found {len(specs)}"
 
     def test_total_golden_specs_for_stability(self, golden_specs: list[Path]) -> None:
         """Verify at least 20 total golden specs exist for stability testing."""
-        assert len(golden_specs) >= 20, (
-            f"Expected ≥20 total golden specs for stability gate, found {len(golden_specs)}"
-        )
+        assert len(golden_specs) >= 20, f"Expected ≥20 total golden specs for stability gate, found {len(golden_specs)}"
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +204,7 @@ class TestG5DesignHashStability:
     within the same process and across separate invocations.
     """
 
-    def test_design_hash_stable_single_process(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_design_hash_stable_single_process(self, golden_specs: list[Path]) -> None:
         """design_hash must be stable within a single process."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -256,13 +229,9 @@ class TestG5DesignHashStability:
 
             assert len(h) == 64, f"design_hash must be 64 chars, got {len(h)}"
             assert h.islower(), "design_hash must be lowercase"
-            assert all(c in "0123456789abcdef" for c in h), (
-                "design_hash must be valid hex"
-            )
+            assert all(c in "0123456789abcdef" for c in h), "design_hash must be valid hex"
 
-    def test_design_hash_equals_sha256_of_canonical_json(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_design_hash_equals_sha256_of_canonical_json(self, golden_specs: list[Path]) -> None:
         """design_hash must equal SHA256 of canonical JSON bytes."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -272,13 +241,9 @@ class TestG5DesignHashStability:
             expected_hash = sha256_bytes(canonical.encode("utf-8"))
             computed_hash = design_hash(resolved_design)
 
-            assert computed_hash == expected_hash, (
-                f"design_hash != sha256(canonical_json) for {spec_path.name}"
-            )
+            assert computed_hash == expected_hash, f"design_hash != sha256(canonical_json) for {spec_path.name}"
 
-    def test_design_hash_matches_golden(
-        self, golden_specs: list[Path], golden_hashes: dict[str, str]
-    ) -> None:
+    def test_design_hash_matches_golden(self, golden_specs: list[Path], golden_hashes: dict[str, str]) -> None:
         """design_hash must match committed golden hashes."""
         for spec_path in golden_specs:
             # Golden hashes use the actual spec filename as key (e.g., f0_cal_001.yaml)
@@ -292,9 +257,7 @@ class TestG5DesignHashStability:
             computed_hash = design_hash(resolved_design)
 
             assert computed_hash == golden_hashes[key], (
-                f"design_hash mismatch for {spec_path.name}:\n"
-                f"  computed: {computed_hash}\n"
-                f"  expected: {golden_hashes[key]}"
+                f"design_hash mismatch for {spec_path.name}:\n  computed: {computed_hash}\n  expected: {golden_hashes[key]}"
             )
 
 
@@ -311,9 +274,7 @@ class TestG5CanonicalJsonStability:
     or other non-semantic variations.
     """
 
-    def test_canonical_json_stable_across_runs(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_canonical_json_stable_across_runs(self, golden_specs: list[Path]) -> None:
         """Canonical JSON must be stable across multiple resolutions."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -324,13 +285,9 @@ class TestG5CanonicalJsonStability:
                 canonicals.append(resolved_design_canonical_json(resolved_design))
 
             # All canonical JSONs must be byte-identical
-            assert len(set(canonicals)) == 1, (
-                f"Canonical JSON not stable for {spec_path.name}"
-            )
+            assert len(set(canonicals)) == 1, f"Canonical JSON not stable for {spec_path.name}"
 
-    def test_canonical_json_key_order_invariant(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_canonical_json_key_order_invariant(self, golden_specs: list[Path]) -> None:
         """Canonical JSON must be invariant to input key ordering."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
@@ -345,13 +302,12 @@ class TestG5CanonicalJsonStability:
                 reordered[key] = spec_data[key]
 
             from formula_foundry.coupongen.spec import CouponSpec
+
             spec_reordered = CouponSpec.model_validate(reordered)
             resolved_reordered = resolve(spec_reordered)
             canonical_reordered = resolved_design_canonical_json(resolved_reordered)
 
-            assert canonical == canonical_reordered, (
-                f"Canonical JSON depends on key order for {spec_path.name}"
-            )
+            assert canonical == canonical_reordered, f"Canonical JSON depends on key order for {spec_path.name}"
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +427,7 @@ class TestG5ExportHashStability:
 
         board_path = tmp_path / "coupon.kicad_pcb"
         board_path.write_text("(kicad_pcb)", encoding="utf-8")
-        toolchain = KicadToolchain(
-            version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef"
-        )
+        toolchain = KicadToolchain(version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef")
 
         # Run export twice with same seed
         runner_a = _FakeStabilityRunner(seed="test_seed")
@@ -491,18 +445,14 @@ class TestG5ExportHashStability:
 
         board_path = tmp_path / "coupon.kicad_pcb"
         board_path.write_text("(kicad_pcb)", encoding="utf-8")
-        toolchain = KicadToolchain(
-            version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef"
-        )
+        toolchain = KicadToolchain(version="9.0.7", docker_image="kicad/kicad:9.0.7@sha256:deadbeef")
         runner = _FakeStabilityRunner()
 
         hashes = export_fab(board_path, tmp_path / "fab", toolchain, runner=runner)
 
         for path, digest in hashes.items():
             assert len(digest) == 64, f"Hash for {path} must be 64 chars"
-            assert all(c in "0123456789abcdef" for c in digest), (
-                f"Hash for {path} must be valid hex"
-            )
+            assert all(c in "0123456789abcdef" for c in digest), f"Hash for {path} must be valid hex"
 
 
 # ---------------------------------------------------------------------------
@@ -519,9 +469,7 @@ class TestG5ManifestHashStability:
         _collect_golden_specs(),
         ids=lambda p: p.name,
     )
-    def test_manifest_design_hash_stable(
-        self, spec_path: Path, tmp_path: Path
-    ) -> None:
+    def test_manifest_design_hash_stable(self, spec_path: Path, tmp_path: Path) -> None:
         """Manifest design_hash must be stable across runs."""
         from formula_foundry.coupongen import build_coupon
 
@@ -545,9 +493,7 @@ class TestG5ManifestHashStability:
             design_hashes.append(manifest["design_hash"])
 
         # All design_hashes must be identical
-        assert len(set(design_hashes)) == 1, (
-            f"design_hash not stable for {spec_path.name} across {NUM_STABILITY_RUNS} runs"
-        )
+        assert len(set(design_hashes)) == 1, f"design_hash not stable for {spec_path.name} across {NUM_STABILITY_RUNS} runs"
 
     def test_manifest_export_hashes_stable(self, tmp_path: Path) -> None:
         """Manifest export hashes must be stable across runs."""
@@ -582,9 +528,7 @@ class TestG5ManifestHashStability:
         # All export hash sets must be identical
         first_hashes = export_hashes_per_run[0]
         for run_idx, run_hashes in enumerate(export_hashes_per_run[1:], start=2):
-            assert first_hashes == run_hashes, (
-                f"Export hashes differ between run 1 and run {run_idx}"
-            )
+            assert first_hashes == run_hashes, f"Export hashes differ between run 1 and run {run_idx}"
 
 
 # ---------------------------------------------------------------------------
@@ -632,24 +576,15 @@ class TestG5FullDeterminism:
                     kicad_cli_version="9.0.7",
                 )
 
-                manifests.append(
-                    json.loads(result.manifest_path.read_text(encoding="utf-8"))
-                )
+                manifests.append(json.loads(result.manifest_path.read_text(encoding="utf-8")))
 
             # Verify design_hash stability
             design_hashes = [m["design_hash"] for m in manifests]
-            assert len(set(design_hashes)) == 1, (
-                f"design_hash not stable for {spec_path.name}"
-            )
+            assert len(set(design_hashes)) == 1, f"design_hash not stable for {spec_path.name}"
 
             # Verify export hash stability
-            export_hash_sets = [
-                frozenset((e["path"], e["hash"]) for e in m.get("exports", []))
-                for m in manifests
-            ]
-            assert len(set(export_hash_sets)) == 1, (
-                f"Export hashes not stable for {spec_path.name}"
-            )
+            export_hash_sets = [frozenset((e["path"], e["hash"]) for e in m.get("exports", [])) for m in manifests]
+            assert len(set(export_hash_sets)) == 1, f"Export hashes not stable for {spec_path.name}"
 
     def test_hash_format_compliance(self, golden_specs: list[Path]) -> None:
         """All hashes must comply with SHA256 format requirements."""

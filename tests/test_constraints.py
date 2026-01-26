@@ -1156,10 +1156,7 @@ class TestViaFenceDeterminism:
         proof = evaluate_tiered_constraints(spec, limits, fail_fast=False)
 
         # Find fence pitch constraint results
-        pitch_constraints = [
-            c for c in proof.constraints
-            if "FENCE_PITCH" in c.constraint_id
-        ]
+        pitch_constraints = [c for c in proof.constraints if "FENCE_PITCH" in c.constraint_id]
         assert len(pitch_constraints) >= 1
         # At least one should fail since pitch < diameter + min_via_to_via
         assert any(not c.passed for c in pitch_constraints)
@@ -1193,10 +1190,7 @@ class TestViaFenceDeterminism:
 
         # Original vector should have fence parameters
         assert repair_result.original_vector is not None
-        fence_params = [
-            p for p in repair_result.original_vector.parameters.keys()
-            if "fence" in p.lower()
-        ]
+        fence_params = [p for p in repair_result.original_vector.parameters if "fence" in p.lower()]
         assert len(fence_params) > 0, "Fence parameters should be in design vector"
 
     def test_fence_enabled_false_skips_constraints(self) -> None:
@@ -1209,10 +1203,7 @@ class TestViaFenceDeterminism:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # Should not have any fence-specific constraint failures
-        fence_failures = [
-            c for c in proof.constraints
-            if "FENCE" in c.constraint_id and not c.passed
-        ]
+        fence_failures = [c for c in proof.constraints if "FENCE" in c.constraint_id and not c.passed]
         assert len(fence_failures) == 0
 
     def test_fence_geometry_generated_from_layout(self) -> None:
@@ -1251,9 +1242,7 @@ class TestViaFenceDeterminism:
         assert len(pos_vias) > 0
         assert len(pos_vias) == len(neg_vias)
 
-        expected_offset = (
-            (cpwg_spec.w_nm + 1) // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
-        )
+        expected_offset = (cpwg_spec.w_nm + 1) // 2 + cpwg_spec.gap_nm + fence_spec.offset_from_gap_nm
         for pos_via, neg_via in zip(pos_vias, neg_vias, strict=True):
             assert pos_via.position.x == neg_via.position.x
             assert pos_via.position.y == expected_offset
@@ -1283,10 +1272,7 @@ class TestRoundedOutlineFeasibility:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # Corner radius constraints should pass
-        corner_constraints = [
-            c for c in proof.constraints
-            if "CORNER_RADIUS" in c.constraint_id
-        ]
+        corner_constraints = [c for c in proof.constraints if "CORNER_RADIUS" in c.constraint_id]
         assert all(c.passed for c in corner_constraints)
 
     def test_corner_radius_positive_valid(self) -> None:
@@ -1300,10 +1286,7 @@ class TestRoundedOutlineFeasibility:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # Corner radius constraints should pass
-        corner_constraints = [
-            c for c in proof.constraints
-            if "CORNER_RADIUS" in c.constraint_id
-        ]
+        corner_constraints = [c for c in proof.constraints if "CORNER_RADIUS" in c.constraint_id]
         assert all(c.passed for c in corner_constraints)
 
     def test_rounded_outline_contains_arcs(self) -> None:
@@ -1334,10 +1317,7 @@ class TestRoundedOutlineFeasibility:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # T0_CORNER_RADIUS_MAX should fail
-        max_constraint = next(
-            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"),
-            None
-        )
+        max_constraint = next((c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"), None)
         assert max_constraint is not None
         assert not max_constraint.passed
         assert max_constraint.margin < 0
@@ -1352,10 +1332,7 @@ class TestRoundedOutlineFeasibility:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # T0_CORNER_RADIUS_MIN should fail
-        min_constraint = next(
-            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MIN"),
-            None
-        )
+        min_constraint = next((c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MIN"), None)
         assert min_constraint is not None
         assert not min_constraint.passed
 
@@ -1411,10 +1388,7 @@ class TestRoundedOutlineFeasibility:
         proof = evaluate_tiered_constraints(spec, limits)
 
         # Should pass (margin = 0)
-        max_constraint = next(
-            (c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"),
-            None
-        )
+        max_constraint = next((c for c in proof.constraints if c.constraint_id == "T0_CORNER_RADIUS_MAX"), None)
         assert max_constraint is not None
         assert max_constraint.passed
         assert max_constraint.margin >= 0
@@ -1667,7 +1641,7 @@ def test_constraints() -> None:
     REQ-M1-011: REPAIR mode MUST emit serialized repair_map plus deterministic
                 repaired_spec such that rebuilding reproduces same design_hash.
     """
-    from formula_foundry.coupongen.resolve import resolve, design_hash
+    from formula_foundry.coupongen.resolve import design_hash, resolve
 
     # REQ-M1-007: Via fence parameters are validated (min/max pitch)
     limits = _default_fab_limits()

@@ -82,7 +82,7 @@ def test_hardware_config_no_extra_keys() -> None:
     """Hardware config should only contain expected keys (prevent config drift)."""
     config = _load_hardware_config()
     expected_keys = {"cpu_cores", "ram_gb", "vram_gb"}
-    extra_keys = set(config.keys()) - expected_keys
+    set(config.keys()) - expected_keys
     # Allow extra keys but warn - they may be intentional extensions
     # For strict enforcement, uncomment the assertion below:
     # assert not extra_keys, f"Unexpected keys in hardware.yaml: {extra_keys}"

@@ -14,7 +14,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from tools import git_guard
 
 
@@ -88,9 +87,7 @@ class TestSecretPatterns:
         """Test generic API_KEY assignment pattern matches."""
         pattern = git_guard.SECRET_PATTERNS[3][1]
         assert pattern.search(_api_key_assignment("API_KEY", _join("my_", "secret_value")))
-        assert pattern.search(
-            _api_key_assignment("API_KEY", _join("my_", "secret_value"), quote='"')
-        )
+        assert pattern.search(_api_key_assignment("API_KEY", _join("my_", "secret_value"), quote='"'))
         assert pattern.search(_api_key_assignment("OPENAI_API_KEY", _join("sk_test_", "12345678")))
         assert pattern.search(_api_key_assignment("DATABASE_API_KEY", _join("very", "secretkey123")))
 
@@ -104,9 +101,7 @@ class TestSecretPatterns:
         """Test Bearer token pattern matches valid tokens."""
         pattern = git_guard.SECRET_PATTERNS[4][1]
         assert pattern.search(_join("Bearer ", _bearer_token()))
-        assert pattern.search(
-            _join("Authorization: Bearer ", _join("abcdef1234567890", "12345678"))
-        )
+        assert pattern.search(_join("Authorization: Bearer ", _join("abcdef1234567890", "12345678")))
 
     def test_bearer_token_pattern_rejects_short(self) -> None:
         """Test Bearer token pattern rejects short tokens."""
@@ -218,8 +213,7 @@ class TestScanFile:
         """File with multiple secret types is detected."""
         secret_file = tmp_path / "secrets.py"
         secret_file.write_text(
-            f"openai_key = '{_openai_key()}'\n"
-            f"google_key = '{_google_key()}'\n",
+            f"openai_key = '{_openai_key()}'\ngoogle_key = '{_google_key()}'\n",
             encoding="utf-8",
         )
         hits = git_guard._scan_file(secret_file)

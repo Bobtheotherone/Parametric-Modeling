@@ -16,14 +16,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from formula_foundry.substrate import canonical_json_dumps
 
-from .spec import BoundarySpec, BoundaryType, FrequencySpec, MeshSpec, SimulationSpec
+from .spec import BoundaryType, SimulationSpec
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +469,7 @@ def validate_pml_adequacy(
         return ValidationResult(
             name="pml_adequacy",
             status=ValidationStatus.WARNING,
-            message=f"Port faces (x_min, x_max) should have PML for S-parameter extraction",
+            message="Port faces (x_min, x_max) should have PML for S-parameter extraction",
             value=float(port_faces_with_pml),
             threshold=2.0,
             details=details,
@@ -632,7 +632,7 @@ def validate_sim_config(
             ValidationResult(
                 name="frequency_sweep",
                 status=ValidationStatus.PASSED,
-                message=f"Frequency sweep: {spec.frequency.f_start_hz/1e9:.3f} - {spec.frequency.f_stop_hz/1e9:.3f} GHz ({spec.frequency.n_points} points)",
+                message=f"Frequency sweep: {spec.frequency.f_start_hz / 1e9:.3f} - {spec.frequency.f_stop_hz / 1e9:.3f} GHz ({spec.frequency.n_points} points)",
             )
         )
 

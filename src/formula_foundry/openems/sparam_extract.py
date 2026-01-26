@@ -216,12 +216,15 @@ def compute_window_metrics(config: WindowConfig, n_samples: int = 1024) -> dict[
 
     REQ-M2-006: Window function metrics for analysis.
     """
-    window = create_window(n_samples, WindowConfig(
-        window_type=config.window_type,
-        kaiser_beta=config.kaiser_beta,
-        tukey_alpha=config.tukey_alpha,
-        normalize=False,  # Use unnormalized for metrics
-    ))
+    window = create_window(
+        n_samples,
+        WindowConfig(
+            window_type=config.window_type,
+            kaiser_beta=config.kaiser_beta,
+            tukey_alpha=config.tukey_alpha,
+            normalize=False,  # Use unnormalized for metrics
+        ),
+    )
 
     # Coherent gain
     coherent_gain = np.sum(window) / n_samples
@@ -239,7 +242,7 @@ def compute_window_metrics(config: WindowConfig, n_samples: int = 1024) -> dict[
         WindowType.HAMMING: 1.75,
         WindowType.BLACKMAN: 1.10,
         WindowType.KAISER: 1.0,  # Varies with beta
-        WindowType.TUKEY: 2.0,   # Varies with alpha
+        WindowType.TUKEY: 2.0,  # Varies with alpha
     }
     scalloping_loss = scalloping_loss_table.get(config.window_type, 1.5)
 
@@ -578,9 +581,7 @@ def extract_sparams_from_port_signals(
 
         # Interpolate to target frequencies using linear interpolation
         # in real/imag domain for smoothness
-        s_col = _interpolate_complex_spectrum(
-            fft_freqs, b_j, a_excite, target_freqs
-        )
+        s_col = _interpolate_complex_spectrum(fft_freqs, b_j, a_excite, target_freqs)
 
         s_parameters[:, j, excite_idx] = s_col
 
@@ -760,10 +761,7 @@ def extract_full_sparam_matrix(
         port_signals = signal_sets.get_signals_for_excitation(excite_port_id)
 
         if len(port_signals) != n_ports:
-            raise ValueError(
-                f"Expected {n_ports} signals for excitation at {excite_port_id}, "
-                f"got {len(port_signals)}"
-            )
+            raise ValueError(f"Expected {n_ports} signals for excitation at {excite_port_id}, got {len(port_signals)}")
 
         # Extract S-parameters for this excitation
         result = extract_sparams_from_port_signals(

@@ -13,46 +13,52 @@ from __future__ import annotations
 import re
 
 # Common expected paths for all coupon families
-COMMON_EXPECTED_PATHS: frozenset[str] = frozenset({
-    "schema_version",
-    "coupon_family",
-    "units",
-    "toolchain",
-    "toolchain.kicad",
-    "toolchain.kicad.version",
-    "fab_profile",
-    "fab_profile.id",
-    "stackup",
-    "stackup.copper_layers",
-    "stackup.thicknesses_nm",
-    "stackup.materials",
-    "board",
-    "board.outline",
-    "board.origin",
-    "connectors",
-    "connectors.left",
-    "connectors.right",
-    "transmission_line",
-    "transmission_line.type",
-    "transmission_line.layer",
-    "transmission_line.w_nm",
-    "transmission_line.gap_nm",
-    "transmission_line.length_left_nm",
-    "constraints",
-    "export",
-})
+COMMON_EXPECTED_PATHS: frozenset[str] = frozenset(
+    {
+        "schema_version",
+        "coupon_family",
+        "units",
+        "toolchain",
+        "toolchain.kicad",
+        "toolchain.kicad.version",
+        "fab_profile",
+        "fab_profile.id",
+        "stackup",
+        "stackup.copper_layers",
+        "stackup.thicknesses_nm",
+        "stackup.materials",
+        "board",
+        "board.outline",
+        "board.origin",
+        "connectors",
+        "connectors.left",
+        "connectors.right",
+        "transmission_line",
+        "transmission_line.type",
+        "transmission_line.layer",
+        "transmission_line.w_nm",
+        "transmission_line.gap_nm",
+        "transmission_line.length_left_nm",
+        "constraints",
+        "export",
+    }
+)
 
 # F0-specific expected paths (calibration thru-line)
-F0_EXPECTED_PATHS: frozenset[str] = COMMON_EXPECTED_PATHS | frozenset({
-    "transmission_line.length_right_nm",
-})
+F0_EXPECTED_PATHS: frozenset[str] = COMMON_EXPECTED_PATHS | frozenset(
+    {
+        "transmission_line.length_right_nm",
+    }
+)
 
 # F1-specific expected paths (single-ended via)
-F1_EXPECTED_PATHS: frozenset[str] = COMMON_EXPECTED_PATHS | frozenset({
-    "discontinuity",
-    "discontinuity.type",
-    "discontinuity.signal_via",
-})
+F1_EXPECTED_PATHS: frozenset[str] = COMMON_EXPECTED_PATHS | frozenset(
+    {
+        "discontinuity",
+        "discontinuity.type",
+        "discontinuity.signal_via",
+    }
+)
 
 # Family to expected paths mapping
 FAMILY_EXPECTED_PATHS: dict[str, frozenset[str]] = {

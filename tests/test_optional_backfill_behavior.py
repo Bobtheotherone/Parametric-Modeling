@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-
 # -----------------------------------------------------------------------------
 # Test Fixtures
 # -----------------------------------------------------------------------------
@@ -124,9 +123,7 @@ class TestIsBackfillTaskId:
 class TestSummaryBackfillExclusion:
     """Tests for backfill exclusion in run summary."""
 
-    def test_summary_success_ignores_backfill_failures(
-        self, temp_dir, mock_primary_task, mock_backfill_failed_task
-    ):
+    def test_summary_success_ignores_backfill_failures(self, temp_dir, mock_primary_task, mock_backfill_failed_task):
         """Summary should report success when only backfill tasks failed."""
         from bridge.loop import _generate_run_summary
 
@@ -152,9 +149,7 @@ class TestSummaryBackfillExclusion:
         # Counts should exclude backfill
         assert summary["failed"] == 0
 
-    def test_summary_success_ignores_backfill_manual(
-        self, temp_dir, mock_primary_task, mock_backfill_manual_task
-    ):
+    def test_summary_success_ignores_backfill_manual(self, temp_dir, mock_primary_task, mock_backfill_manual_task):
         """Summary should report success when only backfill tasks are manual."""
         from bridge.loop import _generate_run_summary
 
@@ -248,11 +243,9 @@ class TestSummaryBackfillExclusion:
 class TestContinuationPromptBackfillExclusion:
     """Tests for backfill exclusion in continuation prompts."""
 
-    def test_continuation_prompt_does_not_include_backfill(
-        self, temp_dir, mock_primary_task, mock_backfill_failed_task
-    ):
+    def test_continuation_prompt_does_not_include_backfill(self, temp_dir, mock_primary_task, mock_backfill_failed_task):
         """Continuation prompt should NOT mention backfill tasks as failures."""
-        from bridge.loop import _generate_run_summary, _generate_continuation_prompt
+        from bridge.loop import _generate_continuation_prompt, _generate_run_summary
 
         tasks = [mock_primary_task, mock_backfill_failed_task]
 
@@ -272,11 +265,9 @@ class TestContinuationPromptBackfillExclusion:
         # FILLER task should NOT appear in the prompt as a root failure
         assert "FILLER-LINT-001" not in prompt
 
-    def test_continuation_prompt_includes_primary_failures(
-        self, temp_dir, mock_primary_failed_task, mock_backfill_failed_task
-    ):
+    def test_continuation_prompt_includes_primary_failures(self, temp_dir, mock_primary_failed_task, mock_backfill_failed_task):
         """Continuation prompt SHOULD mention primary task failures."""
-        from bridge.loop import _generate_run_summary, _generate_continuation_prompt
+        from bridge.loop import _generate_continuation_prompt, _generate_run_summary
 
         tasks = [mock_primary_failed_task, mock_backfill_failed_task]
 
@@ -393,9 +384,7 @@ class TestMarkTaskManual:
 class TestNeedsContinuationLogic:
     """Tests for needs_continuation calculation excluding backfill tasks."""
 
-    def test_no_continuation_when_only_backfill_fails(
-        self, temp_dir, mock_primary_task, mock_backfill_failed_task
-    ):
+    def test_no_continuation_when_only_backfill_fails(self, temp_dir, mock_primary_task, mock_backfill_failed_task):
         """needs_continuation should be False when only backfill tasks fail."""
         from bridge.loop import _generate_run_summary
 
@@ -421,9 +410,7 @@ class TestNeedsContinuationLogic:
         needs_continuation = (failed_count + pending_rerun_count + blocked_count) > 0
         assert needs_continuation is False
 
-    def test_continuation_when_primary_fails(
-        self, temp_dir, mock_primary_failed_task, mock_backfill_failed_task
-    ):
+    def test_continuation_when_primary_fails(self, temp_dir, mock_primary_failed_task, mock_backfill_failed_task):
         """needs_continuation should be True when primary tasks fail."""
         from bridge.loop import _generate_run_summary
 

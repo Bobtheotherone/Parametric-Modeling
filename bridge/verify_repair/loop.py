@@ -191,12 +191,14 @@ def run_verify_repair_loop(
         _log(f"Failed gates: {summary.failed_gates}")
 
         # Compute failure signature for stall detection
+        # EARLY STOP: If we see the same failure signature twice, repairs are ineffective.
+        # Lowered from >= 2 to >= 1 to stop faster and prevent thrashing.
         signature = compute_failure_signature(summary)
         if signature in signature_history:
             stable_signature_count += 1
-            _log(f"Repeated failure signature detected (count: {stable_signature_count})")
-            if stable_signature_count >= 2:
-                _log("Stopping: same failures repeated without progress")
+            _log(f"Repeated failure signature detected (count: {stable_signature_count}), signature: {signature[:16]}")
+            if stable_signature_count >= 1:
+                _log("EARLY STOP: Same failure signature repeated - repairs are not fixing the root cause")
                 elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
                 return RepairLoopResult(
                     success=False,
@@ -291,15 +293,17 @@ def run_verify_repair_loop(
 
         # Record attempt
         attempt_elapsed = (datetime.now(timezone.utc) - attempt_start).total_seconds()
-        attempts.append(RepairAttemptRecord(
-            attempt_index=attempt_idx,
-            detected_categories=category_names,
-            actions_taken=actions_taken,
-            verify_before=summary,
-            verify_after=None,  # Will be set by next iteration
-            diff_applied=repairs_applied,
-            elapsed_s=attempt_elapsed,
-        ))
+        attempts.append(
+            RepairAttemptRecord(
+                attempt_index=attempt_idx,
+                detected_categories=category_names,
+                actions_taken=actions_taken,
+                verify_before=summary,
+                verify_after=None,  # Will be set by next iteration
+                diff_applied=repairs_applied,
+                elapsed_s=attempt_elapsed,
+            )
+        )
 
         if not repairs_applied:
             _log("No repairs could be applied")

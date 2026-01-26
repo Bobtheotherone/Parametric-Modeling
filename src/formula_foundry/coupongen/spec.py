@@ -103,6 +103,7 @@ class TransmissionLine(_SpecBase):
 
     CP-2.2: Make right length derived for F1 coupons (ECO-M1-ALIGN-0001).
     """
+
     type: str = Field(..., min_length=1)
     layer: str = Field(..., min_length=1)
     w_nm: LengthNM

@@ -4,7 +4,10 @@
       "quota_error_patterns": [
         "rate limit",
         "429",
-        "quota"
+        "quota",
+        "hit your limit",
+        "resets.*\\(",
+        "You've hit your limit"
       ],
       "role": "reviewer",
       "script": "bridge/agents/claude.sh",

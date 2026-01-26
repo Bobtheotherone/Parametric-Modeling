@@ -25,7 +25,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -488,11 +487,13 @@ class TestBatchUToSpecsF1:
         from formula_foundry.coupongen.param_mapping import batch_u_to_specs_f1
 
         # Create batch with clearly different u values
-        u_batch = np.array([
-            [0.0] * 19,
-            [0.5] * 19,
-            [1.0] * 19,
-        ])
+        u_batch = np.array(
+            [
+                [0.0] * 19,
+                [0.5] * 19,
+                [1.0] * 19,
+            ]
+        )
         result = batch_u_to_specs_f1(u_batch, f1_spec_template)
 
         widths = [spec.transmission_line.w_nm for spec in result]
@@ -507,7 +508,7 @@ class TestBatchUToSpecsF1:
         result1 = batch_u_to_specs_f1(u_batch.copy(), f1_spec_template)
         result2 = batch_u_to_specs_f1(u_batch.copy(), f1_spec_template)
 
-        for s1, s2 in zip(result1, result2):
+        for s1, s2 in zip(result1, result2, strict=False):
             assert s1.transmission_line.w_nm == s2.transmission_line.w_nm
             assert s1.transmission_line.gap_nm == s2.transmission_line.gap_nm
 
@@ -562,21 +563,20 @@ class TestParamMappingWorkflow:
         )
 
         param_space = get_f1_parameter_space()
-        u_batch = np.array([
-            [0.25] * 19,
-            [0.75] * 19,
-        ])
+        u_batch = np.array(
+            [
+                [0.25] * 19,
+                [0.75] * 19,
+            ]
+        )
 
         # Process as batch
         batch_results = batch_u_to_specs_f1(u_batch, f1_spec_template, param_space)
 
         # Process individually
-        single_results = [
-            u_to_spec_f1(u_batch[i], f1_spec_template, param_space)
-            for i in range(len(u_batch))
-        ]
+        single_results = [u_to_spec_f1(u_batch[i], f1_spec_template, param_space) for i in range(len(u_batch))]
 
         # Results should match
-        for batch_spec, single_spec in zip(batch_results, single_results):
+        for batch_spec, single_spec in zip(batch_results, single_results, strict=False):
             assert batch_spec.transmission_line.w_nm == single_spec.transmission_line.w_nm
             assert batch_spec.transmission_line.gap_nm == single_spec.transmission_line.gap_nm

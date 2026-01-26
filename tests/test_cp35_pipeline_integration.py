@@ -386,11 +386,16 @@ class TestCLIValidateCommand:
         spec_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
         with patch("sys.stdout.write") as mock_stdout:
-            exit_code = cli_main.main([
-                "validate", str(spec_path),
-                "--out", str(tmp_path),
-                "--constraint-mode", "REPAIR",
-            ])
+            exit_code = cli_main.main(
+                [
+                    "validate",
+                    str(spec_path),
+                    "--out",
+                    str(tmp_path),
+                    "--constraint-mode",
+                    "REPAIR",
+                ]
+            )
 
         assert exit_code == 0
         call_args = mock_stdout.call_args[0][0]

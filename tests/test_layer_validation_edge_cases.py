@@ -463,5 +463,5 @@ class TestGerberExtensionMapConsistency:
         # Extract should recover all layers
         extracted = extract_layers_from_exports(test_paths)
 
-        for layer in ext_map.keys():
+        for layer in ext_map:
             assert layer in extracted, f"Layer {layer} not extracted"

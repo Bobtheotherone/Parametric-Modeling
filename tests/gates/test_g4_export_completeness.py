@@ -23,6 +23,7 @@ Pytest marker: gate_g4
 Note: Real KiCad export integration tests are in tests/integration/test_export_determinism_integration.py
 and require Docker. These tests verify the export logic without Docker.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -91,21 +92,13 @@ class _FakeExportRunner:
         self.gerber_calls: list[tuple[Path, Path]] = []
         self.drill_calls: list[tuple[Path, Path]] = []
 
-    def run_drc(
-        self, board_path: Path, report_path: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def run_drc(self, board_path: Path, report_path: Path) -> subprocess.CompletedProcess[str]:
         """Simulate DRC execution."""
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps({"violations": []}), encoding="utf-8"
-        )
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        report_path.write_text(json.dumps({"violations": []}), encoding="utf-8")
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-    def export_gerbers(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_gerbers(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate Gerber export with all required layers."""
         self.gerber_calls.append((board_path, out_dir))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -145,9 +138,7 @@ class _FakeExportRunner:
         ]
 
         for layer_name, content_start in layers:
-            content_hash = hashlib.sha256(
-                f"{self.seed}:{layer_name}".encode()
-            ).hexdigest()[:8]
+            content_hash = hashlib.sha256(f"{self.seed}:{layer_name}".encode()).hexdigest()[:8]
             content = f"{content_start}\nG04 Hash={content_hash}*\nX0Y0D02*\nM02*\n"
             # Convert layer name to KiCad filename format with proper extension
             kicad_layer = layer_name.replace(".", "_")
@@ -155,13 +146,9 @@ class _FakeExportRunner:
             kicad_filename = f"{board_name}-{kicad_layer}{extension}"
             (out_dir / kicad_filename).write_text(content, encoding="utf-8")
 
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
-    def export_drill(
-        self, board_path: Path, out_dir: Path
-    ) -> subprocess.CompletedProcess[str]:
+    def export_drill(self, board_path: Path, out_dir: Path) -> subprocess.CompletedProcess[str]:
         """Simulate drill file export."""
         self.drill_calls.append((board_path, out_dir))
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -174,9 +161,7 @@ class _FakeExportRunner:
         for filename, content in drill_files:
             (out_dir / filename).write_text(content, encoding="utf-8")
 
-        return subprocess.CompletedProcess(
-            args=["kicad-cli"], returncode=0, stdout="", stderr=""
-        )
+        return subprocess.CompletedProcess(args=["kicad-cli"], returncode=0, stdout="", stderr="")
 
 
 # ---------------------------------------------------------------------------
@@ -206,22 +191,16 @@ class TestG4GoldenSpecCoverage:
     def test_minimum_f0_golden_specs_for_export(self) -> None:
         """Verify at least 10 F0 golden specs exist for export testing."""
         specs = _collect_f0_specs()
-        assert len(specs) >= 10, (
-            f"Expected ≥10 F0 specs for export gate, found {len(specs)}"
-        )
+        assert len(specs) >= 10, f"Expected ≥10 F0 specs for export gate, found {len(specs)}"
 
     def test_minimum_f1_golden_specs_for_export(self) -> None:
         """Verify at least 10 F1 golden specs exist for export testing."""
         specs = _collect_f1_specs()
-        assert len(specs) >= 10, (
-            f"Expected ≥10 F1 specs for export gate, found {len(specs)}"
-        )
+        assert len(specs) >= 10, f"Expected ≥10 F1 specs for export gate, found {len(specs)}"
 
     def test_total_golden_specs_for_export(self, golden_specs: list[Path]) -> None:
         """Verify at least 20 total golden specs exist for export testing."""
-        assert len(golden_specs) >= 20, (
-            f"Expected ≥20 total golden specs for export gate, found {len(golden_specs)}"
-        )
+        assert len(golden_specs) >= 20, f"Expected ≥20 total golden specs for export gate, found {len(golden_specs)}"
 
 
 # ---------------------------------------------------------------------------
@@ -562,36 +541,24 @@ class TestG4LayerSetValidation:
 class TestG4GoldenSpecsExportConfig:
     """Gate G4 tests verifying golden specs have valid export configuration."""
 
-    def test_golden_specs_have_export_enabled(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_have_export_enabled(self, golden_specs: list[Path]) -> None:
         """All golden specs should have export.gerbers.enabled=True."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
-            assert spec.export.gerbers.enabled is True, (
-                f"Golden spec {spec_path.name} must have Gerber export enabled"
-            )
+            assert spec.export.gerbers.enabled is True, f"Golden spec {spec_path.name} must have Gerber export enabled"
 
-    def test_golden_specs_have_drill_enabled(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_have_drill_enabled(self, golden_specs: list[Path]) -> None:
         """All golden specs should have export.drill.enabled=True."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
-            assert spec.export.drill.enabled is True, (
-                f"Golden spec {spec_path.name} must have drill export enabled"
-            )
+            assert spec.export.drill.enabled is True, f"Golden spec {spec_path.name} must have drill export enabled"
 
-    def test_golden_specs_have_valid_copper_count(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_golden_specs_have_valid_copper_count(self, golden_specs: list[Path]) -> None:
         """All golden specs should have valid copper layer counts (2, 4, or 6)."""
         for spec_path in golden_specs:
             spec = load_spec(spec_path)
             copper_layers = spec.stackup.copper_layers
-            assert copper_layers in (2, 4, 6), (
-                f"Golden spec {spec_path.name} has unsupported copper count: {copper_layers}"
-            )
+            assert copper_layers in (2, 4, 6), f"Golden spec {spec_path.name} has unsupported copper count: {copper_layers}"
 
     def test_f0_golden_specs_have_consistent_stackup(self) -> None:
         """F0 golden specs should have consistent stackup configuration."""
@@ -610,9 +577,7 @@ class TestG4GoldenSpecsExportConfig:
         for spec_path in specs:
             spec = load_spec(spec_path)
             copper_layers = spec.stackup.copper_layers
-            assert copper_layers >= 2, (
-                f"F1 spec {spec_path.name} needs ≥2 layers for via transition"
-            )
+            assert copper_layers >= 2, f"F1 spec {spec_path.name} needs ≥2 layers for via transition"
 
 
 # ---------------------------------------------------------------------------
@@ -659,9 +624,7 @@ class TestG4DrillFileRequirements:
         runner.export_drill(board_path, out_dir)
 
         for drill_file in out_dir.glob("*.drl"):
-            assert drill_file.stat().st_size > 0, (
-                f"Drill file {drill_file.name} should be non-empty"
-            )
+            assert drill_file.stat().st_size > 0, f"Drill file {drill_file.name} should be non-empty"
 
 
 # ---------------------------------------------------------------------------
@@ -681,9 +644,7 @@ class TestG4GoldenSpecsExportCompleteness:
         _collect_golden_specs(),
         ids=lambda p: p.name,
     )
-    def test_golden_spec_exports_complete(
-        self, spec_path: Path, tmp_path: Path
-    ) -> None:
+    def test_golden_spec_exports_complete(self, spec_path: Path, tmp_path: Path) -> None:
         """Each golden spec should produce complete exports."""
         from formula_foundry.coupongen import build_coupon
 
@@ -709,24 +670,18 @@ class TestG4GoldenSpecsExportCompleteness:
 
         # Verify Gerber exports
         gerber_exports = [p for p in export_paths if "gerbers/" in p]
-        assert len(gerber_exports) >= 4, (
-            f"Spec {spec_path.name}: Expected ≥4 Gerber exports, got {len(gerber_exports)}"
-        )
+        assert len(gerber_exports) >= 4, f"Spec {spec_path.name}: Expected ≥4 Gerber exports, got {len(gerber_exports)}"
 
         # Verify drill exports
         drill_exports = [p for p in export_paths if "drill/" in p]
-        assert len(drill_exports) >= 1, (
-            f"Spec {spec_path.name}: Expected ≥1 drill export, got {len(drill_exports)}"
-        )
+        assert len(drill_exports) >= 1, f"Spec {spec_path.name}: Expected ≥1 drill export, got {len(drill_exports)}"
 
     @pytest.mark.parametrize(
         "spec_path",
         _collect_golden_specs(),
         ids=lambda p: p.name,
     )
-    def test_golden_spec_layer_set_valid_strict(
-        self, spec_path: Path, tmp_path: Path
-    ) -> None:
+    def test_golden_spec_layer_set_valid_strict(self, spec_path: Path, tmp_path: Path) -> None:
         """Each golden spec export should have valid layer sets with strict=True.
 
         This is the oracle pass-case for layer validation: ALL golden specs
@@ -761,8 +716,7 @@ class TestG4GoldenSpecsExportCompleteness:
             strict=True,
         )
         assert validation_result.passed is True, (
-            f"Layer validation failed for {spec_path.name}: "
-            f"missing {validation_result.missing_layers}"
+            f"Layer validation failed for {spec_path.name}: missing {validation_result.missing_layers}"
         )
 
 
@@ -805,10 +759,7 @@ class TestG4GerberExtensionMapping:
         """
         ext_map = get_gerber_extension_map()
         # Verify extensions are valid KiCad Gerber formats
-        valid_extensions = {".gtl", ".gbl", ".g1", ".g2", ".g3", ".g4",
-                           ".gts", ".gbs", ".gto", ".gbo", ".gtp", ".gbp", ".gm1"}
+        valid_extensions = {".gtl", ".gbl", ".g1", ".g2", ".g3", ".g4", ".gts", ".gbs", ".gto", ".gbo", ".gtp", ".gbp", ".gm1"}
         for layer, ext in ext_map.items():
             ext_suffix = "." + ext.split(".")[-1]
-            assert ext_suffix in valid_extensions, (
-                f"Layer {layer} extension should be a valid KiCad Gerber extension, got {ext}"
-            )
+            assert ext_suffix in valid_extensions, f"Layer {layer} extension should be a valid KiCad Gerber extension, got {ext}"

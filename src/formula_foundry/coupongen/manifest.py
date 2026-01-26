@@ -154,10 +154,7 @@ def _build_repair_map_summary(repair_result: RepairResult) -> dict[str, Any]:
         }
 
     # Build deterministically ordered repair_map
-    repair_map_ordered = {
-        path: repair_result.repair_map[path]
-        for path in sorted(repair_result.repair_map.keys())
-    }
+    repair_map_ordered = {path: repair_result.repair_map[path] for path in sorted(repair_result.repair_map.keys())}
 
     summary: dict[str, Any] = {
         "repair_applied": True,
@@ -241,13 +238,11 @@ def build_manifest(
     drc_canonical_hash = canonicalize_drc_report(drc_report_path)
 
     # REQ-M1-013: Build footprint provenance if not explicitly provided
-    fp_provenance = (
-        dict(footprint_provenance) if footprint_provenance is not None
-        else _build_footprint_provenance(spec)
-    )
+    fp_provenance = dict(footprint_provenance) if footprint_provenance is not None else _build_footprint_provenance(spec)
 
     # REQ-M1-013: Build zone policy record if not explicitly provided
     from .kicad.policy import DEFAULT_ZONE_POLICY
+
     zp_record = zone_policy.to_dict() if zone_policy is not None else DEFAULT_ZONE_POLICY.to_dict()
 
     manifest = {

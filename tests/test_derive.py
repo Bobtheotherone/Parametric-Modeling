@@ -236,9 +236,7 @@ class TestSafeRatio:
 class TestComputeDerivedFeatures:
     """Tests for compute_derived_features function."""
 
-    def test_returns_dict_with_sorted_keys(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_returns_dict_with_sorted_keys(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Derived features must return dict with alphabetically sorted keys."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -249,9 +247,7 @@ class TestComputeDerivedFeatures:
         assert isinstance(features, dict)
         assert list(features.keys()) == sorted(features.keys())
 
-    def test_board_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_board_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Board area and perimeter are correctly computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -266,9 +262,7 @@ class TestComputeDerivedFeatures:
         assert features["board_area_nm2"] == expected_area
         assert features["board_perimeter_nm"] == expected_perimeter
 
-    def test_cpwg_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_cpwg_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """CPWG ground opening is correctly computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -281,9 +275,7 @@ class TestComputeDerivedFeatures:
         assert features["cpwg_ground_opening_nm"] == 660_000
         assert features["cpwg_footprint_width_nm"] == 660_000
 
-    def test_trace_total_length(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_trace_total_length(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Trace total length is computed correctly."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -294,9 +286,7 @@ class TestComputeDerivedFeatures:
         # length_left=25mm, length_right=25mm
         assert features["trace_total_length_nm"] == 50_000_000
 
-    def test_trace_total_with_derived_right(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_trace_total_with_derived_right(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Trace total length uses passed length_right_nm when provided."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -308,9 +298,7 @@ class TestComputeDerivedFeatures:
         assert features["trace_total_length_nm"] == 55_000_000
         assert features["length_right_nm"] == 30_000_000
 
-    def test_fence_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_fence_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Fence via derived features are computed when fence is enabled."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -324,9 +312,7 @@ class TestComputeDerivedFeatures:
         # annular ring = diameter - drill = 600000 - 300000 = 300000
         assert features["fence_via_annular_ring_nm"] == 300_000
 
-    def test_discontinuity_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_discontinuity_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Discontinuity/via derived features are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -338,9 +324,7 @@ class TestComputeDerivedFeatures:
         assert features["signal_via_annular_ring_nm"] == 600_000  # pad - drill
         assert features["signal_via_barrel_annular_nm"] == 350_000  # diameter - drill
 
-    def test_return_vias_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_return_vias_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Return vias derived features are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -353,9 +337,7 @@ class TestComputeDerivedFeatures:
         # return via: diameter=650000, drill=300000 -> annular=350000
         assert features["return_via_annular_ring_nm"] == 350_000
 
-    def test_connector_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_connector_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Connector span and launch offsets are correctly computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -374,9 +356,7 @@ class TestComputeDerivedFeatures:
         assert features["launch_right_edge_clearance_nm"] == 5_000_000
         assert features["launch_edge_symmetry_error_nm"] == 0
 
-    def test_stackup_derived_features(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_stackup_derived_features(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Stackup thickness derived features are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -387,9 +367,7 @@ class TestComputeDerivedFeatures:
         assert features["stackup_core_thickness_nm"] == 800_000
         assert features["stackup_prepreg_thickness_nm"] == 180_000
 
-    def test_f0_spec_without_discontinuity(
-        self, minimal_f0_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_spec_without_discontinuity(self, minimal_f0_spec_data: dict[str, Any]) -> None:
         """F0 spec without discontinuity computes basic features."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -408,9 +386,7 @@ class TestComputeDerivedFeatures:
         assert "signal_via_annular_ring_nm" not in features
         assert "return_via_count" not in features
 
-    def test_f0_spec_without_fence(
-        self, minimal_f0_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_spec_without_fence(self, minimal_f0_spec_data: dict[str, Any]) -> None:
         """F0 spec without fence computes basic features without fence features."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -423,9 +399,7 @@ class TestComputeDerivedFeatures:
         assert "fence_via_annular_ring_nm" not in features
         assert "fence_via_count_per_side" not in features
 
-    def test_all_values_are_integers(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_all_values_are_integers(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """All derived feature values must be integers."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -445,9 +419,7 @@ class TestComputeDerivedFeatures:
 class TestComputeDimensionlessGroups:
     """Tests for compute_dimensionless_groups function."""
 
-    def test_returns_dict_with_sorted_keys(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_returns_dict_with_sorted_keys(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Dimensionless groups must return dict with alphabetically sorted keys."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -458,9 +430,7 @@ class TestComputeDimensionlessGroups:
         assert isinstance(groups, dict)
         assert list(groups.keys()) == sorted(groups.keys())
 
-    def test_all_values_are_floats(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_all_values_are_floats(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """All dimensionless group values must be floats."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -471,9 +441,7 @@ class TestComputeDimensionlessGroups:
         for key, value in groups.items():
             assert isinstance(value, float), f"{key} should be float, got {type(value)}"
 
-    def test_cpwg_groups_present(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_cpwg_groups_present(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """CPWG geometry groups are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -485,9 +453,7 @@ class TestComputeDimensionlessGroups:
         assert "cpwg_w_over_gap" in groups
         assert "cpwg_k_ratio" in groups
 
-    def test_via_groups_present(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_via_groups_present(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Via geometry groups are computed for F1 spec."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -498,9 +464,7 @@ class TestComputeDimensionlessGroups:
         assert "via_drill_over_pad" in groups
         assert "via_pad_over_trace_w" in groups
 
-    def test_fence_groups_present(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_fence_groups_present(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Fence geometry groups are computed when fence is enabled."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -511,9 +475,7 @@ class TestComputeDimensionlessGroups:
         assert "fence_pitch_over_gap" in groups
         assert "fence_offset_over_gap" in groups
 
-    def test_launch_groups_present(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_launch_groups_present(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Launch geometry groups are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -523,9 +485,7 @@ class TestComputeDimensionlessGroups:
 
         assert "launch_span_over_board_length" in groups
 
-    def test_stackup_groups_present(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_stackup_groups_present(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """Stackup material groups are computed."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -537,9 +497,7 @@ class TestComputeDimensionlessGroups:
         assert "stackup_loss_tangent" in groups
         assert "stackup_sqrt_er" in groups
 
-    def test_f0_spec_has_basic_groups(
-        self, minimal_f0_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_spec_has_basic_groups(self, minimal_f0_spec_data: dict[str, Any]) -> None:
         """F0 spec has basic CPWG and launch groups."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -552,9 +510,7 @@ class TestComputeDimensionlessGroups:
         assert "board_aspect_ratio" in groups
         assert "stackup_er" in groups
 
-    def test_f0_spec_no_via_groups(
-        self, minimal_f0_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_spec_no_via_groups(self, minimal_f0_spec_data: dict[str, Any]) -> None:
         """F0 spec without discontinuity has no via groups."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -565,9 +521,7 @@ class TestComputeDimensionlessGroups:
         # Via groups should not be present (no discontinuity)
         assert "via_drill_over_pad" not in groups
 
-    def test_f0_spec_no_fence_groups(
-        self, minimal_f0_spec_data: dict[str, Any]
-    ) -> None:
+    def test_f0_spec_no_fence_groups(self, minimal_f0_spec_data: dict[str, Any]) -> None:
         """F0 spec without fence has no fence groups."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -587,9 +541,7 @@ class TestComputeDimensionlessGroups:
 class TestDeterminism:
     """Tests for deterministic output per REQ-M1-014."""
 
-    def test_derived_features_deterministic(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_derived_features_deterministic(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """REQ-M1-014: Derived features must be emitted deterministically."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_derived_features
@@ -606,9 +558,7 @@ class TestDeterminism:
         # Keys must be sorted (for deterministic JSON output)
         assert list(features_1.keys()) == sorted(features_1.keys())
 
-    def test_dimensionless_groups_deterministic(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_dimensionless_groups_deterministic(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """REQ-M1-014: Dimensionless groups must be emitted deterministically."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import compute_dimensionless_groups
@@ -625,9 +575,7 @@ class TestDeterminism:
         # Keys must be sorted (for deterministic JSON output)
         assert list(groups_1.keys()) == sorted(groups_1.keys())
 
-    def test_json_serialization_deterministic(
-        self, valid_f1_spec_data: dict[str, Any]
-    ) -> None:
+    def test_json_serialization_deterministic(self, valid_f1_spec_data: dict[str, Any]) -> None:
         """JSON serialization of derived features/groups is deterministic."""
         from formula_foundry.coupongen.spec import load_couponspec
         from formula_foundry.derive import (

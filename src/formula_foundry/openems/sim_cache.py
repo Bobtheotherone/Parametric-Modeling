@@ -327,9 +327,7 @@ class SimulationCache:
         filename = combined[2:]
         level_dir = self.root / level / subdir
 
-        if level == self.LEVEL_CONFIG:
-            return level_dir / f"{filename}.json"
-        elif level == self.LEVEL_MESH:
+        if level == self.LEVEL_CONFIG or level == self.LEVEL_MESH:
             return level_dir / f"{filename}.json"
         elif level == self.LEVEL_RESULT:
             return level_dir / filename

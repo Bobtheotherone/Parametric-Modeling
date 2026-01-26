@@ -191,9 +191,7 @@ class TestGeminiWrapperError:
 
     def test_nonzero_exit_returns_error_turn(self) -> None:
         """Wrapper returns valid error turn for non-zero exit code."""
-        result, payload = _run_wrapper(
-            env_updates={"FAKE_GEMINI_MODE": "error", "FAKE_GEMINI_EXIT_CODE": "1"}
-        )
+        result, payload = _run_wrapper(env_updates={"FAKE_GEMINI_MODE": "error", "FAKE_GEMINI_EXIT_CODE": "1"})
         assert result.returncode == 0  # Wrapper itself should succeed
         assert payload is not None
         _validate_turn_structure(payload)

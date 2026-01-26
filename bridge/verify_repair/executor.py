@@ -207,10 +207,7 @@ class RepairExecutor:
                     orchestrator_tasks.append(task)
                 else:
                     out_of_scope_tasks.append(task)
-                    self._log(
-                        f"Task {task.id} targets out-of-scope files, skipping: "
-                        f"{[v.path for v in scope_result.violations]}"
-                    )
+                    self._log(f"Task {task.id} targets out-of-scope files, skipping: {[v.path for v in scope_result.violations]}")
 
             # Run deterministic repairs first
             det_result = self.execute_deterministic_repairs()
@@ -240,9 +237,7 @@ class RepairExecutor:
                     "tasks": [t.to_dict() for t in out_of_scope_tasks],
                     "note": "These require manual intervention or a broader repair scope",
                 }
-                out_of_scope_path.write_text(
-                    json.dumps(out_of_scope_data, indent=2), encoding="utf-8"
-                )
+                out_of_scope_path.write_text(json.dumps(out_of_scope_data, indent=2), encoding="utf-8")
                 self._log(f"Wrote out-of-scope repairs: {out_of_scope_path}")
 
             # Return True if deterministic repairs succeeded (partial success is OK)

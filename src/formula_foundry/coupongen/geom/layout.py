@@ -64,9 +64,7 @@ class PortPlan:
         if self.side not in ("left", "right"):
             raise ValueError(f"Port side must be 'left' or 'right', got {self.side!r}")
         if self.rotation_mdeg not in (0, 90000, 180000, 270000):
-            raise ValueError(
-                f"Rotation must be 0, 90000, 180000, or 270000 mdeg, got {self.rotation_mdeg}"
-            )
+            raise ValueError(f"Rotation must be 0, 90000, 180000, or 270000 mdeg, got {self.rotation_mdeg}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +97,7 @@ class SegmentPlan:
         if self.width_nm <= 0:
             raise ValueError(f"Trace width must be positive, got {self.width_nm}")
         if self.x_end_nm < self.x_start_nm:
-            raise ValueError(
-                f"Segment end ({self.x_end_nm}) must be >= start ({self.x_start_nm})"
-            )
+            raise ValueError(f"Segment end ({self.x_end_nm}) must be >= start ({self.x_start_nm})")
 
     @property
     def length_nm(self) -> int:
@@ -153,7 +149,7 @@ class LayoutPlan:
     x_disc_nm: int | None
     y_centerline_nm: int
     coupon_family: str
-    launch_plans: tuple["LaunchPlan", ...] = field(default_factory=tuple)
+    launch_plans: tuple[LaunchPlan, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate layout plan invariants."""
@@ -163,9 +159,7 @@ class LayoutPlan:
         if self.board_width_nm <= 0:
             raise ValueError(f"Board width must be positive, got {self.board_width_nm}")
         if self.board_corner_radius_nm < 0:
-            raise ValueError(
-                f"Board corner radius must be non-negative, got {self.board_corner_radius_nm}"
-            )
+            raise ValueError(f"Board corner radius must be non-negative, got {self.board_corner_radius_nm}")
 
         # At least one segment is required
         if len(self.segments) == 0:
@@ -180,15 +174,11 @@ class LayoutPlan:
             if left_seg is not None and right_seg is not None:
                 # Left segment must end at discontinuity
                 if left_seg.x_end_nm != self.x_disc_nm:
-                    raise ValueError(
-                        f"Left segment end ({left_seg.x_end_nm}) must equal "
-                        f"discontinuity X ({self.x_disc_nm})"
-                    )
+                    raise ValueError(f"Left segment end ({left_seg.x_end_nm}) must equal discontinuity X ({self.x_disc_nm})")
                 # Right segment must start at discontinuity
                 if right_seg.x_start_nm != self.x_disc_nm:
                     raise ValueError(
-                        f"Right segment start ({right_seg.x_start_nm}) must equal "
-                        f"discontinuity X ({self.x_disc_nm})"
+                        f"Right segment start ({right_seg.x_start_nm}) must equal discontinuity X ({self.x_disc_nm})"
                     )
 
     @property
@@ -232,7 +222,7 @@ class LayoutPlan:
         """
         return next((s for s in self.segments if s.label == label), None)
 
-    def get_launch_plan(self, side: str) -> "LaunchPlan | None":
+    def get_launch_plan(self, side: str) -> LaunchPlan | None:
         """Get launch plan by connector side."""
         return next((lp for lp in self.launch_plans if lp.side == side), None)
 
@@ -431,10 +421,7 @@ def create_f1_layout_plan(
     right_length_nm = right_pad_x - x_disc_nm
 
     if right_length_nm < 0:
-        raise ValueError(
-            f"Left length ({left_length_nm}) places discontinuity ({x_disc_nm}) "
-            f"beyond right port ({right_pad_x})"
-        )
+        raise ValueError(f"Left length ({left_length_nm}) places discontinuity ({x_disc_nm}) beyond right port ({right_pad_x})")
 
     left_port = PortPlan(
         x_ref_nm=left_port_x_nm,
@@ -756,7 +743,7 @@ def _compute_f0_layout(
     right_port: PortPlan,
     trace_width_nm: int,
     trace_layer: str,
-    launch_plans: tuple["LaunchPlan", ...] = (),
+    launch_plans: tuple[LaunchPlan, ...] = (),
 ) -> LayoutPlan:
     """Compute layout for F0 (through-line) coupon.
 
@@ -798,7 +785,7 @@ def _compute_f1_layout(
     trace_width_nm: int,
     trace_layer: str,
     length_left_nm: int,
-    launch_plans: tuple["LaunchPlan", ...] = (),
+    launch_plans: tuple[LaunchPlan, ...] = (),
 ) -> LayoutPlan:
     """Compute layout for F1 (via transition) coupon.
 

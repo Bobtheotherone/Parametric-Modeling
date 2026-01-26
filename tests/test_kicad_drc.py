@@ -38,14 +38,14 @@ from formula_foundry.coupongen import (
     load_spec,
     resolve_spec,
 )
-from formula_foundry.coupongen.geom.footprint_meta import (
-    load_footprint_meta,
-    list_available_footprint_meta,
-)
 from formula_foundry.coupongen.geom.cpwg import (
     CPWGSpec,
-    generate_cpwg_segment,
     generate_cpwg_ground_tracks,
+    generate_cpwg_segment,
+)
+from formula_foundry.coupongen.geom.footprint_meta import (
+    list_available_footprint_meta,
+    load_footprint_meta,
 )
 from formula_foundry.coupongen.geom.launch import build_launch_plan
 from formula_foundry.coupongen.geom.primitives import PositionNM
@@ -273,52 +273,36 @@ class TestVendoredConnectorFootprints:
 
     def test_footprint_library_directory_exists(self) -> None:
         """Verify vendored footprint library directory exists."""
-        assert FOOTPRINT_LIB_DIR.exists(), (
-            f"Vendored footprint library directory not found: {FOOTPRINT_LIB_DIR}"
-        )
+        assert FOOTPRINT_LIB_DIR.exists(), f"Vendored footprint library directory not found: {FOOTPRINT_LIB_DIR}"
         assert FOOTPRINT_LIB_DIR.is_dir()
 
     def test_connectors_pretty_directory_exists(self) -> None:
         """Verify Coupongen_Connectors.pretty directory exists."""
         connectors_dir = FOOTPRINT_LIB_DIR / "Coupongen_Connectors.pretty"
-        assert connectors_dir.exists(), (
-            f"Connectors footprint library not found: {connectors_dir}"
-        )
+        assert connectors_dir.exists(), f"Connectors footprint library not found: {connectors_dir}"
         assert connectors_dir.is_dir()
 
     def test_sma_endlaunch_footprint_exists(self) -> None:
         """Verify SMA_EndLaunch_Generic.kicad_mod exists in vendored library."""
-        footprint_path = get_footprint_module_path(
-            "Coupongen_Connectors", "SMA_EndLaunch_Generic"
-        )
-        assert footprint_path.exists(), (
-            f"SMA_EndLaunch_Generic footprint not found: {footprint_path}"
-        )
+        footprint_path = get_footprint_module_path("Coupongen_Connectors", "SMA_EndLaunch_Generic")
+        assert footprint_path.exists(), f"SMA_EndLaunch_Generic footprint not found: {footprint_path}"
 
     def test_footprint_metadata_directory_exists(self) -> None:
         """Verify footprint metadata directory exists."""
-        assert FOOTPRINT_META_DIR.exists(), (
-            f"Footprint metadata directory not found: {FOOTPRINT_META_DIR}"
-        )
+        assert FOOTPRINT_META_DIR.exists(), f"Footprint metadata directory not found: {FOOTPRINT_META_DIR}"
 
     def test_sma_endlaunch_metadata_exists(self) -> None:
         """Verify SMA_EndLaunch_Generic metadata JSON exists."""
         meta_path = FOOTPRINT_META_DIR / "SMA_EndLaunch_Generic.json"
-        assert meta_path.exists(), (
-            f"SMA_EndLaunch_Generic metadata not found: {meta_path}"
-        )
+        assert meta_path.exists(), f"SMA_EndLaunch_Generic metadata not found: {meta_path}"
 
     def test_footprint_file_has_valid_sexpr(self) -> None:
         """Verify vendored footprint file contains valid KiCad S-expression."""
-        footprint_path = get_footprint_module_path(
-            "Coupongen_Connectors", "SMA_EndLaunch_Generic"
-        )
+        footprint_path = get_footprint_module_path("Coupongen_Connectors", "SMA_EndLaunch_Generic")
         content = footprint_path.read_text(encoding="utf-8")
         # Basic S-expression validation: starts with (footprint or (module
         assert content.strip().startswith("("), "Footprint must start with S-expression"
-        assert "footprint" in content or "module" in content, (
-            "Footprint file must contain 'footprint' or 'module' keyword"
-        )
+        assert "footprint" in content or "module" in content, "Footprint file must contain 'footprint' or 'module' keyword"
 
     @pytest.mark.parametrize("spec_path", _golden_specs(), ids=lambda p: p.name)
     def test_golden_spec_uses_vendored_footprint(self, spec_path: Path) -> None:
@@ -329,17 +313,13 @@ class TestVendoredConnectorFootprints:
         left_fp = spec.connectors.left.footprint
         lib, name = left_fp.split(":", 1)
         fp_path = get_footprint_module_path(lib, name)
-        assert fp_path.exists(), (
-            f"Golden spec {spec_path.name} uses non-vendored left footprint: {left_fp}"
-        )
+        assert fp_path.exists(), f"Golden spec {spec_path.name} uses non-vendored left footprint: {left_fp}"
 
         # Check right connector
         right_fp = spec.connectors.right.footprint
         lib, name = right_fp.split(":", 1)
         fp_path = get_footprint_module_path(lib, name)
-        assert fp_path.exists(), (
-            f"Golden spec {spec_path.name} uses non-vendored right footprint: {right_fp}"
-        )
+        assert fp_path.exists(), f"Golden spec {spec_path.name} uses non-vendored right footprint: {right_fp}"
 
 
 # ============================================================================
@@ -379,9 +359,7 @@ class TestPadMapCorrectness:
         pad_map = meta.pad_net_map()
         signal_pad_num = meta.signal_pad.pad_number
         assert signal_pad_num in pad_map
-        assert pad_map[signal_pad_num] == "SIG", (
-            f"Signal pad {signal_pad_num} should map to SIG net"
-        )
+        assert pad_map[signal_pad_num] == "SIG", f"Signal pad {signal_pad_num} should map to SIG net"
 
     def test_ground_pads_map_to_gnd_net(self) -> None:
         """Verify ground pads map to GND net."""
@@ -390,9 +368,7 @@ class TestPadMapCorrectness:
         for ground_pad in meta.ground_pads:
             pad_num = ground_pad.pad_number
             assert pad_num in pad_map
-            assert pad_map[pad_num] == "GND", (
-                f"Ground pad {pad_num} should map to GND net"
-            )
+            assert pad_map[pad_num] == "GND", f"Ground pad {pad_num} should map to GND net"
 
     def test_all_footprint_meta_have_valid_pad_maps(self) -> None:
         """Verify all available footprint metadata have valid pad maps."""
@@ -457,10 +433,7 @@ class TestCPWGCopperWithGap:
 
     def test_cpwg_ground_tracks_have_ground_net_id(self) -> None:
         """Verify ground tracks have ground net ID assigned."""
-        spec = CPWGSpec(
-            w_nm=250_000, gap_nm=180_000, length_nm=24_000_000,
-            net_id=1, ground_net_id=2
-        )
+        spec = CPWGSpec(w_nm=250_000, gap_nm=180_000, length_nm=24_000_000, net_id=1, ground_net_id=2)
         start = PositionNM(0, 0)
         end = PositionNM(24_000_000, 0)
 
@@ -474,15 +447,9 @@ class TestCPWGCopperWithGap:
         """REQ-M1-005: Each golden spec must define CPWG with gap_nm."""
         spec = load_spec(spec_path)
 
-        assert spec.transmission_line.type == "CPWG", (
-            f"Golden spec {spec_path.name} must use CPWG transmission line"
-        )
-        assert spec.transmission_line.w_nm > 0, (
-            f"Golden spec {spec_path.name} must have positive trace width"
-        )
-        assert spec.transmission_line.gap_nm > 0, (
-            f"Golden spec {spec_path.name} must have positive gap"
-        )
+        assert spec.transmission_line.type == "CPWG", f"Golden spec {spec_path.name} must use CPWG transmission line"
+        assert spec.transmission_line.w_nm > 0, f"Golden spec {spec_path.name} must have positive trace width"
+        assert spec.transmission_line.gap_nm > 0, f"Golden spec {spec_path.name} must have positive gap"
 
 
 # ============================================================================
@@ -869,9 +836,7 @@ class TestGoldenSpecsDrcCompatibility:
 
         resolved = resolve_spec(spec)
         assert resolved.layout_plan is not None
-        segment_tstamps = {
-            tstamp for seg in segments if (tstamp := _segment_tstamp(seg)) is not None
-        }
+        segment_tstamps = {tstamp for seg in segments if (tstamp := _segment_tstamp(seg)) is not None}
         for side in ("left", "right"):
             launch_plan = resolved.layout_plan.get_launch_plan(side)
             assert launch_plan is not None

@@ -13,9 +13,9 @@ Run with: pytest tests/test_design_document_contract.py -v
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 
+import pytest
 from bridge.design_doc import (
     ContractMode,
     DesignDocSpec,
@@ -23,7 +23,6 @@ from bridge.design_doc import (
     parse_design_doc,
     parse_design_doc_text,
 )
-
 
 # =============================================================================
 # Test the current DESIGN_DOCUMENT.md (if it exists)

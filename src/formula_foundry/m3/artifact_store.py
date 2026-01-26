@@ -345,15 +345,9 @@ class ArtifactStore:
 
         # Locking configuration
         self._enable_locking = enable_locking
-        self._global_lock_timeout = (
-            global_lock_timeout
-            if global_lock_timeout is not None
-            else self.DEFAULT_GLOBAL_LOCK_TIMEOUT
-        )
+        self._global_lock_timeout = global_lock_timeout if global_lock_timeout is not None else self.DEFAULT_GLOBAL_LOCK_TIMEOUT
         self._spec_id_lock_timeout = (
-            spec_id_lock_timeout
-            if spec_id_lock_timeout is not None
-            else self.DEFAULT_SPEC_ID_LOCK_TIMEOUT
+            spec_id_lock_timeout if spec_id_lock_timeout is not None else self.DEFAULT_SPEC_ID_LOCK_TIMEOUT
         )
         self._store_lock: StoreLock | None = None
 

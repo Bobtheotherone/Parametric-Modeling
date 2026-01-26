@@ -534,9 +534,7 @@ class TestAncestorProtection:
         assert len(to_delete) == 0
 
         # Verify the ancestor is kept because it's an ancestor of the pinned descendant
-        ancestor_candidate = next(
-            (c for c in to_keep if c.artifact_id == ancestor_manifest.artifact_id), None
-        )
+        ancestor_candidate = next((c for c in to_keep if c.artifact_id == ancestor_manifest.artifact_id), None)
         assert ancestor_candidate is not None
         assert "ancestor_of_pinned" in ancestor_candidate.reasons_to_keep
 

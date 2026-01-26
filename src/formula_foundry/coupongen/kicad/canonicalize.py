@@ -51,32 +51,38 @@ _EXCELLON_COMMENT_PREFIX = ";"
 _GERBER_TIMESTAMP_RE = re.compile(r"creation\s*date|creation\s*time", re.IGNORECASE)
 
 # DRC JSON keys that contain nondeterministic values (to be removed or normalized)
-_DRC_NONDETERMINISTIC_KEYS = frozenset({
-    "date",
-    "time",
-    "timestamp",
-    "generated_at",
-    "kicad_version",
-    "host",
-    "source",
-    "schema_version",
-})
+_DRC_NONDETERMINISTIC_KEYS = frozenset(
+    {
+        "date",
+        "time",
+        "timestamp",
+        "generated_at",
+        "kicad_version",
+        "host",
+        "source",
+        "schema_version",
+    }
+)
 
 # Keys that contain paths (to be normalized by removing directory prefixes)
-_DRC_PATH_KEYS = frozenset({
-    "path",
-    "file",
-    "filename",
-    "source_file",
-    "board_file",
-})
+_DRC_PATH_KEYS = frozenset(
+    {
+        "path",
+        "file",
+        "filename",
+        "source_file",
+        "board_file",
+    }
+)
 
 # DRC list keys whose ordering is not semantically meaningful
-_DRC_SORTED_LIST_KEYS = frozenset({
-    "violations",
-    "unconnected_items",
-    "schematic_parity",
-})
+_DRC_SORTED_LIST_KEYS = frozenset(
+    {
+        "violations",
+        "unconnected_items",
+        "schematic_parity",
+    }
+)
 
 # Absolute path detection (POSIX, Windows drive, UNC)
 _ABS_PATH_RE = re.compile(r"^(?:/|[a-zA-Z]:\\\\|\\\\\\\\)")

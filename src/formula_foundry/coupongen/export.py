@@ -53,6 +53,8 @@ class KicadExportError(RuntimeError):
         if stderr:
             details.append(f"stderr: {stderr}")
         super().__init__("\n".join(details))
+
+
 from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
 from .kicad import BackendA, KicadCliRunner
@@ -312,9 +314,7 @@ class ExportPipeline:
         # Stage 3: Generate KiCad board
         # Pass design_hash to enable silkscreen annotations (REQ-M1-010)
         self._write_validation_outputs(evaluation, output_dir)
-        board_path = self._backend.write_board(
-            evaluation.spec, resolved, output_dir, design_hash=cache_key.design_hash
-        )
+        board_path = self._backend.write_board(evaluation.spec, resolved, output_dir, design_hash=cache_key.design_hash)
 
         # Stage 4: Run DRC
         runner = self._get_runner(evaluation.spec.toolchain.kicad)
@@ -591,9 +591,7 @@ def is_cache_valid(
     Raises:
         ToolchainProvenanceError: If docker mode and provenance cannot be captured.
     """
-    cache_key = compute_cache_key(
-        spec, mode=mode, lock_file=lock_file, workdir=out_root, kicad_cli_version=kicad_cli_version
-    )
+    cache_key = compute_cache_key(spec, mode=mode, lock_file=lock_file, workdir=out_root, kicad_cli_version=kicad_cli_version)
     coupon_id = coupon_id_from_design_hash(cache_key.design_hash)
     output_dir = out_root / f"{coupon_id}-{cache_key.design_hash}"
     manifest_path = output_dir / "manifest.json"

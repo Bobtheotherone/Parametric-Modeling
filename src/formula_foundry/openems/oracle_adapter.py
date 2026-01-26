@@ -40,8 +40,6 @@ from formula_foundry.em.mesh import (
 from .csx_primitives import CSXGeometry
 from .geometry import GeometrySpec, build_geometry_spec
 from .geometry_adapter import (
-    GeometryAdapter,
-    StackupZMap,
     build_csx_geometry,
 )
 from .mesh_generator import (
@@ -328,9 +326,7 @@ class OpenEMSAdapter(OracleAdapter):
 
         # Apply thirds-rule grading if enabled
         if self.thirds_rule.enabled:
-            mesh_spec = self._generate_mesh_with_thirds_rule(
-                geometry, mesh_config, adaptive_density
-            )
+            mesh_spec = self._generate_mesh_with_thirds_rule(geometry, mesh_config, adaptive_density)
         else:
             mesh_spec = generate_adaptive_mesh_lines(
                 mesh_config,
@@ -415,9 +411,7 @@ class OpenEMSAdapter(OracleAdapter):
         y_lines = self._add_thirds_rule_lines_y(y_lines, geometry, adaptive_density)
 
         # Generate Z mesh lines
-        z_lines = generate_z_mesh_lines(
-            geometry, adaptive_density, self.copper_thickness_nm
-        )
+        z_lines = generate_z_mesh_lines(geometry, adaptive_density, self.copper_thickness_nm)
 
         # Build MeshSpec
         from .spec import MeshResolutionSpec, MeshSmoothingSpec

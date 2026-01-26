@@ -423,9 +423,7 @@ class TestCalculateMinimumReturnViaRadius:
         signal_spec = SignalViaSpec(drill_nm=300_000, diameter_nm=600_000)
         return_spec = ReturnViaSpec(drill_nm=200_000, diameter_nm=400_000)
 
-        min_radius = calculate_minimum_return_via_radius(
-            signal_spec, return_spec, clearance_nm=200_000
-        )
+        min_radius = calculate_minimum_return_via_radius(signal_spec, return_spec, clearance_nm=200_000)
 
         # Expected: signal_radius (300_000) + return_radius (200_000) + clearance (200_000)
         assert min_radius == 700_000
@@ -439,9 +437,7 @@ class TestCalculateMinimumReturnViaRadius:
         )
         return_spec = ReturnViaSpec(drill_nm=200_000, diameter_nm=400_000)
 
-        min_radius = calculate_minimum_return_via_radius(
-            signal_spec, return_spec, clearance_nm=100_000
-        )
+        min_radius = calculate_minimum_return_via_radius(signal_spec, return_spec, clearance_nm=100_000)
 
         # Expected: pad_radius (400_000) + return_radius (200_000) + clearance (100_000)
         assert min_radius == 700_000

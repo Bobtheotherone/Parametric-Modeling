@@ -142,7 +142,7 @@ class TestAtomicWriteJsonEdgeCases:
             "large_int": 10**18,
             "small_float": 1e-15,
             "large_float": 1e15,
-            "negative": -10**15,
+            "negative": -(10**15),
             "zero": 0,
         }
         atomic_write_json(target, data)

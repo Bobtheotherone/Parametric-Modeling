@@ -75,8 +75,7 @@ def _extract_pad_numbers_from_kicad_mod(footprint_path: Path) -> set[str]:
 
     if not pad_numbers:
         raise ValueError(
-            f"No pads found in footprint file: {footprint_path}. "
-            "A valid KiCad footprint must have at least one pad definition."
+            f"No pads found in footprint file: {footprint_path}. A valid KiCad footprint must have at least one pad definition."
         )
 
     return pad_numbers
@@ -169,9 +168,7 @@ class LaunchRefMeta:
     def __post_init__(self) -> None:
         """Validate launch reference."""
         if not (0 <= self.direction_deg < 360):
-            raise ValueError(
-                f"direction_deg must be in [0, 360), got {self.direction_deg}"
-            )
+            raise ValueError(f"direction_deg must be in [0, 360), got {self.direction_deg}")
 
     def to_tuple(self) -> tuple[int, int]:
         """Return launch point as (x, y) tuple."""
@@ -250,9 +247,7 @@ class FootprintMeta:
     def __post_init__(self) -> None:
         """Validate footprint metadata."""
         if self.schema_version != 1:
-            raise ValueError(
-                f"Unsupported schema_version {self.schema_version}, expected 1"
-            )
+            raise ValueError(f"Unsupported schema_version {self.schema_version}, expected 1")
         if len(self.ground_pads) == 0:
             raise ValueError("At least one ground pad is required")
         self._validate_pad_map()
@@ -291,24 +286,17 @@ class FootprintMeta:
         signal_pad_number = _normalize_pad_number(self.signal_pad.pad_number)
         signal_net = self.signal_pad.net_name or _SIG_NET_NAME
         if signal_net != _SIG_NET_NAME:
-            raise ValueError(
-                f"Signal pad net_name must be '{_SIG_NET_NAME}', got {signal_net!r}"
-            )
+            raise ValueError(f"Signal pad net_name must be '{_SIG_NET_NAME}', got {signal_net!r}")
         pad_map[signal_pad_number] = _SIG_NET_NAME
 
         for ground_pad in self.ground_pads:
             ground_pad_number = _normalize_pad_number(ground_pad.pad_number)
             ground_net = ground_pad.net_name or _GND_NET_NAME
             if ground_net != _GND_NET_NAME:
-                raise ValueError(
-                    f"Ground pad net_name must be '{_GND_NET_NAME}', got {ground_net!r}"
-                )
+                raise ValueError(f"Ground pad net_name must be '{_GND_NET_NAME}', got {ground_net!r}")
             existing = pad_map.get(ground_pad_number)
             if existing is not None and existing != _GND_NET_NAME:
-                raise ValueError(
-                    "Pad number cannot map to both signal and ground nets: "
-                    f"{ground_pad_number!r}"
-                )
+                raise ValueError(f"Pad number cannot map to both signal and ground nets: {ground_pad_number!r}")
             pad_map[ground_pad_number] = _GND_NET_NAME
         return pad_map
 
@@ -373,10 +361,7 @@ def list_available_footprint_meta() -> list[str]:
     """
     if not FOOTPRINT_META_DIR.exists():
         return []
-    return sorted(
-        p.stem for p in FOOTPRINT_META_DIR.glob("*.json")
-        if not p.name.endswith(".schema.json")
-    )
+    return sorted(p.stem for p in FOOTPRINT_META_DIR.glob("*.json") if not p.name.endswith(".schema.json"))
 
 
 def _normalize_line_endings(text: str) -> str:
@@ -439,10 +424,7 @@ def load_footprint_meta(footprint_id: str) -> FootprintMeta:
     meta_path = get_footprint_meta_path(footprint_id)
 
     if not meta_path.exists():
-        raise FileNotFoundError(
-            f"Footprint metadata not found: {meta_path}\n"
-            f"Available: {list_available_footprint_meta()}"
-        )
+        raise FileNotFoundError(f"Footprint metadata not found: {meta_path}\nAvailable: {list_available_footprint_meta()}")
 
     with meta_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -469,9 +451,7 @@ def load_footprint_meta(footprint_id: str) -> FootprintMeta:
     signal_pad = _parse_pad_meta(data["signal_pad"], default_net=_SIG_NET_NAME)
 
     # Parse ground pads
-    ground_pads = tuple(
-        _parse_pad_meta(gp, default_net=_GND_NET_NAME) for gp in data["ground_pads"]
-    )
+    ground_pads = tuple(_parse_pad_meta(gp, default_net=_GND_NET_NAME) for gp in data["ground_pads"])
 
     # Parse launch reference
     launch_data = data["launch_reference"]

@@ -18,7 +18,6 @@ from formula_foundry.coupongen.cache import (
     toolchain_hash_from_config,
 )
 
-
 # -----------------------------------------------------------------------------
 # Fixtures and helpers
 # -----------------------------------------------------------------------------

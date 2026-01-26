@@ -90,18 +90,14 @@ def _extract_toolchain_summary(
             kicad = toolchain.get("kicad", {})
             if isinstance(kicad, dict):
                 entries.append(("manifest.kicad.version", str(kicad.get("version", "unknown"))))
-                entries.append(
-                    ("manifest.kicad.cli_version_output", str(kicad.get("cli_version_output", "unknown")))
-                )
+                entries.append(("manifest.kicad.cli_version_output", str(kicad.get("cli_version_output", "unknown"))))
             docker = toolchain.get("docker", {})
             if isinstance(docker, dict):
                 entries.append(("manifest.docker.image_ref", str(docker.get("image_ref", "unknown"))))
             entries.append(("manifest.mode", str(toolchain.get("mode", "unknown"))))
             entries.append(("manifest.generator_git_sha", str(toolchain.get("generator_git_sha", "unknown"))))
             if "lock_file_toolchain_hash" in toolchain:
-                entries.append(
-                    ("manifest.lock_file_toolchain_hash", str(toolchain.get("lock_file_toolchain_hash", "unknown")))
-                )
+                entries.append(("manifest.lock_file_toolchain_hash", str(toolchain.get("lock_file_toolchain_hash", "unknown"))))
 
     if lock_data:
         entries.append(("lock.kicad_version", str(lock_data.get("kicad_version", "unknown"))))

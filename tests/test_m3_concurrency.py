@@ -473,9 +473,8 @@ class TestConcurrencyEdgeCases:
         lock_file = tmp_path / "test.lock"
         lock = FileLock(lock_file)
 
-        with pytest.raises(ValueError):
-            with lock.exclusive():
-                raise ValueError("test error")
+        with pytest.raises(ValueError), lock.exclusive():
+            raise ValueError("test error")
 
         # Lock should be released
         assert not lock.is_locked
@@ -489,9 +488,8 @@ class TestConcurrencyEdgeCases:
         """Test StoreLock context manager with exception."""
         store_lock = StoreLock(tmp_path / "data")
 
-        with pytest.raises(ValueError):
-            with store_lock.global_lock():
-                raise ValueError("test error")
+        with pytest.raises(ValueError), store_lock.global_lock():
+            raise ValueError("test error")
 
         # Should be able to acquire lock again
         with store_lock.global_lock():

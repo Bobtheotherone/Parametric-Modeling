@@ -14,6 +14,7 @@ Per ECO-M1-ALIGN-0001:
 
 Pytest marker: gate_g2
 """
+
 from __future__ import annotations
 
 import json
@@ -259,8 +260,9 @@ def _generate_invalid_spec_from_u(
         spec_data["transmission_line"]["w_nm"] = 50_000  # Below 100_000 min
     elif violation_type == "T1":
         # Violate T1: annular ring too small (pad close to drill)
-        spec_data["discontinuity"]["signal_via"]["pad_diameter_nm"] = \
+        spec_data["discontinuity"]["signal_via"]["pad_diameter_nm"] = (
             spec_data["discontinuity"]["signal_via"]["drill_nm"] + 50_000
+        )
     elif violation_type == "T2":
         # Violate T2: connector outside board bounds
         spec_data["connectors"]["left"]["position_nm"][0] = 50_000  # Too close to edge
@@ -342,9 +344,7 @@ class TestG2SchemaValidation:
     @pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
     def test_schema_file_exists(self) -> None:
         """Verify constraint_proof.schema.json exists."""
-        assert CONSTRAINT_PROOF_SCHEMA_PATH.exists(), (
-            f"Schema file not found: {CONSTRAINT_PROOF_SCHEMA_PATH}"
-        )
+        assert CONSTRAINT_PROOF_SCHEMA_PATH.exists(), f"Schema file not found: {CONSTRAINT_PROOF_SCHEMA_PATH}"
 
     @pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
     def test_schema_is_valid_json_schema(self, constraint_proof_schema: dict[str, Any] | None) -> None:
@@ -356,9 +356,7 @@ class TestG2SchemaValidation:
         jsonschema.Draft202012Validator.check_schema(constraint_proof_schema)
 
     @pytest.mark.skipif(jsonschema is None, reason="jsonschema not installed")
-    def test_valid_proof_passes_schema(
-        self, constraint_proof_schema: dict[str, Any] | None, fab_limits: dict[str, int]
-    ) -> None:
+    def test_valid_proof_passes_schema(self, constraint_proof_schema: dict[str, Any] | None, fab_limits: dict[str, int]) -> None:
         """Verify a valid constraint proof passes schema validation."""
         if constraint_proof_schema is None:
             pytest.skip("Schema file not found")
@@ -495,9 +493,7 @@ class TestG2RejectMode:
         assert exc_info.value.tier == "T0"
         assert "T0_TRACE_WIDTH_MIN" in exc_info.value.constraint_ids
 
-    def test_reject_mode_deterministic_failure_ids(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_reject_mode_deterministic_failure_ids(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """REJECT mode failure IDs should be deterministic for same input.
 
         Run the first 100 samples twice and verify identical failure IDs.
@@ -535,9 +531,7 @@ class TestG2RejectMode:
 
         assert failure_ids_pass1 == failure_ids_pass2, "REJECT mode failure IDs not deterministic"
 
-    def test_reject_mode_10k_samples_deterministic(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_reject_mode_10k_samples_deterministic(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """10k seeded random u vectors should produce deterministic REJECT results.
 
         This test verifies that failure/pass status is consistent across all samples.
@@ -680,9 +674,7 @@ class TestG2RepairMode:
         )
         assert "transmission_line.w_nm" in repair_result.repair_map
 
-    def test_repair_mode_deterministic_projection(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_mode_deterministic_projection(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """REPAIR mode projections should be deterministic for same input.
 
         Run the first 100 samples twice and verify identical repair maps.
@@ -713,9 +705,7 @@ class TestG2RepairMode:
 
         assert repair_maps_pass1 == repair_maps_pass2, "REPAIR mode projections not deterministic"
 
-    def test_repair_mode_10k_samples_deterministic(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_mode_10k_samples_deterministic(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """10k seeded random u vectors should produce deterministic REPAIR results.
 
         We hash the repair distances to detect any non-determinism.
@@ -750,9 +740,7 @@ class TestG2RepairMode:
 
         assert distances_hash_1 == distances_hash_2, "10k REPAIR distances not deterministic"
 
-    def test_repair_mode_bounded_distance(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_mode_bounded_distance(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """Repair distances should be bounded and finite.
 
         Per CP-3.4, repair distance metrics (L2, Linf) should be non-negative
@@ -785,9 +773,7 @@ class TestG2RepairMode:
         # Distance should be bounded (typically < 100 for reasonable parameter changes)
         assert max_distance < 1000.0, f"Max repair distance too large: {max_distance}"
 
-    def test_repair_mode_repaired_spec_valid(
-        self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]
-    ) -> None:
+    def test_repair_mode_repaired_spec_valid(self, random_u_vectors: list[list[float]], fab_limits: dict[str, int]) -> None:
         """Repaired specs should pass T0/T1 constraint validation.
 
         The repair function handles:
@@ -851,8 +837,7 @@ class TestG2RepairMode:
 
         if repair_result.distance_metrics is not None:
             assert repair_result.distance_metrics.l2_distance >= repair_result.distance_metrics.linf_distance, (
-                f"L2 ({repair_result.distance_metrics.l2_distance}) < "
-                f"Linf ({repair_result.distance_metrics.linf_distance})"
+                f"L2 ({repair_result.distance_metrics.l2_distance}) < Linf ({repair_result.distance_metrics.linf_distance})"
             )
 
     def test_repair_mode_projection_policy_order(self, fab_limits: dict[str, int]) -> None:
@@ -1002,8 +987,7 @@ class TestG2EngineIntegration:
         result = engine.validate_or_repair(spec, mode="REPAIR")
 
         assert result.passed is True, (
-            f"Repaired should pass, but failed: "
-            f"{[c.constraint_id for c in result.proof.constraints if not c.passed]}"
+            f"Repaired should pass, but failed: {[c.constraint_id for c in result.proof.constraints if not c.passed]}"
         )
         assert result.was_repaired is True
         assert result.repair_map is not None

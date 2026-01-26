@@ -246,7 +246,7 @@ def test_load_couponspec_file_not_found_raises() -> None:
 
 def test_json_schema_validates_with_jsonschema_library() -> None:
     """REQ-M1-001: JSON Schema must be valid and usable by jsonschema library."""
-    jsonschema = pytest.importorskip("jsonschema")
+    pytest.importorskip("jsonschema")
     from jsonschema import Draft202012Validator
 
     schema = get_json_schema()
@@ -269,7 +269,7 @@ def test_json_schema_validates_with_jsonschema_library() -> None:
 
 def test_json_schema_length_right_nm_optional() -> None:
     """REQ-M1-001: length_right_nm should be optional (derived for F1 coupons)."""
-    jsonschema = pytest.importorskip("jsonschema")
+    pytest.importorskip("jsonschema")
     from jsonschema import Draft202012Validator
 
     schema = get_json_schema()

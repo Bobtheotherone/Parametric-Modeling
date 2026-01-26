@@ -204,7 +204,7 @@ class TestGPUFilterIntegration:
         u_batch = np.ones((10, space.dimension)) * 0.5
 
         # Fix spatial parameters to ensure feasibility
-        u_batch[:, 3] = 0.8   # board_length_nm: 126M nm (large enough)
+        u_batch[:, 3] = 0.8  # board_length_nm: 126M nm (large enough)
         u_batch[:, 13] = 0.2  # right_connector_x_nm: 85M nm (well within board)
         u_batch[:, 12] = 0.2  # left_connector_x_nm: 3.6M nm (away from edge)
         u_batch[:, 14] = 0.3  # trace_length_left_nm: modest
@@ -246,17 +246,24 @@ class TestCLIBuildBatch:
         parser = build_parser()
 
         # Parse with GPU-related flags
-        args = parser.parse_args([
-            "build-batch",
-            "spec.yaml",
-            "--u", "u.npy",
-            "--out", "output",
-            "--no-gpu",
-            "--profile", "generic",
-            "--seed", "42",
-            "--constraint-mode", "REPAIR",
-            "--skip-filter",
-        ])
+        args = parser.parse_args(
+            [
+                "build-batch",
+                "spec.yaml",
+                "--u",
+                "u.npy",
+                "--out",
+                "output",
+                "--no-gpu",
+                "--profile",
+                "generic",
+                "--seed",
+                "42",
+                "--constraint-mode",
+                "REPAIR",
+                "--skip-filter",
+            ]
+        )
 
         assert args.command == "build-batch"
         assert args.no_gpu is True
@@ -271,12 +278,16 @@ class TestCLIBuildBatch:
 
         parser = build_parser()
 
-        args = parser.parse_args([
-            "build-batch",
-            "spec.yaml",
-            "--u", "u.npy",
-            "--out", "output",
-        ])
+        args = parser.parse_args(
+            [
+                "build-batch",
+                "spec.yaml",
+                "--u",
+                "u.npy",
+                "--out",
+                "output",
+            ]
+        )
 
         assert args.no_gpu is False
         assert args.profile == "generic"

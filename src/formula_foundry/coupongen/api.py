@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import yaml  # type: ignore[import-untyped]
 
@@ -34,6 +35,7 @@ from .constraints import (
     enforce_constraints,
 )
 from .constraints.engine import ConstraintEngineResult, create_constraint_engine
+from .export import KicadExportError
 from .fab_profiles import get_fab_limits, load_fab_profile
 from .families import validate_family
 from .hashing import canonical_hash_export_text, coupon_id_from_design_hash
@@ -42,8 +44,7 @@ from .kicad.cli import KicadCliMode
 from .manifest import build_manifest, load_manifest, toolchain_hash, write_manifest
 from .resolve import ResolvedDesign, design_hash, resolve
 from .spec import CouponSpec, KicadToolchain
-from .export import KicadExportError
-from .toolchain import ToolchainLoadError, resolve_docker_image_ref
+from .toolchain import resolve_docker_image_ref
 from .toolchain_capture import capture_toolchain_provenance
 
 if TYPE_CHECKING:

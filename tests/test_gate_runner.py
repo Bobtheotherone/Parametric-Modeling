@@ -8,6 +8,7 @@ This module tests:
 - Audit report generation
 - Summary output formatting
 """
+
 from __future__ import annotations
 
 import json

@@ -82,10 +82,7 @@ def _worktree_context(root: Path, path: Path, keep: bool) -> Path:
 
 
 def _has_flag(args: list[str], flag: str) -> bool:
-    for item in args:
-        if item == flag or item.startswith(f"{flag}="):
-            return True
-    return False
+    return any(item == flag or item.startswith(f"{flag}=") for item in args)
 
 
 def _flag_value(args: list[str], flag: str) -> str | None:

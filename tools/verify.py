@@ -82,7 +82,7 @@ def _detect_skipped_or_placeholder_tests(
         env.update(_VERIFY_ENV)
 
     try:
-        proc = subprocess.run(
+        subprocess.run(
             cmd,
             cwd=str(project_root),
             text=True,
@@ -94,7 +94,6 @@ def _detect_skipped_or_placeholder_tests(
         return []
 
     skipped: list[SkippedTestInfo] = []
-    stdout = proc.stdout
 
     # Parse pytest output for skip markers
     # Look for patterns like:

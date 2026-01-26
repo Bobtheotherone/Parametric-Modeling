@@ -17,26 +17,24 @@ import os
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from formula_foundry.substrate import canonical_json_dumps, sha256_bytes
+from formula_foundry.substrate import canonical_json_dumps
 
 from .batch_runner import (
     BatchConfig,
     BatchProgress,
     BatchResult,
-    BatchSimulationRunner,
     ProgressCallback,
     SimulationJob,
     SimulationJobResult,
     SimulationStatus,
 )
-from .convergence import ConvergenceConfig, ConvergenceReport, validate_simulation_convergence
+from .convergence import ConvergenceReport, validate_simulation_convergence
 from .manifest import GPUDeviceInfo
 from .sim_runner import (
     SimulationExecutionError,
@@ -134,10 +132,7 @@ class GPUDeviceState:
 
     def can_allocate(self, vram_mb: int) -> bool:
         """Check if GPU has enough free VRAM for allocation."""
-        return (
-            self.status == GPUStatus.AVAILABLE
-            and self.free_memory_mb >= vram_mb
-        )
+        return self.status == GPUStatus.AVAILABLE and self.free_memory_mb >= vram_mb
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,10 +305,7 @@ class GPUBatchResult:
             "n_cpu_fallback_jobs": self.n_cpu_fallback_jobs,
             "n_oom_retries": self.n_oom_retries,
             "n_oom_failures": self.n_oom_failures,
-            "gpu_metrics": {
-                str(device_id): metrics.to_dict()
-                for device_id, metrics in self.gpu_metrics.items()
-            },
+            "gpu_metrics": {str(device_id): metrics.to_dict() for device_id, metrics in self.gpu_metrics.items()},
             "gpu_devices": [
                 {
                     "device_id": info.device_id,
@@ -638,10 +630,7 @@ class GPUBatchSimulationRunner:
         # Calculate effective parallelism
         if use_gpu:
             # GPU-aware parallelism: max simulations across all GPUs
-            total_gpu_slots = sum(
-                self.gpu_config.max_concurrent_per_gpu
-                for _ in devices
-            )
+            total_gpu_slots = sum(self.gpu_config.max_concurrent_per_gpu for _ in devices)
             effective_workers = min(
                 self.batch_config.effective_max_workers,
                 total_gpu_slots,
@@ -721,11 +710,13 @@ class GPUBatchSimulationRunner:
             processed_job_ids = {r.job_id for r in results}
             for job in sorted_jobs:
                 if job.job_id not in processed_job_ids:
-                    results.append(SimulationJobResult(
-                        job_id=job.job_id,
-                        status=SimulationStatus.SKIPPED,
-                        error="Batch stopped (fail_fast triggered)",
-                    ))
+                    results.append(
+                        SimulationJobResult(
+                            job_id=job.job_id,
+                            status=SimulationStatus.SKIPPED,
+                            error="Batch stopped (fail_fast triggered)",
+                        )
+                    )
                     # Update progress for skipped jobs
                     with self._progress_lock:
                         if self._progress:
@@ -740,8 +731,7 @@ class GPUBatchSimulationRunner:
             self._utilization_thread.join(timeout=2.0)
 
         logger.info(
-            "GPU batch completed: %d/%d successful in %.2f seconds "
-            "(GPU: %d, CPU fallback: %d, OOM retries: %d)",
+            "GPU batch completed: %d/%d successful in %.2f seconds (GPU: %d, CPU fallback: %d, OOM retries: %d)",
             sum(1 for r in results if r.status == SimulationStatus.COMPLETED),
             len(results),
             total_time,
@@ -1077,9 +1067,7 @@ class GPUBatchSimulationRunner:
         """Release a GPU after job completion."""
         if device_id is not None and device_id in self._device_locks:
             with self._device_locks[device_id]:
-                self._device_job_counts[device_id] = max(
-                    0, self._device_job_counts[device_id] - 1
-                )
+                self._device_job_counts[device_id] = max(0, self._device_job_counts[device_id] - 1)
 
     def _enable_gpu_in_spec(self, spec: SimulationSpec, device_id: int) -> SimulationSpec:
         """Create a modified spec with GPU enabled.
@@ -1150,9 +1138,7 @@ class GPUBatchSimulationRunner:
             except Exception as e:
                 logger.debug("Error sampling GPU utilization: %s", e)
 
-            self._stop_utilization_sampling.wait(
-                timeout=self.gpu_config.utilization_sample_interval_sec
-            )
+            self._stop_utilization_sampling.wait(timeout=self.gpu_config.utilization_sample_interval_sec)
 
     def _notify_progress(self) -> None:
         """Notify all registered progress callbacks."""

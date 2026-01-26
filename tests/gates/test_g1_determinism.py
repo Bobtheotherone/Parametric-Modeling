@@ -11,6 +11,7 @@ for all geometry. The design_hash must be stable and deterministic across runs.
 
 Pytest marker: gate_g1
 """
+
 from __future__ import annotations
 
 import json
@@ -58,6 +59,7 @@ def _load_golden_hashes() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def golden_specs() -> list[Path]:
@@ -116,16 +118,12 @@ class TestG1ResolverDeterminism:
             canonical_a = resolved_design_canonical_json(resolved_a)
             canonical_b = resolved_design_canonical_json(resolved_b)
 
-            assert canonical_a == canonical_b, (
-                f"Canonical JSON differs for {spec_path.name} between runs"
-            )
+            assert canonical_a == canonical_b, f"Canonical JSON differs for {spec_path.name} between runs"
 
             hash_a = design_hash(resolved_a)
             hash_b = design_hash(resolved_b)
 
-            assert hash_a == hash_b, (
-                f"design_hash differs for {spec_path.name} between runs"
-            )
+            assert hash_a == hash_b, f"design_hash differs for {spec_path.name} between runs"
 
     def test_resolve_determinism_multiple_runs(self, golden_specs: list[Path]) -> None:
         """Verify resolve(spec) is deterministic across 3 sequential runs.
@@ -144,13 +142,10 @@ class TestG1ResolverDeterminism:
 
             # All hashes must be identical
             assert len(set(hashes)) == 1, (
-                f"design_hash not stable for {spec_path.name} across {num_runs} runs: "
-                f"got {len(set(hashes))} distinct hashes"
+                f"design_hash not stable for {spec_path.name} across {num_runs} runs: got {len(set(hashes))} distinct hashes"
             )
 
-    def test_design_hash_matches_golden(
-        self, golden_specs: list[Path], golden_hashes: dict[str, str]
-    ) -> None:
+    def test_design_hash_matches_golden(self, golden_specs: list[Path], golden_hashes: dict[str, str]) -> None:
         """Verify design_hash matches committed golden hashes.
 
         REQ-M1-024: CI must prove deterministic resolve hashing against
@@ -168,14 +163,10 @@ class TestG1ResolverDeterminism:
             computed_hash = design_hash(resolved)
 
             assert computed_hash == golden_hashes[key], (
-                f"design_hash mismatch for {spec_path.name}:\n"
-                f"  computed: {computed_hash}\n"
-                f"  expected: {golden_hashes[key]}"
+                f"design_hash mismatch for {spec_path.name}:\n  computed: {computed_hash}\n  expected: {golden_hashes[key]}"
             )
 
-    def test_design_hash_is_sha256_of_canonical_json(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_design_hash_is_sha256_of_canonical_json(self, golden_specs: list[Path]) -> None:
         """Verify design_hash equals SHA256 of canonical JSON bytes.
 
         This ensures the hash algorithm is correctly implemented.
@@ -188,13 +179,9 @@ class TestG1ResolverDeterminism:
             expected_hash = sha256_bytes(canonical.encode("utf-8"))
             computed_hash = design_hash(resolved)
 
-            assert computed_hash == expected_hash, (
-                f"design_hash != sha256(canonical_json) for {spec_path.name}"
-            )
+            assert computed_hash == expected_hash, f"design_hash != sha256(canonical_json) for {spec_path.name}"
 
-    def test_canonical_json_key_order_invariance(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_canonical_json_key_order_invariance(self, golden_specs: list[Path]) -> None:
         """Verify canonical JSON is invariant to input key ordering.
 
         Two specs with identical content but different key ordering must
@@ -218,18 +205,15 @@ class TestG1ResolverDeterminism:
 
             # Load from reordered data
             from formula_foundry.coupongen.spec import CouponSpec
+
             spec_reordered = CouponSpec.model_validate(reordered)
 
             resolved_reordered = resolve(spec_reordered)
             canonical_reordered = resolved_design_canonical_json(resolved_reordered)
 
-            assert canonical == canonical_reordered, (
-                f"Canonical JSON depends on key order for {spec_path.name}"
-            )
+            assert canonical == canonical_reordered, f"Canonical JSON depends on key order for {spec_path.name}"
 
-    def test_resolved_design_fields_deterministic(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_resolved_design_fields_deterministic(self, golden_specs: list[Path]) -> None:
         """Verify all ResolvedDesign fields are deterministic.
 
         Check that parameters_nm, derived_features, and dimensionless_groups
@@ -242,14 +226,10 @@ class TestG1ResolverDeterminism:
             resolved_b = resolve(spec)
 
             # parameters_nm must match exactly
-            assert resolved_a.parameters_nm == resolved_b.parameters_nm, (
-                f"parameters_nm differs for {spec_path.name}"
-            )
+            assert resolved_a.parameters_nm == resolved_b.parameters_nm, f"parameters_nm differs for {spec_path.name}"
 
             # derived_features must match exactly
-            assert resolved_a.derived_features == resolved_b.derived_features, (
-                f"derived_features differs for {spec_path.name}"
-            )
+            assert resolved_a.derived_features == resolved_b.derived_features, f"derived_features differs for {spec_path.name}"
 
             # dimensionless_groups must match exactly
             assert resolved_a.dimensionless_groups == resolved_b.dimensionless_groups, (
@@ -257,9 +237,7 @@ class TestG1ResolverDeterminism:
             )
 
             # length_right_nm must match (for F1 coupons)
-            assert resolved_a.length_right_nm == resolved_b.length_right_nm, (
-                f"length_right_nm differs for {spec_path.name}"
-            )
+            assert resolved_a.length_right_nm == resolved_b.length_right_nm, f"length_right_nm differs for {spec_path.name}"
 
 
 @pytest.mark.gate_g1
@@ -278,9 +256,7 @@ class TestG1LayoutPlanDeterminism:
 
             # LayoutPlan should be attached to the resolved design
             layout_plan = resolved.layout_plan
-            assert layout_plan is not None, (
-                f"LayoutPlan not computed for {spec_path.name}"
-            )
+            assert layout_plan is not None, f"LayoutPlan not computed for {spec_path.name}"
 
     def test_layout_plan_deterministic(self, golden_specs: list[Path]) -> None:
         """Verify LayoutPlan geometry is deterministic across runs."""
@@ -320,20 +296,14 @@ class TestG1LayoutPlanDeterminism:
             # Get the discontinuity center from LayoutPlan
             if plan.x_disc_nm is not None:
                 # Verify continuity: discontinuity is at left signal pad + length_left
-                expected_discontinuity = (
-                    plan.left_port.signal_pad_x_nm +
-                    int(spec.transmission_line.length_left_nm)
-                )
+                expected_discontinuity = plan.left_port.signal_pad_x_nm + int(spec.transmission_line.length_left_nm)
                 assert plan.x_disc_nm == expected_discontinuity, (
                     f"Discontinuity position violates continuity formula for {spec_path.name}"
                 )
 
                 # Verify derived length_right_nm
                 if resolved.length_right_nm is not None:
-                    expected_length_right = (
-                        plan.right_port.signal_pad_x_nm -
-                        plan.x_disc_nm
-                    )
+                    expected_length_right = plan.right_port.signal_pad_x_nm - plan.x_disc_nm
                     assert resolved.length_right_nm == expected_length_right, (
                         f"Derived length_right_nm incorrect for {spec_path.name}"
                     )
@@ -354,9 +324,7 @@ class TestG1IntegerNmUnits:
             resolved = resolve(spec)
 
             for key, value in resolved.parameters_nm.items():
-                assert isinstance(value, int), (
-                    f"parameters_nm[{key}] = {value!r} is not int for {spec_path.name}"
-                )
+                assert isinstance(value, int), f"parameters_nm[{key}] = {value!r} is not int for {spec_path.name}"
 
     def test_derived_features_are_integers(self, golden_specs: list[Path]) -> None:
         """Verify all derived_features values are integers."""
@@ -365,9 +333,7 @@ class TestG1IntegerNmUnits:
             resolved = resolve(spec)
 
             for key, value in resolved.derived_features.items():
-                assert isinstance(value, int), (
-                    f"derived_features[{key}] = {value!r} is not int for {spec_path.name}"
-                )
+                assert isinstance(value, int), f"derived_features[{key}] = {value!r} is not int for {spec_path.name}"
 
     def test_dimensionless_groups_are_floats(self, golden_specs: list[Path]) -> None:
         """Verify dimensionless_groups values are floats (ratios)."""
@@ -376,13 +342,9 @@ class TestG1IntegerNmUnits:
             resolved = resolve(spec)
 
             for key, value in resolved.dimensionless_groups.items():
-                assert isinstance(value, float), (
-                    f"dimensionless_groups[{key}] = {value!r} is not float for {spec_path.name}"
-                )
+                assert isinstance(value, float), f"dimensionless_groups[{key}] = {value!r} is not float for {spec_path.name}"
 
-    def test_length_right_nm_is_integer_when_present(
-        self, golden_specs: list[Path]
-    ) -> None:
+    def test_length_right_nm_is_integer_when_present(self, golden_specs: list[Path]) -> None:
         """Verify length_right_nm is integer when present (F1 coupons)."""
         f1_specs = [p for p in golden_specs if "f1_" in p.name.lower()]
 
@@ -392,6 +354,5 @@ class TestG1IntegerNmUnits:
 
             if resolved.length_right_nm is not None:
                 assert isinstance(resolved.length_right_nm, int), (
-                    f"length_right_nm = {resolved.length_right_nm!r} "
-                    f"is not int for {spec_path.name}"
+                    f"length_right_nm = {resolved.length_right_nm!r} is not int for {spec_path.name}"
                 )

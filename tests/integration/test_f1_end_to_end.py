@@ -612,7 +612,7 @@ class TestF1TrackGeometry:
         for segment in signal_segments:
             width_elem = [e for e in segment if isinstance(e, list) and e[0] == "width"][0]
             # Width in mm = 300000 nm / 1000000 = 0.3 mm
-            assert width_elem[1] == "0.3", f"Signal segment width should be 0.3mm"
+            assert width_elem[1] == "0.3", "Signal segment width should be 0.3mm"
 
     def test_f1_signal_tracks_on_signal_net(self, f1_spec: CouponSpec) -> None:
         """F1 signal tracks should be on the SIG net (net 1)."""

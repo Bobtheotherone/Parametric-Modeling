@@ -8,7 +8,6 @@ from typing import Any, cast
 from unittest import mock
 
 import pytest
-
 from tools import m0
 
 

@@ -41,7 +41,6 @@ from formula_foundry.openems import (
     write_validation_report,
 )
 
-
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -58,9 +57,7 @@ def _minimal_simulation_spec() -> SimulationSpec:
         ),
         geometry_ref=GeometryRefSpec(design_hash="abc123def456"),
         excitation=ExcitationSpec(f0_hz=5_000_000_000, fc_hz=10_000_000_000),
-        frequency=FrequencySpec(
-            f_start_hz=1_000_000_000, f_stop_hz=20_000_000_000, n_points=401
-        ),
+        frequency=FrequencySpec(f_start_hz=1_000_000_000, f_stop_hz=20_000_000_000, n_points=401),
         ports=[
             PortSpec(id="P1", position_nm=(0, 0, 0), direction="x", excite=True),
             PortSpec(id="P2", position_nm=(10_000_000, 0, 0), direction="-x"),
@@ -79,16 +76,12 @@ def _high_frequency_spec() -> SimulationSpec:
         ),
         geometry_ref=GeometryRefSpec(design_hash="abc123def456"),
         excitation=ExcitationSpec(f0_hz=30_000_000_000, fc_hz=50_000_000_000),
-        frequency=FrequencySpec(
-            f_start_hz=10_000_000_000, f_stop_hz=50_000_000_000, n_points=201
-        ),
+        frequency=FrequencySpec(f_start_hz=10_000_000_000, f_stop_hz=50_000_000_000, n_points=201),
         ports=[
             PortSpec(id="P1", position_nm=(0, 0, 0), direction="x", excite=True),
             PortSpec(id="P2", position_nm=(10_000_000, 0, 0), direction="-x"),
         ],
-        boundaries=BoundarySpec(
-            x_min="PML_8", x_max="PML_8", y_min="PEC", y_max="PEC", z_min="PEC", z_max="PML_8"
-        ),
+        boundaries=BoundarySpec(x_min="PML_8", x_max="PML_8", y_min="PEC", y_max="PEC", z_min="PEC", z_max="PML_8"),
     )
 
 
@@ -449,15 +442,9 @@ class TestValidationResult:
 
     def test_result_passed_property(self) -> None:
         """passed property should reflect status correctly."""
-        passed = ValidationResult(
-            name="test", status=ValidationStatus.PASSED, message="OK"
-        )
-        warning = ValidationResult(
-            name="test", status=ValidationStatus.WARNING, message="Marginal"
-        )
-        failed = ValidationResult(
-            name="test", status=ValidationStatus.FAILED, message="Error"
-        )
+        passed = ValidationResult(name="test", status=ValidationStatus.PASSED, message="OK")
+        warning = ValidationResult(name="test", status=ValidationStatus.WARNING, message="Marginal")
+        failed = ValidationResult(name="test", status=ValidationStatus.FAILED, message="Error")
 
         assert passed.passed is True
         assert warning.passed is True  # Warnings still count as passed

@@ -3456,8 +3456,14 @@ def cmd_verify(
     else:
         # Default: just hash verification unless something else specified
         any_explicit = (
-            check_hash or check_lineage or check_manifest or check_registry
-            or check_store or check_orphans or check_pipeline or check_gc
+            check_hash
+            or check_lineage
+            or check_manifest
+            or check_registry
+            or check_store
+            or check_orphans
+            or check_pipeline
+            or check_gc
         )
         do_hash = check_hash or (not any_explicit and not skip_hash)
         do_lineage = check_lineage
@@ -3754,8 +3760,7 @@ def cmd_verify(
                         if actual_size != manifest.byte_size:
                             store_check["passed"] = False
                             store_check["issues"].append(
-                                f"Size mismatch: manifest says {manifest.byte_size} bytes, "
-                                f"actual file is {actual_size} bytes"
+                                f"Size mismatch: manifest says {manifest.byte_size} bytes, actual file is {actual_size} bytes"
                             )
                             has_error = True
                         else:

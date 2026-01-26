@@ -613,9 +613,13 @@ def validate_port_impedance(
     if mismatch <= tolerance_percent:
         message = f"Port {port.id}: impedance {port_z0:.1f}Ω matches line Z0 {line_z0_ohm:.1f}Ω (mismatch: {mismatch:.1f}%)"
     elif mismatch <= error_threshold_percent:
-        message = f"Port {port.id}: impedance {port_z0:.1f}Ω deviates from line Z0 {line_z0_ohm:.1f}Ω by {mismatch:.1f}% (warning)"
+        message = (
+            f"Port {port.id}: impedance {port_z0:.1f}Ω deviates from line Z0 {line_z0_ohm:.1f}Ω by {mismatch:.1f}% (warning)"
+        )
     else:
-        message = f"Port {port.id}: impedance {port_z0:.1f}Ω significantly mismatched with line Z0 {line_z0_ohm:.1f}Ω ({mismatch:.1f}%)"
+        message = (
+            f"Port {port.id}: impedance {port_z0:.1f}Ω significantly mismatched with line Z0 {line_z0_ohm:.1f}Ω ({mismatch:.1f}%)"
+        )
 
     result = ImpedanceValidationResult(
         port_id=port.id,

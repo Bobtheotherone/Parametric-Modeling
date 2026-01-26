@@ -374,9 +374,7 @@ class ConstraintProofDocument:
         }
         # Add min_margin_by_category if populated (CP-3.2)
         if self.min_margin_by_category:
-            result["min_margin_by_category"] = {
-                cat: summary.to_dict() for cat, summary in self.min_margin_by_category.items()
-            }
+            result["min_margin_by_category"] = {cat: summary.to_dict() for cat, summary in self.min_margin_by_category.items()}
         # Add failing_constraints_summary if there are failures (CP-3.2)
         if self.failing_constraints_summary is not None:
             result["failing_constraints_summary"] = self.failing_constraints_summary.to_dict()
@@ -1348,33 +1346,23 @@ def _infer_category_from_constraint_id(constraint_id: str) -> str:
     constraint_id_upper = constraint_id.upper()
 
     # TOPOLOGY constraints
-    if any(kw in constraint_id_upper for kw in [
-        "CONNECT", "SIG", "TOPOLOGY", "CONTINUITY", "NET"
-    ]):
+    if any(kw in constraint_id_upper for kw in ["CONNECT", "SIG", "TOPOLOGY", "CONTINUITY", "NET"]):
         return "TOPOLOGY"
 
     # SPACING constraints
-    if any(kw in constraint_id_upper for kw in [
-        "CLEARANCE", "SPACING", "GAP", "EDGE", "PITCH"
-    ]):
+    if any(kw in constraint_id_upper for kw in ["CLEARANCE", "SPACING", "GAP", "EDGE", "PITCH"]):
         return "SPACING"
 
     # GEOMETRY constraints
-    if any(kw in constraint_id_upper for kw in [
-        "OVERLAP", "COLLISION", "SYMMETRY", "FITS", "COVERAGE", "RADIUS", "ASPECT"
-    ]):
+    if any(kw in constraint_id_upper for kw in ["OVERLAP", "COLLISION", "SYMMETRY", "FITS", "COVERAGE", "RADIUS", "ASPECT"]):
         return "GEOMETRY"
 
     # ELECTRICAL constraints
-    if any(kw in constraint_id_upper for kw in [
-        "IMPEDANCE", "CURRENT", "POWER", "RESISTANCE"
-    ]):
+    if any(kw in constraint_id_upper for kw in ["IMPEDANCE", "CURRENT", "POWER", "RESISTANCE"]):
         return "ELECTRICAL"
 
     # MATERIAL constraints
-    if any(kw in constraint_id_upper for kw in [
-        "MATERIAL", "ER", "LOSS", "DIELECTRIC"
-    ]):
+    if any(kw in constraint_id_upper for kw in ["MATERIAL", "ER", "LOSS", "DIELECTRIC"]):
         return "MATERIAL"
 
     # Default to FABRICATION for parameter bounds
@@ -1475,15 +1463,17 @@ def generate_constraint_proof(
             category_stats[category]["failed_count"] += 1
 
             # Track failure details
-            failed_constraints.append({
-                "id": c.constraint_id,
-                "tier": c.tier,
-                "category": category,
-                "margin_nm": margin_nm,
-                "severity": severity,
-                "must_pass": must_pass,
-                "reason": c.reason if c.reason else f"Margin {margin_nm}nm < 0",
-            })
+            failed_constraints.append(
+                {
+                    "id": c.constraint_id,
+                    "tier": c.tier,
+                    "category": category,
+                    "margin_nm": margin_nm,
+                    "severity": severity,
+                    "must_pass": must_pass,
+                    "reason": c.reason if c.reason else f"Margin {margin_nm}nm < 0",
+                }
+            )
 
     # Build min_margin_by_category summary (CP-3.2)
     min_margin_by_category: dict[str, CategoryMarginSummary] = {}
@@ -1542,9 +1532,9 @@ def generate_constraint_proof(
 
         # Calculate repair statistics
         total_distance_nm = sum(abs(a.after - a.before) for a in repair_result.repair_actions)
-        max_single_repair_nm = max(
-            abs(a.after - a.before) for a in repair_result.repair_actions
-        ) if repair_result.repair_actions else 0
+        max_single_repair_nm = (
+            max(abs(a.after - a.before) for a in repair_result.repair_actions) if repair_result.repair_actions else 0
+        )
 
         # Group repairs by tier (from constraint_id)
         repairs_by_tier: dict[str, int] = {}
@@ -1564,8 +1554,7 @@ def generate_constraint_proof(
             total_distance_nm=total_distance_nm,
             max_single_repair_nm=max_single_repair_nm,
             normalized_repair_distance=(
-                repair_result.distance_metrics.l2_distance
-                if repair_result.distance_metrics else repair_result.repair_distance
+                repair_result.distance_metrics.l2_distance if repair_result.distance_metrics else repair_result.repair_distance
             ),
             original_failures=original_failures,
             remaining_failures=remaining_failures,

@@ -434,7 +434,7 @@ def compute_stackup_groups(spec: CouponSpec) -> dict[str, float]:
 
     # Layer ratios for multi-layer stackups (L1_to_L2, L2_to_L3, etc.)
     # Compute ratios between adjacent layer thicknesses
-    layer_keys = sorted([k for k in thicknesses.keys() if k.startswith("L")])
+    layer_keys = sorted([k for k in thicknesses if k.startswith("L")])
     if len(layer_keys) >= 2:
         # Reference layer is typically the thickest (core)
         ref_thickness = max(int(thicknesses[k]) for k in layer_keys)

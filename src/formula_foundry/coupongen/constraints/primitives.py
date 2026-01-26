@@ -79,9 +79,7 @@ class ConstraintSeverity(str, Enum):
 
 
 ConstraintTierLiteral = Literal["T0", "T1", "T2", "T3", "T4"]
-ConstraintCategoryLiteral = Literal[
-    "FABRICATION", "GEOMETRY", "TOPOLOGY", "SPACING", "MATERIAL", "ELECTRICAL"
-]
+ConstraintCategoryLiteral = Literal["FABRICATION", "GEOMETRY", "TOPOLOGY", "SPACING", "MATERIAL", "ELECTRICAL"]
 ConstraintSeverityLiteral = Literal["ERROR", "WARNING", "INFO"]
 
 
