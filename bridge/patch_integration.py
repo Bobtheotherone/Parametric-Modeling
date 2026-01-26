@@ -543,16 +543,51 @@ def collect_patch_artifact(
         return artifact
 
     # Parse status output
+    # Git porcelain v1 format: "XY PATH" or "XY\tPATH" (tab for rename detection)
+    # X = index status, Y = worktree status, then space/tab, then path
     for line in status_out.strip().split("\n"):
         if not line or len(line) < 3:
             continue
 
         status_code = line[:2]
-        file_path = line[3:].strip()
 
-        # Handle renamed files (R status shows "old -> new")
+        # Handle both space and tab delimiters (git uses tab for rename detection)
+        # The delimiter is at index 2; path starts at index 3
+        rest = line[2:]
+        if rest.startswith(" "):
+            file_path = rest[1:].strip()
+        elif rest.startswith("\t"):
+            file_path = rest[1:].strip()
+        else:
+            # Fallback: try to find first space/tab after status code
+            for i, c in enumerate(rest):
+                if c in " \t":
+                    file_path = rest[i+1:].strip()
+                    break
+            else:
+                # No delimiter found - use entire rest as path (shouldn't happen)
+                file_path = rest.strip()
+
+        # Handle renamed files (R status shows "old -> new" with space or tab separator)
         if " -> " in file_path:
             _, file_path = file_path.split(" -> ", 1)
+        elif "\t" in file_path and status_code.startswith("R"):
+            # Git can use tab to separate old and new names in rename detection
+            parts = file_path.split("\t")
+            if len(parts) == 2:
+                file_path = parts[1]
+
+        # VALIDATION: Detect path truncation - a valid path should not start with
+        # common directory suffixes that indicate truncation
+        truncation_indicators = ["ests/", "ocs/", "rc/", "idge/", "ools/"]
+        for indicator in truncation_indicators:
+            if file_path.startswith(indicator):
+                # Log warning but don't fail - attempt to recover
+                expected_prefix = {"ests/": "t", "ocs/": "d", "rc/": "s", "idge/": "br", "ools/": "t"}
+                prefix = expected_prefix.get(indicator, "")
+                print(f"[patch] WARNING: Possible path truncation detected: '{file_path}' - attempting recovery")
+                file_path = prefix + file_path
+                break
 
         # Strip any quotes from filenames
         if file_path.startswith('"') and file_path.endswith('"'):

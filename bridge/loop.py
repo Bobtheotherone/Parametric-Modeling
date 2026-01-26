@@ -4540,12 +4540,15 @@ def run_parallel(
     )
 
     # Create backfill generator to keep workers busy when primary tasks are blocked
+    # In throughput profile, we restrict to high-ROI task types (test, lint) and disable docs/type_hints
     backfill_generator = BackfillGenerator(
         project_root=str(state.project_root),
         min_queue_depth=max_workers * 2,  # Keep 2x workers worth of tasks ready
+        planner_profile=planner_profile,  # Pass profile for type restrictions
     )
     backfill_tasks_generated = 0
-    max_backfill_tasks = max_workers * 3  # Cap total backfill to avoid runaway
+    # REDUCED CAP: max_workers * 2 instead of * 3 to prevent runaway
+    max_backfill_tasks = max_workers * 2  # Cap total backfill to avoid runaway
 
     def can_start(t: ParallelTask) -> bool:
         """Check if task can start using two-lane scheduler."""
@@ -4612,15 +4615,23 @@ def run_parallel(
         )
 
     def maybe_generate_backfill() -> int:
-        """Generate backfill tasks if needed. Returns count of tasks added."""
+        """Generate backfill tasks if needed. Returns count of tasks added.
+
+        BACKFILL POLICY (prevents runaway/waste):
+        1. No FILLER when root failures exist
+        2. No FILLER when total queued tasks >= max_workers
+        3. No FILLER when queued FILLER tasks >= max_workers / 2
+        4. No FILLER while ANY runnable core (non-FILLER) task exists
+        5. Budget cap: max_backfill_tasks total per run
+        6. Batch limit: max 2 FILLER tasks per generation cycle
+        """
         nonlocal backfill_tasks_generated, tasks, by_id
 
         # Don't generate in selftest mode
         if selftest_mode:
             return 0
 
-        # SUPPRESS FILLER WHEN ROOT FAILURES EXIST
-        # This prevents wasting credits on optional work when hard blockers exist.
+        # POLICY 1: SUPPRESS FILLER WHEN ROOT FAILURES EXIST
         # Root failures are non-backfill tasks that have failed, need manual work, or were resource-killed.
         root_failure_statuses = ("failed", "manual", "resource_killed")
         has_root_failures = any(
@@ -4633,8 +4644,30 @@ def run_parallel(
                 print("[orchestrator] BACKFILL SUPPRESSED: Root failures exist - focusing on critical work")
             return 0
 
-        # Check if we've hit the backfill cap
+        # POLICY 5: Check if we've hit the backfill budget cap
         if backfill_tasks_generated >= max_backfill_tasks:
+            return 0
+
+        # POLICY 2: No FILLER when total queued tasks >= max_workers
+        total_queued = sum(1 for t in tasks if t.status == "pending")
+        if total_queued >= max_workers:
+            return 0
+
+        # POLICY 3: No FILLER when queued FILLER tasks >= max_workers / 2
+        queued_filler = sum(
+            1 for t in tasks
+            if t.status == "pending" and _is_backfill_task_id(t.id)
+        )
+        max_queued_filler = max(1, max_workers // 2)  # At least 1, at most half of workers
+        if queued_filler >= max_queued_filler:
+            return 0
+
+        # POLICY 4: No FILLER while ANY runnable core (non-FILLER) task exists
+        # This ensures backfill is ONLY used when truly idle (no core work available)
+        ready_tasks = get_ready_tasks()
+        core_ready_tasks = [t for t in ready_tasks if not _is_backfill_task_id(t.id)]
+        if core_ready_tasks:
+            # There are core tasks ready to run - don't generate filler
             return 0
 
         # Check if we should generate based on queue depth
@@ -4643,16 +4676,17 @@ def run_parallel(
             return 0
 
         # Check if there are available workers but no ready tasks
-        ready_count = len(get_ready_tasks())
+        ready_count = len(ready_tasks)
         available_workers = len(available_worker_ids)
         if ready_count >= available_workers:
             return 0
 
-        # Generate filler tasks
+        # POLICY 6: Generate at most 2 filler tasks at a time (prevents runaway)
         count_needed = min(
             available_workers - ready_count,
             max_backfill_tasks - backfill_tasks_generated,
-            5,  # Generate at most 5 at a time
+            max_queued_filler - queued_filler,  # Respect queued FILLER cap
+            2,  # HARD LIMIT: Generate at most 2 at a time to prevent runaway
         )
 
         if count_needed <= 0:
