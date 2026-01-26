@@ -38,9 +38,18 @@ def _run_wrapper(
         out_path = Path(tmpdir) / "out.json"
         prompt_path.write_text(prompt, encoding="utf-8")
 
+        # Create a shell script wrapper to invoke fake_gemini.py with Python
+        # This allows the gemini wrapper to invoke it as an executable
+        wrapper_script = Path(tmpdir) / "fake_gemini_wrapper.sh"
+        wrapper_script.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_GEMINI}" "$@"\n',
+            encoding="utf-8",
+        )
+        wrapper_script.chmod(0o755)
+
         env = os.environ.copy()
-        # Point to fake gemini executable
-        env["GEMINI_BIN"] = str(FAKE_GEMINI)
+        # Point to our shell wrapper that invokes fake_gemini.py
+        env["GEMINI_BIN"] = str(wrapper_script)
         env["PYTHONPATH"] = str(ROOT)
         if env_updates:
             env.update(env_updates)
