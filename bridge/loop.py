@@ -135,6 +135,7 @@ class RunState:
     system_prompt_path: Path
     design_doc_path: Path
     smoke_route: tuple[str, ...] = tuple()
+    readonly: bool = False
 
     total_calls: int = 0
     call_counts: dict[str, int] = dataclasses.field(default_factory=lambda: {a: 0 for a in AGENTS})
@@ -908,6 +909,7 @@ def build_prompt(
     call_counts: dict[str, int],
     disabled_by_quota: dict[str, bool],
     stats_ids: list[str],
+    readonly: bool,
 ) -> str:
     last_summaries = "\n".join([f"- ({h['agent']}) {h['summary']}" for h in history[-4:]])
 
@@ -918,6 +920,7 @@ def build_prompt(
             "call_counts": call_counts,
             "disabled_by_quota": disabled_by_quota,
             "known_stats_ids": stats_ids,
+            "readonly": readonly,
         },
         indent=2,
         sort_keys=True,
@@ -2299,9 +2302,11 @@ def _run_agent_live(
     ]
 
     env = os.environ.copy()
+    write_access = state.grant_write_access and not state.readonly
     # Support both names (some wrappers read WRITE_ACCESS, older versions used ORCH_WRITE_ACCESS).
-    env["WRITE_ACCESS"] = "1" if state.grant_write_access else "0"
+    env["WRITE_ACCESS"] = "1" if write_access else "0"
     env["ORCH_WRITE_ACCESS"] = env["WRITE_ACCESS"]
+    env["ORCH_READONLY"] = "1" if state.readonly else "0"
     # Signal to the agent wrapper that this is a turn schema (enables turn normalization)
     env["ORCH_SCHEMA_KIND"] = "turn"
 
@@ -5333,6 +5338,7 @@ def _run_parallel_with_auto_continue(
             system_prompt_path=system_prompt_path,
             design_doc_path=(project_root / args.design_doc).resolve(),
             smoke_route=config.smoke_route,
+            readonly=getattr(args, "readonly", False),
         )
 
         # Run parallel
@@ -5531,6 +5537,11 @@ def main() -> int:
     )
     ap.add_argument("--no-agent-branch", action="store_true")
     ap.add_argument(
+        "--readonly",
+        action="store_true",
+        help="Force read-only mode: ignore needs_write_access and keep WRITE_ACCESS=0.",
+    )
+    ap.add_argument(
         "--selftest-parallel",
         action="store_true",
         help="Run selftest mode: synthetic tasks with trivial commands to verify scheduler",
@@ -5595,6 +5606,12 @@ def main() -> int:
         print("[orchestrator] ERROR: --only-codex and --only-claude are mutually exclusive")
         sys.exit(1)
 
+    readonly_env = os.environ.get("ORCH_READONLY", "").strip().lower() in ("1", "true", "yes")
+    args.readonly = args.readonly or readonly_env
+    if args.readonly and not args.no_agent_branch:
+        print("[orchestrator] READONLY: enabling --no-agent-branch")
+        args.no_agent_branch = True
+
     # Handle --no-auto-continue override
     if args.no_auto_continue:
         args.auto_continue = False
@@ -5602,6 +5619,10 @@ def main() -> int:
     project_root = Path(args.project_root).resolve()
     config = load_config(project_root / args.config)
     config = dataclasses.replace(config, smoke_route=tuple(args.smoke_route or ()))
+
+    if args.readonly and (args.runner == "parallel" or args.selftest_parallel):
+        print("[orchestrator] ERROR: --readonly is only supported for sequential runner; use worktree isolation for parallel.")
+        return 2
 
     # Initialize agent policy based on --only-* flags
     forced_agent: str | None = None
@@ -5645,6 +5666,7 @@ def main() -> int:
         system_prompt_path=system_prompt_path,
         design_doc_path=design_doc_path,
         smoke_route=config.smoke_route,
+        readonly=args.readonly,
     )
 
     stats_md_path = project_root / "STATS.md"
@@ -5758,6 +5780,7 @@ def main() -> int:
             call_counts=state.call_counts,
             disabled_by_quota=state.disabled_by_quota,
             stats_ids=stats_ids,
+            readonly=state.readonly,
         )
 
         prompt_path = call_dir / "prompt.txt"
@@ -5767,10 +5790,12 @@ def main() -> int:
 
         print("=" * 88)
         model = config.agent_models.get(agent, "(default)")
+        effective_write_access = state.grant_write_access and not state.readonly
         print(
             f"CALL {call_no:04d} | agent={agent} | total_calls={state.total_calls} | "
             f"agent_calls={state.call_counts[agent]}/{config.max_calls_per_agent} | "
-            f"write_access={'1' if state.grant_write_access else '0'}"
+            f"write_access={'1' if effective_write_access else '0'} | "
+            f"readonly={'1' if state.readonly else '0'}"
         )
         print(f"[orchestrator] TURN (agent={agent} model={model})")
 
@@ -5913,8 +5938,11 @@ def main() -> int:
 
         print(f"[orchestrator] summary: {turn_obj['summary']}")
 
-        # Update write-access grant for next call.
-        state.grant_write_access = bool(turn_obj.get("needs_write_access", False))
+        # Update write-access grant for next call (readonly mode blocks escalation).
+        requested_write_access = bool(turn_obj.get("needs_write_access", False))
+        if state.readonly and requested_write_access:
+            print("[orchestrator] READONLY: ignoring needs_write_access request")
+        state.grant_write_access = requested_write_access and not state.readonly
 
         # Completion gates: only stop if they actually pass.
         if bool(turn_obj["project_complete"]):

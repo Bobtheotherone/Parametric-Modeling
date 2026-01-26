@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -112,8 +113,8 @@ def _build_loop_cmd(loop_args: list[str], project_root: Path, loop_script: Path)
     return [sys.executable, "-u", str(loop_script)] + args
 
 
-def _run_loop(loop_cmd: list[str], cwd: Path) -> int:
-    proc = subprocess.run(loop_cmd, cwd=str(cwd))
+def _run_loop(loop_cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> int:
+    proc = subprocess.run(loop_cmd, cwd=str(cwd), env=env)
     return proc.returncode
 
 
@@ -134,6 +135,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         project_root = _resolve_project_root(args.project_root)
         _ensure_clean(project_root, "before loop test")
+        loop_env = None
+        if args.isolation == "readonly":
+            loop_env = os.environ.copy()
+            loop_env["ORCH_READONLY"] = "1"
+            if not _has_flag(loop_args, "--readonly"):
+                loop_args = ["--readonly"] + loop_args
 
         if args.isolation == "worktree":
             with _worktree_context(project_root, Path(args.worktree_path), args.keep_worktree) as worktree:
@@ -141,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not loop_script.exists():
                     raise LoopTestError(f"Loop script not found: {loop_script}")
                 loop_cmd = _build_loop_cmd(loop_args, worktree, loop_script)
-                rc = _run_loop(loop_cmd, cwd=worktree)
+                rc = _run_loop(loop_cmd, cwd=worktree, env=loop_env)
             _ensure_clean(project_root, "after worktree loop test")
             return rc
 
@@ -149,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         if not loop_script.exists():
             raise LoopTestError(f"Loop script not found: {loop_script}")
         loop_cmd = _build_loop_cmd(loop_args, project_root, loop_script)
-        rc = _run_loop(loop_cmd, cwd=project_root)
+        rc = _run_loop(loop_cmd, cwd=project_root, env=loop_env)
         _ensure_clean(project_root, "after readonly loop test")
         return rc
     except DirtyTreeError as exc:
