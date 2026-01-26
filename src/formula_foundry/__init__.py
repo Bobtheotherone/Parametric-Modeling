@@ -67,9 +67,23 @@ if TYPE_CHECKING:
     from formula_foundry.coupongen.spec import KicadToolchain
 
 
+_LAZY_SUBMODULES = {
+    "commands": "formula_foundry.commands",
+    "oracle": "formula_foundry.oracle",
+    "validation": "formula_foundry.validation",
+    "geometry": "formula_foundry.geometry",
+    "ports": "formula_foundry.ports",
+    "mesh": "formula_foundry.mesh",
+    "solver": "formula_foundry.solver",
+    "postprocess": "formula_foundry.postprocess",
+    "verify": "formula_foundry.verify",
+    "calibration": "formula_foundry.calibration",
+}
+
+
 def __getattr__(name: str) -> Any:
-    if name == "commands":
-        return import_module("formula_foundry.commands")
+    if name in _LAZY_SUBMODULES:
+        return import_module(_LAZY_SUBMODULES[name])
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -97,4 +111,14 @@ __all__ = [
     "RepairInfo",
     # Command helpers (REQ-M1-018)
     "commands",
+    # M2 oracle API surfaces
+    "oracle",
+    "validation",
+    "geometry",
+    "ports",
+    "mesh",
+    "solver",
+    "postprocess",
+    "verify",
+    "calibration",
 ]

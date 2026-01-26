@@ -15,7 +15,7 @@ def test_dockerfile_base_image_is_digest_pinned() -> None:
     assert base_image.pinned_ref.endswith(base_image.digest)
 
 
-def test_toolchain_metadata_records_digest_and_versions() -> None:
+def test_toolchain_is_digest_pinned_and_recorded_in_meta() -> None:
     metadata = toolchain_meta.build_toolchain_metadata()
     docker = metadata["docker"]
     versions = metadata["versions"]

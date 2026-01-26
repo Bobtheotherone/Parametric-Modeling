@@ -518,7 +518,7 @@ def _write_stub_outputs(spec: SimulationSpec, outputs_dir: Path, seed: int) -> N
         if spec.output.s_params_format in ("csv", "both"):
             _write_stub_csv(outputs_dir / "sparams.csv", spec.frequency, seed)
     if spec.output.port_signals:
-        _write_stub_port_signals(outputs_dir / "port_signals.json", seed)
+        _write_stub_port_signals(outputs_dir / "port_signals.json", spec, seed)
     if spec.output.energy_decay:
         _write_stub_energy_decay(outputs_dir / "energy_decay.json", seed)
     if spec.output.nf2ff:
@@ -577,18 +577,17 @@ def _write_stub_csv(path: Path, frequency: FrequencySpec, seed: int) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _write_stub_port_signals(path: Path, seed: int) -> None:
+def _write_stub_port_signals(path: Path, spec: SimulationSpec, seed: int) -> None:
     base = seed % 10
     times = [0, 10, 20, 30, 40]
-    payload = {
-        "time_ps": times,
-        "ports": {
-            "P1": {
-                "voltage_v": [float(base + idx) for idx in range(len(times))],
-                "current_a": [float(base - idx) for idx in range(len(times))],
-            }
-        },
-    }
+    ports: dict[str, dict[str, list[float]]] = {}
+    for idx, port in enumerate(spec.ports):
+        offset = base + idx
+        ports[port.id] = {
+            "voltage_v": [float(offset + step) for step in range(len(times))],
+            "current_a": [float(offset - step) for step in range(len(times))],
+        }
+    payload = {"time_ps": times, "ports": ports}
     text = canonical_json_dumps(payload)
     path.write_text(f"{text}\n", encoding="utf-8")
 

@@ -455,11 +455,25 @@ class BackfillGenerator:
         ),
     ]
 
-    def __init__(self, project_root: str, min_queue_depth: int = 10, allow_bridge: bool = False):
+    # Profile-based task type restrictions
+    # In "throughput" profile, disable low-ROI task types by default
+    THROUGHPUT_PROFILE_DISABLED_TYPES = {"docs", "type_hints"}  # Low ROI, often scope-rejected
+
+    # Rejection threshold for permanent disable (per-run)
+    REJECTION_DISABLE_THRESHOLD = 2  # After 2 SCOPE_REJECTED, disable type for entire run
+
+    def __init__(
+        self,
+        project_root: str,
+        min_queue_depth: int = 10,
+        allow_bridge: bool = False,
+        planner_profile: str = "default",
+    ):
         self.project_root = project_root
         self.min_queue_depth = min_queue_depth
         self.generated_count = 0
         self.allow_bridge = allow_bridge
+        self.planner_profile = planner_profile
 
         # No-op streak tracking for cooldown suppression
         # Maps task_type -> consecutive no-op count
@@ -468,6 +482,16 @@ class BackfillGenerator:
         self._cooldown_start: dict[str, int] = {}
         # Total cycles (increments each call to generate_filler_tasks)
         self._generation_cycle = 0
+
+        # Rejection tracking for permanent disable
+        # Maps task_type -> total rejection count
+        self._rejection_counts: dict[str, int] = {}
+        # Types permanently disabled for this run
+        self._permanently_disabled: set[str] = set()
+
+        # Log profile-based policy
+        if planner_profile == "throughput":
+            print(f"[backfill] Profile '{planner_profile}': Disabled low-ROI types: {self.THROUGHPUT_PROFILE_DISABLED_TYPES}")
 
     def should_generate(self, current_queue_depth: int, worker_count: int) -> bool:
         """Check if backfill tasks should be generated."""
@@ -524,24 +548,60 @@ class BackfillGenerator:
     def record_rejection(self, task_id: str) -> None:
         """Record that a filler task was rejected (SCOPE_REJECTED).
 
-        Similar to no-op, rejections indicate the task type isn't productive.
+        Rejections are tracked more strictly than no-ops:
+        - Counts toward cooldown (like no-ops)
+        - After REJECTION_DISABLE_THRESHOLD rejections, type is PERMANENTLY disabled for the run
 
         Args:
             task_id: The task ID (e.g., "FILLER-LINT-001")
         """
-        # Treat rejection same as no-op for cooldown purposes
+        if not task_id.startswith("FILLER-"):
+            return
+        parts = task_id.split("-")
+        if len(parts) < 3:
+            return
+        task_type = parts[1].lower()
+
+        # Track rejection count
+        self._rejection_counts[task_type] = self._rejection_counts.get(task_type, 0) + 1
+        rejection_count = self._rejection_counts[task_type]
+
+        # Check if type should be permanently disabled
+        if rejection_count >= self.REJECTION_DISABLE_THRESHOLD:
+            if task_type not in self._permanently_disabled:
+                self._permanently_disabled.add(task_type)
+                print(
+                    f"[backfill] Task type '{task_type}' PERMANENTLY DISABLED for this run "
+                    f"after {rejection_count} SCOPE_REJECTED events"
+                )
+        else:
+            print(
+                f"[backfill] Task type '{task_type}' rejection {rejection_count}/{self.REJECTION_DISABLE_THRESHOLD} "
+                "(will disable at threshold)"
+            )
+
+        # Also treat as no-op for cooldown purposes
         self.record_noop_result(task_id)
 
     def is_type_on_cooldown(self, task_type: str) -> bool:
-        """Check if a task type is currently on cooldown.
+        """Check if a task type is currently on cooldown or disabled.
 
         Args:
             task_type: The task type (e.g., "lint", "test")
 
         Returns:
-            True if the type is on cooldown and should be skipped
+            True if the type is on cooldown/disabled and should be skipped
         """
         task_type = task_type.lower()
+
+        # Check if permanently disabled for this run (due to repeated rejections)
+        if task_type in self._permanently_disabled:
+            return True
+
+        # Check if disabled by profile policy (e.g., "throughput" disables docs/type_hints)
+        if self.planner_profile == "throughput" and task_type in self.THROUGHPUT_PROFILE_DISABLED_TYPES:
+            return True
+
         if task_type not in self._cooldown_start:
             return False
 

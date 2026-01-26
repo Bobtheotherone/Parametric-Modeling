@@ -1,0 +1,54 @@
+name: M2 Oracle CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  openems-real:
+    name: openems-real
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      OPENEMS_LOCKFILE: toolchain/openems.lock.json
+      OPENEMS_DOCKERFILE: tools/m2/docker/Dockerfile
+      OPENEMS_CONTEXT: tools/m2/docker
+      OPENEMS_OUTPUT_DIR: ci_artifacts/openems
+      OPENEMS_CASE_XML: ci_minimal_openems.xml
+      OPENEMS_CASE_ID: ci_minimal_openems
+      OPENEMS_IMAGE_TAG: formula-foundry-openems:0.0.35
+      OPENEMS_TIMEOUT_SEC: "900"
+      OPENEMS_METRICS_NAME: metrics_summary.json
+      OPENEMS_MANIFEST_NAME: run_manifest.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: Set up Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: "3.10"
+
+      - name: Run real openEMS gate
+        run: |
+          python tools/ci/real_openems.py \
+            --lockfile "$OPENEMS_LOCKFILE" \
+            --dockerfile "$OPENEMS_DOCKERFILE" \
+            --context "$OPENEMS_CONTEXT" \
+            --output-dir "$OPENEMS_OUTPUT_DIR" \
+            --case-xml "$OPENEMS_CASE_XML" \
+            --case-id "$OPENEMS_CASE_ID" \
+            --image-tag "$OPENEMS_IMAGE_TAG" \
+            --timeout-sec "$OPENEMS_TIMEOUT_SEC" \
+            --metrics-name "$OPENEMS_METRICS_NAME" \
+            --manifest-name "$OPENEMS_MANIFEST_NAME"
+
+      - name: Upload openEMS CI artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openems-real-artifacts
+          path: |
+            ci_artifacts/openems/**
+          if-no-files-found: error
+          retention-days: 14
