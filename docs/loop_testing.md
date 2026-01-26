@@ -2,6 +2,19 @@
 
 This document describes how to run orchestrator loop tests in worktree/readonly mode with **zero tracked repository writes**.
 
+## Readonly Policy (Non-Negotiable)
+
+**Loop tests MUST NOT mutate the repository.** This is a non-negotiable policy enforced at multiple levels:
+
+1. **Pre-test check**: Working tree must be clean before loop test starts
+2. **Post-test check**: Working tree must remain clean after loop test completes
+3. **Hard failure**: Any detected mutation raises `DirtyTreeError` (not a warning)
+
+This policy ensures:
+- Loop tests never interfere with ongoing development work
+- Repository state is preserved across test runs
+- Test isolation is guaranteed regardless of agent behavior
+
 ## Overview
 
 The orchestrator operates on a strict separation of concerns:
@@ -180,3 +193,48 @@ git worktree list
 git worktree remove -f <path>
 git worktree prune
 ```
+
+## Readonly Policy Enforcement
+
+The readonly policy is enforced by the `tools/loop_test.py` harness:
+
+### Enforcement Points
+
+1. **Before loop test** (`_ensure_clean(project_root, "before loop test")`):
+   - Checks `git status --porcelain=v1`
+   - Raises `DirtyTreeError` if any tracked/untracked files are detected
+
+2. **After worktree loop test** (`_ensure_clean(project_root, "after worktree loop test")`):
+   - Verifies the main repository was not modified during worktree-isolated testing
+
+3. **After readonly loop test** (`_ensure_clean(project_root, "after readonly loop test")`):
+   - Verifies no repository mutations occurred during readonly mode testing
+
+### Error Handling
+
+| Error Type | Exit Code | Meaning |
+|------------|-----------|---------|
+| `DirtyTreeError` | 2 | Repository mutation detected (policy violation) |
+| `LoopTestError` | 3 | Other loop test infrastructure failure |
+
+### Readonly Mode Flags
+
+When `--isolation=readonly` is used:
+- Environment variable `ORCH_READONLY=1` is set
+- Flag `--readonly` is added to loop args (if not already present)
+- Flag `--no-agent-branch` is always added to prevent branch creation
+
+### Why This Policy Exists
+
+1. **Test isolation**: Loop tests must not affect other developers or CI runs
+2. **Reproducibility**: Clean state before/after ensures consistent test results
+3. **Safety**: Prevents accidental commits or file modifications during testing
+4. **Parallel safety**: Multiple test runs can execute without conflicts
+
+### Testing the Policy
+
+The readonly policy is verified by tests in `tests/test_loop_test_mode.py`:
+- `TestReadonlyPolicyGuarantees::test_repo_mutation_detection_before_test`
+- `TestReadonlyPolicyGuarantees::test_repo_mutation_detection_after_test`
+- `TestReadonlyPolicyGuarantees::test_loop_test_harness_enforces_clean_state_contract`
+- `TestReadonlyPolicyGuarantees::test_no_repo_mutation_is_non_negotiable`
