@@ -1,6 +1,6 @@
 """Substrate utilities for deterministic, GPU-first execution."""
 
-from . import artifact_store, backends, manifest, runner
+from . import artifact_store, backends, determinism, manifest, runner
 from .artifact_store import (
     ArtifactEntry,
     ArtifactManifest,
@@ -82,6 +82,7 @@ __all__ = [
     "cupy_to_torch",
     "determinism_context",
     "determinism_manifest",
+    "determinism",
     "host_transfer_guard",
     "select_backend",
     "get_git_sha",

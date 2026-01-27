@@ -1,3 +1,4 @@
+from . import cli_main
 from .batch_runner import (
     BatchConfig,
     BatchProgress,
@@ -234,6 +235,7 @@ __all__ = [
     "OpenEMSRunner",
     "OpenEMSToolchain",
     "build_parser",
+    "cli_main",
     "build_geometry_spec",
     "build_simulation_spec",
     "geometry_canonical_json",

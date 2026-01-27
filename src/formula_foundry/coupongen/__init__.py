@@ -1,5 +1,6 @@
 """Coupon generator (coupongen) package."""
 
+from . import cli_main
 from .api import (
     BuildResult,
     DrcReport,
@@ -217,6 +218,7 @@ __all__ = [
     "canonical_hash_kicad_pcb_text",
     "canonicalize_export_text",
     "canonicalize_kicad_pcb_text",
+    "cli_main",
     "constraint_proof_payload",
     "coupon_id_from_design_hash",
     "design_hash",
