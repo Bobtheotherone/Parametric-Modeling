@@ -172,8 +172,7 @@ class TestProgressDetection:
 
         # After normalization, these should be the same
         # because the only difference is the task ID in the path
-        assert sigs1 == sigs2, \
-            "Different task IDs with same underlying error type should be no progress"
+        assert sigs1 == sigs2, "Different task IDs with same underlying error type should be no progress"
 
     def test_different_errors_is_progress(self):
         """Test that different error types is detected as progress."""
@@ -220,9 +219,7 @@ class TestProgressDetection:
                 {"id": "TASK-1", "error": "Error A"},
             ]
         }
-        summary2 = {
-            "root_failures": []
-        }
+        summary2 = {"root_failures": []}
 
         sigs1 = _compute_failure_signatures_from_summary(summary1)
         sigs2 = _compute_failure_signatures_from_summary(summary2)
@@ -272,8 +269,7 @@ class TestJan26ProgressRegression:
 
         # Both runs have the same underlying error (branch collision)
         # even though the task IDs are different
-        assert sigs1 == sigs2, \
-            "Jan 26 branch collision errors should have same signature (no progress)"
+        assert sigs1 == sigs2, "Jan 26 branch collision errors should have same signature (no progress)"
 
     def test_jan26_quota_errors_same_signature(self):
         """Test that Claude quota errors have the same signature."""
@@ -298,5 +294,4 @@ class TestJan26ProgressRegression:
         sigs1 = _compute_failure_signatures_from_summary(run1_failures)
         sigs2 = _compute_failure_signatures_from_summary(run2_failures)
 
-        assert sigs1 == sigs2, \
-            "Quota errors on different tasks should have same signature (no progress)"
+        assert sigs1 == sigs2, "Quota errors on different tasks should have same signature (no progress)"

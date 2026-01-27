@@ -116,6 +116,7 @@ class SParameterData:
         n_ports: Number of ports in the network.
         reference_impedance_ohm: Reference impedance in ohms.
         comment: Optional comment/description for the data.
+        frequency_unit: Unit for provided frequency values (converted to Hz internally).
     """
 
     frequencies_hz: FloatArray
@@ -124,9 +125,41 @@ class SParameterData:
     reference_impedance_ohm: float = 50.0
     comment: str = ""
     _metadata: dict[str, str] = field(default_factory=dict)
+    frequency_unit: FrequencyUnit | str = FrequencyUnit.HZ
 
     def __post_init__(self) -> None:
         """Validate array shapes and consistency."""
+        # Normalize arrays to deterministic dtypes
+        self.frequencies_hz = np.asarray(self.frequencies_hz, dtype=np.float64)
+        self.s_parameters = np.asarray(self.s_parameters, dtype=np.complex128)
+
+        if self.n_ports <= 0:
+            raise ValueError("n_ports must be positive")
+
+        unit = self.frequency_unit
+        if isinstance(unit, str):
+            normalized = unit.strip()
+            if not normalized:
+                raise ValueError("frequency_unit must be non-empty")
+            normalized_upper = normalized.upper()
+            if normalized_upper in FrequencyUnit.__members__:
+                unit = FrequencyUnit[normalized_upper]
+            else:
+                for candidate in FrequencyUnit:
+                    if candidate.value.upper() == normalized_upper:
+                        unit = candidate
+                        break
+                else:
+                    raise ValueError("frequency_unit must be a valid FrequencyUnit or unit string")
+        if not isinstance(unit, FrequencyUnit):
+            raise ValueError("frequency_unit must be a valid FrequencyUnit or unit string")
+
+        # Convert to Hz for internal storage
+        if unit is not FrequencyUnit.HZ:
+            self.frequencies_hz = self.frequencies_hz * unit.multiplier
+            unit = FrequencyUnit.HZ
+        self.frequency_unit = unit
+
         if self.frequencies_hz.ndim != 1:
             raise ValueError("frequencies_hz must be 1D array")
         if self.s_parameters.ndim != 3:
@@ -140,14 +173,22 @@ class SParameterData:
         if self.reference_impedance_ohm <= 0:
             raise ValueError("reference_impedance_ohm must be positive")
 
+        if self.frequencies_hz.size > 0 and not np.all(np.isfinite(self.frequencies_hz)):
+            raise ValueError("frequencies_hz must contain finite values")
+
         # Ensure frequencies are sorted ascending
-        if not np.all(np.diff(self.frequencies_hz) > 0):
+        if self.frequencies_hz.size > 1 and not np.all(np.diff(self.frequencies_hz) > 0):
             raise ValueError("frequencies_hz must be strictly increasing")
 
     @property
     def n_frequencies(self) -> int:
         """Return the number of frequency points."""
         return len(self.frequencies_hz)
+
+    @property
+    def reference_impedances_ohm(self) -> tuple[float, ...]:
+        """Return per-port reference impedances in ohms."""
+        return tuple(float(self.reference_impedance_ohm) for _ in range(self.n_ports))
 
     @property
     def f_min_hz(self) -> float:

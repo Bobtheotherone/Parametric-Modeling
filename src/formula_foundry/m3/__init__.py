@@ -69,6 +69,8 @@ from formula_foundry.m3.registry import (
     RunRecord,
 )
 
+from . import mlflow_config
+
 __all__ = [
     "ArtifactExistsError",
     "ArtifactManifest",
@@ -122,4 +124,5 @@ __all__ = [
     "log_m3_metric",
     "log_m3_metrics",
     "setup_mlflow_environment",
+    "mlflow_config",
 ]

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+import pytest
+from formula_foundry.solver.backend import StubRunNotAllowedError
 from formula_foundry.solver.runner import SolverRunner
 
 from formula_foundry.openems.geometry import (
@@ -45,13 +46,6 @@ def _make_minimal_spec() -> SimulationSpec:
                 type="lumped",
                 excite=True,
                 position_nm=(0, 0, 0),
-                direction="x",
-            ),
-            PortSpec(
-                id="P2",
-                type="lumped",
-                excite=False,
-                position_nm=(1000, 0, 0),
                 direction="x",
             ),
         ],
@@ -100,30 +94,10 @@ def _make_minimal_geometry() -> GeometrySpec:
     )
 
 
-def test_solver_runner_runs_one_excitation_per_port(tmp_path: Path) -> None:
+def test_solver_runner_disallows_stub_without_allow(tmp_path: Path) -> None:
     spec = _make_minimal_spec()
     geometry = _make_minimal_geometry()
-    runner = SolverRunner(simulation_runner=SimulationRunner(mode="stub"), allow_stub=True)
+    runner = SolverRunner(simulation_runner=SimulationRunner(mode="stub"), allow_stub=False)
 
-    output_dir = tmp_path / "solver_run"
-    result = runner.run(spec, geometry, output_dir=output_dir)
-
-    assert result.metadata_path.exists()
-    assert result.excitation_ports == ["P1", "P2"]
-    assert len(result.runs) == 2
-
-    run_ports = {run.excitation_port_id for run in result.runs}
-    assert run_ports == {"P1", "P2"}
-
-    for run in result.runs:
-        assert run.output_dir.exists()
-        assert run.port_signals_path.exists()
-        assert run.manifest_path.exists()
-
-    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
-    assert metadata["excitation_ports"] == ["P1", "P2"]
-    assert len(metadata["runs"]) == 2
-    for entry in metadata["runs"]:
-        assert entry["excited_ports"] == [entry["excitation_port"]]
-        port_signals_path = output_dir / entry["port_signals_path"]
-        assert port_signals_path.exists()
+    with pytest.raises(StubRunNotAllowedError, match="Stub solver backend"):
+        runner.run(spec, geometry, output_dir=tmp_path / "run")

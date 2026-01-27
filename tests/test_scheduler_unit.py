@@ -285,6 +285,41 @@ class TestTwoLaneScheduler:
         assert scheduler.can_start(tasks[0])
         assert not scheduler.can_start(tasks[1])
 
+    def test_scheduler_respects_active_locks(self):
+        """Verify scheduler respects lock availability when tasks overlap."""
+        from bridge.scheduler import LaneConfig, TwoLaneScheduler
+
+        class MockTaskLocked:
+            def __init__(self, id, status, locks):
+                self.id = id
+                self.status = status
+                self.solo = False
+                self.intensity = "light"
+                self.locks = locks
+                self.touched_paths = []
+                self.depends_on = []
+
+        held_locks = {"shared-lock"}
+
+        def deps_satisfied(_):
+            return True
+
+        def locks_available(t):
+            return not set(t.locks) & held_locks
+
+        task_running = MockTaskLocked("t1", "running", ["shared-lock"])
+        task_pending = MockTaskLocked("t2", "pending", ["shared-lock"])
+
+        scheduler = TwoLaneScheduler(
+            lane_config=LaneConfig(coding_lane_size=2, executor_lane_size=1),
+            tasks=[task_running, task_pending],
+            deps_satisfied_fn=deps_satisfied,
+            locks_available_fn=locks_available,
+        )
+
+        ready = scheduler.get_ready_tasks()
+        assert task_pending not in ready, "Task with overlapping lock should not be ready when lock is held"
+
     def test_scheduler_can_start_after_deps_satisfied(self):
         """Test can_start returns True after dependencies are completed."""
         tasks = [

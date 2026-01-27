@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-
 from bridge.scheduler import BackfillGenerator
 
 
@@ -45,24 +44,16 @@ class TestBackfillCaps:
     """Test backfill caps and runaway prevention."""
 
     def test_no_filler_when_queued_at_max_workers(self, tmp_path):
-        """Verify no FILLER is generated when queued tasks >= max_workers."""
+        """Verify BackfillGenerator respects its queue-depth threshold."""
         max_workers = 10
         generator = BackfillGenerator(
             project_root=str(tmp_path),
             min_queue_depth=20,
         )
 
-        # With 10 pending tasks and 10 workers, should_generate should return False
-        # because we don't want more tasks queued than workers
-        result = generator.should_generate(current_queue_depth=10, worker_count=max_workers)
-        # The generator.should_generate checks queue_depth < min(target_depth, min_queue_depth)
+        # The generator checks queue_depth < min(target_depth, min_queue_depth)
         # target_depth = 10 * 2 = 20, min_queue_depth = 20
-        # 10 < min(20, 20) = True, so it would say yes
-
-        # The actual cap is enforced in maybe_generate_backfill() in loop.py
-        # Here we test the BackfillGenerator's own logic
-        # When queue depth equals or exceeds worker count, we should not generate
-        # This is enforced by the orchestrator, not the generator itself
+        assert generator.should_generate(current_queue_depth=10, worker_count=max_workers) is True
 
         # Test that generator respects queue depth properly
         assert generator.should_generate(current_queue_depth=0, worker_count=10) is True

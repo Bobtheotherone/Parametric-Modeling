@@ -13,7 +13,6 @@ Run with: pytest tests/test_scope_validator_paths.py -v
 from __future__ import annotations
 
 import pytest
-
 from bridge.patch_integration import (
     BACKFILL_ALLOWLIST,
     ScopeGuard,

@@ -554,15 +554,13 @@ def collect_patch_artifact(
         # Handle both space and tab delimiters (git uses tab for rename detection)
         # The delimiter is at index 2; path starts at index 3
         rest = line[2:]
-        if rest.startswith(" "):
-            file_path = rest[1:].strip()
-        elif rest.startswith("\t"):
+        if rest.startswith(" ") or rest.startswith("\t"):
             file_path = rest[1:].strip()
         else:
             # Fallback: try to find first space/tab after status code
             for i, c in enumerate(rest):
                 if c in " \t":
-                    file_path = rest[i+1:].strip()
+                    file_path = rest[i + 1 :].strip()
                     break
             else:
                 # No delimiter found - use entire rest as path (shouldn't happen)

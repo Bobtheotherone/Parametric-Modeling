@@ -474,6 +474,7 @@ class BackfillGenerator:
         self.generated_count = 0
         self.allow_bridge = allow_bridge
         self.planner_profile = planner_profile
+        self.disabled = planner_profile == "engineering"
 
         # No-op streak tracking for cooldown suppression
         # Maps task_type -> consecutive no-op count
@@ -492,9 +493,13 @@ class BackfillGenerator:
         # Log profile-based policy
         if planner_profile == "throughput":
             print(f"[backfill] Profile '{planner_profile}': Disabled low-ROI types: {self.THROUGHPUT_PROFILE_DISABLED_TYPES}")
+        if self.disabled:
+            print(f"[backfill] Profile '{planner_profile}': Backfill disabled")
 
     def should_generate(self, current_queue_depth: int, worker_count: int) -> bool:
         """Check if backfill tasks should be generated."""
+        if self.disabled:
+            return False
         target_depth = worker_count * 2
         return current_queue_depth < min(target_depth, self.min_queue_depth)
 
@@ -592,6 +597,8 @@ class BackfillGenerator:
         Returns:
             True if the type is on cooldown/disabled and should be skipped
         """
+        if self.disabled:
+            return True
         task_type = task_type.lower()
 
         # Check if permanently disabled for this run (due to repeated rejections)
@@ -641,6 +648,8 @@ class BackfillGenerator:
         Returns:
             List of FillerTask objects (may be fewer than count if types are on cooldown)
         """
+        if self.disabled:
+            return []
         # Increment generation cycle for cooldown tracking
         self._generation_cycle += 1
 

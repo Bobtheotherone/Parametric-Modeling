@@ -74,8 +74,7 @@ class TestClaudeQuotaDetection:
 
         # Exact message from logs
         exact_message = "You've hit your limit · resets 7pm (America/Anchorage)"
-        assert _is_quota_error("claude", exact_message, config), \
-            f"Failed to detect exact Claude quota message: {exact_message}"
+        assert _is_quota_error("claude", exact_message, config), f"Failed to detect exact Claude quota message: {exact_message}"
 
         # Variations
         assert _is_quota_error("claude", "hit your limit", config)
@@ -136,10 +135,12 @@ class TestUnknownAgentQuotaDetection:
 
     def test_unknown_agent_returns_false(self):
         """Test that unknown agents don't match any patterns."""
-        config = MockRunConfig(quota_error_patterns={
-            "claude": ["rate limit"],
-            "codex": ["rate limit"],
-        })
+        config = MockRunConfig(
+            quota_error_patterns={
+                "claude": ["rate limit"],
+                "codex": ["rate limit"],
+            }
+        )
 
         # Unknown agent should not match
         assert not _is_quota_error("unknown", "rate limit exceeded", config)

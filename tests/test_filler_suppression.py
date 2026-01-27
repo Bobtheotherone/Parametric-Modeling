@@ -31,10 +31,7 @@ def should_suppress_backfill(tasks: list[MockTask]) -> bool:
     This mirrors the logic in maybe_generate_backfill() in bridge/loop.py.
     """
     root_failure_statuses = ("failed", "manual", "resource_killed")
-    has_root_failures = any(
-        t.status in root_failure_statuses and not _is_backfill_task_id(t.id)
-        for t in tasks
-    )
+    has_root_failures = any(t.status in root_failure_statuses and not _is_backfill_task_id(t.id) for t in tasks)
     return has_root_failures
 
 
@@ -168,5 +165,4 @@ class TestJan26ScenarioRegression:
         ]
 
         # With the fix, FILLER should be suppressed
-        assert should_suppress_backfill(tasks), \
-            "Jan 26 scenario: FILLER should be suppressed when 8 root failures exist"
+        assert should_suppress_backfill(tasks), "Jan 26 scenario: FILLER should be suppressed when 8 root failures exist"
