@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from tools.ci.real_openems import (
     RunResult,
     ToolchainLock,

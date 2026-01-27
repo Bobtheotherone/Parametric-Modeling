@@ -14,6 +14,8 @@ class ParallelSettings:
     """Settings for parallel worker execution."""
 
     max_workers_default: int = 8
+    max_workers_hard_cap: int = 32
+    force_alternation: bool = True
     cpu_intensive_threshold_pct: float = 40.0
     mem_intensive_threshold_pct: float = 40.0
     sample_interval_s: float = 1.0

@@ -1,12 +1,12 @@
-\# AGENTS.md — Codex Solo Protocol (M0 Hardening + Tri-Agent Reliability)
+\# AGENTS.md — Multi-Agent Orchestrator Protocol (Tri-Agent Reliability)
 
 
 
-This repository is an \*\*engineering-first\*\* “formula foundry” substrate. The immediate objective is to \*\*finish Milestone M0\*\* (repo substrate + reproducibility gates) and to \*\*make the tri-agent loop reliable\*\* (Codex + Gemini + Claude) without introducing nondeterminism or “green-but-incomplete” milestones.
+This repository is an \*\*engineering-first\*\* "formula foundry" substrate. The tri-agent loop (Codex + Gemini + Claude) operates under a parallel orchestrator that assigns tasks to isolated worktrees. Each agent must follow the rules below to avoid conflicts and maintain quality.
 
 
 
-You are \*\*Codex\*\* and you work \*\*solo\*\* as the only writing agent.
+You are the \*\*assigned agent for THIS task/worktree\*\*. Other agents may be running concurrently in their own worktrees.
 
 
 
@@ -18,11 +18,11 @@ You are \*\*Codex\*\* and you work \*\*solo\*\* as the only writing agent.
 
 
 
-\### 0.1 Single-writer rule
+\### 0.1 Single-writer-per-worktree rule
 
-\- You are the only agent allowed to modify the repository.
+\- You are the only writer for THIS task and THIS worktree. Do not modify files outside your declared scope.
 
-\- Do \*\*not\*\* trigger parallel agent runs that can write to the repo while you are making changes.
+\- Do \*\*not\*\* offload work to other agents unless you are blocked. If you must delegate, use the Delegation Packet template (§0.5).
 
 \- All loop tests must be run in a way that \*\*cannot modify tracked files\*\* (see §1).
 
@@ -90,6 +90,35 @@ If `tools.verify` does not enforce a requirement, you must fix `tools.verify` an
 
 
 
+
+
+\## 0.5) Behavioral Directives (Must Follow)
+
+\- No green-by-any-means: do not skip/xfail/delete tests or disable verification to make CI green.
+\- No delegating work you can do yourself; only delegate when blocked and use the Delegation Packet below.
+\- No scaffolding/shims/incomplete work; no TODO-only or placeholder changes.
+\- No regressions: add targeted tests for behavior changes and record exact commands run.
+
+\### Mandatory Work Report Template (required in every response)
+
+\- Summary: what changed and why
+\- Files changed: list of paths
+\- Commands run: exact shell commands
+\- Tests run: exact test commands
+\- Results: pass/fail with key output
+\- Follow-ups: remaining risks or next steps
+
+\### Delegation Packet Template (only if unavoidable)
+
+\- Objective:
+\- Scope boundary:
+\- Current state:
+\- Constraints:
+\- Reproduction steps (if a bug):
+\- Exact commands to run:
+\- Acceptance criteria:
+\- Deliverables:
+\- Risks / rollback plan:
 \## 1) Your Mission (What “Done” Means)
 
 

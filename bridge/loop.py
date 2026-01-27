@@ -45,7 +45,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Atomic I/O for robust file operations
-from bridge.atomic_io import atomic_write_json, validate_json_file
+from bridge.atomic_io import atomic_copy_file, atomic_write_json, validate_json_file
 
 # Design document parsing - modular adapter layer
 from bridge.design_doc import (
@@ -86,6 +86,8 @@ DEFAULT_PLANNER_PROFILE = "balanced"
 @dataclasses.dataclass(frozen=True)
 class ParallelSettings:
     max_workers_default: int = 8
+    max_workers_hard_cap: int = 32
+    force_alternation: bool = True
     cpu_intensive_threshold_pct: float = 40.0
     mem_intensive_threshold_pct: float = 40.0
     sample_interval_s: float = 1.0
@@ -313,6 +315,114 @@ def _normalize_planner_profile(profile: str | None) -> str:
     return DEFAULT_PLANNER_PROFILE
 
 
+# ---------------------------------------------------------------------------
+# Effective max-workers computation (single source of truth)
+# ---------------------------------------------------------------------------
+
+def compute_effective_max_workers(
+    *,
+    cli_max_workers: int,
+    config_default: int,
+    config_hard_cap: int,
+    cpu_cores: int,
+    plan_max_parallel: int | None = None,
+    schema_max: int = 32,
+) -> tuple[int, str]:
+    """Compute the effective max workers count.
+
+    Returns (effective_count, explanation_string) so callers can log
+    exactly why a particular value was chosen.
+
+    Selection logic:
+      1. If cli_max_workers > 0, use it (explicit user override).
+         - Clamp ONLY by hard cap + schema max, then min bound 1.
+      2. Otherwise, use config_default as the baseline (auto mode).
+      3. Clamp by hard cap, schema max, then plan_max_parallel (auto only).
+      4. Clamp to [1, ...] so we always have at least one worker.
+    """
+    reasons: list[str] = []
+    auto_mode = cli_max_workers <= 0
+
+    if cli_max_workers > 0:
+        effective = cli_max_workers
+        reasons.append(f"cli_override={cli_max_workers}")
+        if plan_max_parallel is not None and plan_max_parallel > 0:
+            reasons.append(f"plan_max_parallel_ignored={plan_max_parallel}")
+    else:
+        effective = config_default
+        reasons.append(f"config_default={config_default}")
+
+    if config_hard_cap > 0 and effective > config_hard_cap:
+        reasons.append(f"clamped_by_hard_cap={config_hard_cap}")
+        effective = config_hard_cap
+
+    if schema_max > 0 and effective > schema_max:
+        reasons.append(f"clamped_by_schema_max={schema_max}")
+        effective = schema_max
+
+    if auto_mode and plan_max_parallel is not None and plan_max_parallel > 0 and effective > plan_max_parallel:
+        reasons.append(f"clamped_by_plan={plan_max_parallel}")
+        effective = plan_max_parallel
+
+    if effective < 1:
+        reasons.append("clamped_by_min=1")
+        effective = 1
+
+    return effective, ", ".join(reasons)
+
+
+# ---------------------------------------------------------------------------
+# Directive-file materialization
+# ---------------------------------------------------------------------------
+
+def materialize_directive_file(
+    *,
+    project_root: Path,
+    target_dir: Path,
+    agent_name: str,
+    verbose: bool = False,
+) -> None:
+    """Ensure the correct directive file exists in *target_dir* before agent invocation.
+
+    For Claude invocations:
+      - Prefer project_root/CLAUDE.md; fall back to project_root/AGENTS.md.
+      - Copy to target_dir/CLAUDE.md.
+    For all agents:
+      - If project_root/AGENTS.md exists, copy to target_dir/AGENTS.md.
+
+    Copies are atomic and idempotent (skip if content already matches).
+    """
+    def _copy_if_needed(src: Path, dst: Path) -> bool:
+        """Copy *src* to *dst* atomically if content differs. Returns True if written."""
+        if not src.exists():
+            return False
+        try:
+            if dst.exists() and dst.read_bytes() == src.read_bytes():
+                return False
+        except OSError:
+            # If we can't compare, fall back to copying.
+            pass
+        atomic_copy_file(src, dst)
+        return True
+
+    agents_src = project_root / "AGENTS.md"
+    claude_src = project_root / "CLAUDE.md"
+
+    # For Claude agents, materialize CLAUDE.md
+    if agent_name == "claude":
+        source = claude_src if claude_src.exists() else (agents_src if agents_src.exists() else None)
+        if source:
+            wrote = _copy_if_needed(source, target_dir / "CLAUDE.md")
+            if verbose and wrote:
+                print(f"[orchestrator] directive: copied {source.name} -> {target_dir / 'CLAUDE.md'}")
+
+    # For all agents, materialize AGENTS.md if present in project root
+    if agents_src.exists():
+        wrote = _copy_if_needed(agents_src, target_dir / "AGENTS.md")
+        if verbose and wrote:
+            print(f"[orchestrator] directive: copied AGENTS.md -> {target_dir / 'AGENTS.md'}")
+
+
 def _load_system_prompt(
     *,
     project_root: Path,
@@ -322,7 +432,8 @@ def _load_system_prompt(
     """Load the effective system prompt for the selected planner profile.
 
     Returns a tuple of (prompt_text, effective_path). In engineering mode, this
-    forces the engineering system prompt and appends AGENTS.md content.
+    forces the engineering system prompt.  AGENTS.md is NOT appended;
+    directive files are materialized into the working directory instead.
     """
     effective_path = system_prompt_path
     if planner_profile == "engineering":
@@ -330,16 +441,11 @@ def _load_system_prompt(
 
     prompt_text = _read_text(effective_path) if effective_path.exists() else ""
 
-    if planner_profile == "engineering":
-        agents_path = project_root / "AGENTS.md"
-        if agents_path.exists():
-            agents_text = _read_text(agents_path).strip()
-            if agents_text:
-                prompt_text = (
-                    prompt_text.strip()
-                    + "\n\n---\n\n# Repo Protocol (AGENTS.md)\n"
-                    + agents_text
-                )
+    # NOTE: AGENTS.md content is NO LONGER appended to the system prompt.
+    # Instead, the directive file (CLAUDE.md / AGENTS.md) is materialized into
+    # the agent's working directory via materialize_directive_file().  Agents
+    # read it as a working-directory file, which has stronger behavioral
+    # influence than prompt injection (especially for Claude).
 
     return prompt_text, effective_path
 
@@ -903,6 +1009,8 @@ def load_config(config_path: Path) -> RunConfig:
     parallel_cfg = data.get("parallel", {}) or {}
     parallel = ParallelSettings(
         max_workers_default=int(parallel_cfg.get("max_workers_default", 8)),
+        max_workers_hard_cap=int(parallel_cfg.get("max_workers_hard_cap", 32)),
+        force_alternation=bool(parallel_cfg.get("force_alternation", True)),
         cpu_intensive_threshold_pct=float(parallel_cfg.get("cpu_intensive_threshold_pct", 40.0)),
         mem_intensive_threshold_pct=float(parallel_cfg.get("mem_intensive_threshold_pct", 40.0)),
         sample_interval_s=float(parallel_cfg.get("sample_interval_s", 1.0)),
@@ -1535,13 +1643,17 @@ def _override_next_agent(requested: str, config: RunConfig, state: RunState) -> 
     if not enabled:
         return requested, None
 
-    current = state.history[-1]["agent"] if state.history else None
-    if current:
-        other = _other_agent(current)
-        if other and other in enabled:
-            if requested != other:
-                return other, "two-agent alternation (codex <-> claude)"
-            return other, None
+    # Two-agent alternation: only apply when force_alternation is enabled.
+    # Engineering profile sets force_alternation=false by default to avoid
+    # pointless handoffs.
+    if config.parallel.force_alternation:
+        current = state.history[-1]["agent"] if state.history else None
+        if current:
+            other = _other_agent(current)
+            if other and other in enabled:
+                if requested != other:
+                    return other, "two-agent alternation (codex <-> claude)"
+                return other, None
 
     if requested in enabled:
         return requested, None
@@ -2328,6 +2440,7 @@ def _run_agent_live(
     config: RunConfig,
     state: RunState,
     stream_agent_output: str = "none",
+    verbose: bool = False,
     call_dir: Path | None = None,
 ) -> tuple[int, str, str]:
     script_rel = config.agent_scripts.get(agent, "")
@@ -2337,6 +2450,14 @@ def _run_agent_live(
     script_path = state.project_root / script_rel
     if not script_path.exists():
         return 1, "", f"Agent script not found: {script_path}"
+
+    # Ensure directive files are available in the working directory.
+    materialize_directive_file(
+        project_root=state.project_root,
+        target_dir=state.project_root,
+        agent_name=agent,
+        verbose=verbose,
+    )
 
     _ensure_dir(out_path.parent)
 
@@ -3066,6 +3187,7 @@ For each milestone in the document, identify and create the necessary tasks."""
 
 def _format_task_packet_for_parallel(task: ParallelTask) -> str:
     """Build a structured Task Packet for engineering mode prompts."""
+
     def _fmt_list(items: list[str]) -> str:
         if not items:
             return "(none specified)"
@@ -3078,7 +3200,7 @@ def _format_task_packet_for_parallel(task: ParallelTask) -> str:
         f"Relevant files (declared): {_fmt_list([str(p) for p in task.touched_paths])}",
         f"Locks: {_fmt_list([str(l) for l in task.locks])}",
         f"Dependencies: {_fmt_list([str(d) for d in task.depends_on])}",
-        "Constraints: Follow AGENTS.md. No placeholders/TODO-only. Do not delegate unless explicitly required.",
+        "Constraints: Follow the repo directive file in your working directory (CLAUDE.md for Claude; AGENTS.md if present). No placeholders/TODO-only. Do not delegate unless explicitly required.",
         "Suggested verification: Run targeted checks for touched files; if heavy, provide the exact command in summary.",
     ]
     return "\n".join(f"- {line}" for line in lines)
@@ -3092,7 +3214,7 @@ def _format_task_packet_for_sequential(next_prompt: str) -> str:
         "Deliverables: Complete the objective end-to-end with code + tests where applicable.",
         "Done criteria: Work is implemented, verification commands are noted, summary includes a Work Report.",
         "Relevant files: Identify and list in the Work Report.",
-        "Constraints: Follow AGENTS.md. No placeholders/TODO-only. Do not delegate unless required.",
+        "Constraints: Follow the repo directive file in your working directory (CLAUDE.md for Claude; AGENTS.md if present). No placeholders/TODO-only. Do not delegate unless required.",
         "Suggested verification: Run the smallest relevant tests or provide exact commands.",
     ]
     return "\n".join(f"- {line}" for line in lines)
@@ -3262,9 +3384,7 @@ def _summary_is_generic(summary: str) -> bool:
     has_action = any(word in lower for word in NON_PROGRESS_ACTION_KEYWORDS)
     if any(pat in lower for pat in NON_PROGRESS_SUMMARY_PATTERNS) and not has_action:
         return True
-    if len(lower) < 80 and not has_action:
-        return True
-    return False
+    return bool(len(lower) < 80 and not has_action)
 
 
 def _detect_non_progress_turn(turn_obj: dict[str, Any], has_changes: bool) -> tuple[bool, str]:
@@ -3302,6 +3422,7 @@ def _should_self_heal_task(task: ParallelTask, planner_profile: str) -> tuple[bo
     if "lock" in error_lower and ("contention" in error_lower or "lock" in error_lower):
         return True, "lock_contention"
     return False, "non_infra_failure"
+
 
 def _select_only_tasks(all_tasks: list[ParallelTask], only_ids: list[str]) -> list[ParallelTask]:
     if not only_ids:
@@ -3689,6 +3810,7 @@ def _run_parallel_task(
     terminal_max_bytes: int,
     terminal_max_line_length: int,
     allow_resource_intensive: bool,
+    verbose: bool = False,
 ) -> None:
     task.worker_id = worker_id
     task.task_dir = tasks_dir / _sanitize_branch_fragment(task.id)
@@ -3791,8 +3913,16 @@ def _run_parallel_task(
             task.error = (out2 + "\n" + err2).strip()
             return
 
-    # Agent execution with retry loop for plan-only responses
+    # Materialize directive files in the worktree before agent invocation
     agent = task.agent if task.agent in AGENTS else "codex"
+    materialize_directive_file(
+        project_root=state.project_root,
+        target_dir=task.worktree_path,
+        agent_name=agent,
+        verbose=verbose,
+    )
+
+    # Agent execution with retry loop for plan-only responses
     script_rel = config.agent_scripts.get(agent, "")
     script_path = (task.worktree_path / script_rel) if script_rel else None
     if not script_path or not script_path.exists():
@@ -4497,14 +4627,16 @@ def run_parallel(
         plan_prompt_path = state.runs_dir / "task_planner_prompt.txt"
         plan_out_path = state.runs_dir / "task_plan.json"
 
-        # Safety cap hint: default to cores - 6 (leaving headroom for OS + orchestrator), capped at 12.
-        # This gives 10 on a 16-core machine. Use --max-workers to override if needed.
-        cores = machine_info.get("cpu_cores") or 1
-        safe_cap = min(12, max(4, int(cores) - 6))
-
-        # If CLI explicitly sets --max-workers, use that as the planner limit too
-        cli_cap = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
-        planner_max_workers_limit = cli_cap if cli_cap > 0 else safe_cap
+        # Compute effective max workers using the single source of truth function.
+        cli_mw = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
+        cores = int(machine_info.get("cpu_cores") or 1)
+        planner_max_workers_limit, _mw_reason = compute_effective_max_workers(
+            cli_max_workers=cli_mw,
+            config_default=config.parallel.max_workers_default,
+            config_hard_cap=config.parallel.max_workers_hard_cap,
+            cpu_cores=cores,
+        )
+        print(f"[orchestrator] planner target workers: {planner_max_workers_limit} ({_mw_reason})")
 
         # Get planner profile (default: balanced)
         # Log throughput mode settings
@@ -4533,6 +4665,13 @@ def run_parallel(
         if not planner_script.exists():
             print(f"[orchestrator] ERROR: planner script not found: {planner_script}")
             return 2
+
+        materialize_directive_file(
+            project_root=state.project_root,
+            target_dir=state.project_root,
+            agent_name=planner_agent,
+            verbose=bool(getattr(args, "verbose", False)),
+        )
 
         print(f"[orchestrator] parallel: planning tasks via {planner_agent} (schema={plan_schema_path})")
         env = os.environ.copy()
@@ -4738,12 +4877,14 @@ def run_parallel(
             print("[orchestrator] ERROR: no tasks in plan")
             return 2
 
-        # Final worker count (CLI override takes precedence and bypasses safe_cap)
-        if args.max_workers and int(args.max_workers) > 0:
-            max_workers = min(16, int(args.max_workers))
-        else:
-            max_workers = min(16, safe_cap, plan_max_parallel)
-            max_workers = max(1, max_workers)
+        # Final worker count via single source of truth
+        max_workers, mw_explanation = compute_effective_max_workers(
+            cli_max_workers=cli_mw,
+            config_default=config.parallel.max_workers_default,
+            config_hard_cap=config.parallel.max_workers_hard_cap,
+            cpu_cores=cores,
+            plan_max_parallel=plan_max_parallel,
+        )
 
     # Common setup for both selftest and real mode
     if not selftest_mode:
@@ -4761,9 +4902,8 @@ def run_parallel(
 
     # Verbose logging of all worker limits
     if not selftest_mode:
-        cli_val = int(args.max_workers) if args.max_workers and int(args.max_workers) > 0 else 0
         print(
-            f"[orchestrator] parallel: max_workers={max_workers} (safe_cap={safe_cap}, plan_cap={plan_max_parallel}, cli_cap={cli_val if cli_val > 0 else 'auto'})"
+            f"[orchestrator] parallel: max_workers={max_workers} ({mw_explanation})"
         )
     else:
         print(f"[orchestrator] parallel: max_workers={max_workers} (selftest mode)")
@@ -4923,10 +5063,7 @@ def run_parallel(
         # POLICY 1: SUPPRESS FILLER WHEN ROOT FAILURES EXIST
         # Root failures are non-backfill tasks that have failed, need manual work, or were resource-killed.
         root_failure_statuses = ("failed", "manual", "resource_killed")
-        has_root_failures = any(
-            t.status in root_failure_statuses and not _is_backfill_task_id(t.id)
-            for t in tasks
-        )
+        has_root_failures = any(t.status in root_failure_statuses and not _is_backfill_task_id(t.id) for t in tasks)
         if has_root_failures:
             # Only log once per suppression cycle to avoid spam
             if backfill_tasks_generated == 0:
@@ -4943,10 +5080,7 @@ def run_parallel(
             return 0
 
         # POLICY 3: No FILLER when queued FILLER tasks >= max_workers / 2
-        queued_filler = sum(
-            1 for t in tasks
-            if t.status == "pending" and _is_backfill_task_id(t.id)
-        )
+        queued_filler = sum(1 for t in tasks if t.status == "pending" and _is_backfill_task_id(t.id))
         max_queued_filler = max(1, max_workers // 2)  # At least 1, at most half of workers
         if queued_filler >= max_queued_filler:
             return 0
@@ -5192,6 +5326,7 @@ def run_parallel(
                     terminal_max_bytes=term_bytes,
                     terminal_max_line_length=term_line,
                     allow_resource_intensive=allow_resource_intensive,
+                    verbose=bool(getattr(args, "verbose", False)),
                 )
         except Exception as e:
             t.status = "failed"
@@ -5939,12 +6074,13 @@ def _run_parallel_with_auto_continue(
         # This prevents treating "different task IDs with same underlying error" as progress.
         if last_summary:
             current_signatures = _compute_failure_signatures_from_summary(last_summary)
-            current_root_failure_ids = {t["id"] for t in last_summary.get("root_failures", [])}
 
             # Compare signatures - same signatures mean same underlying errors
             if current_signatures == prev_failure_signatures:
                 stalled_count += 1
-                print(f"[orchestrator] AUTO-CONTINUE: No progress (same failure signatures). Stalled count: {stalled_count}/{max_stalled}")
+                print(
+                    f"[orchestrator] AUTO-CONTINUE: No progress (same failure signatures). Stalled count: {stalled_count}/{max_stalled}"
+                )
                 print(f"[orchestrator] Signatures: {current_signatures}")
 
                 # SELF-HEALING: Generate repair context for stalled failures
@@ -5965,7 +6101,7 @@ def _run_parallel_with_auto_continue(
             else:
                 stalled_count = 0
                 planning_failure_count = 0  # Reset planning failures on progress
-                print(f"[orchestrator] AUTO-CONTINUE: Progress detected (different failure signatures)")
+                print("[orchestrator] AUTO-CONTINUE: Progress detected (different failure signatures)")
                 print(f"[orchestrator] Previous: {prev_failure_signatures}")
                 print(f"[orchestrator] Current: {current_signatures}")
 
@@ -6384,6 +6520,7 @@ def main() -> int:
                 config=config,
                 state=state,
                 stream_agent_output=args.stream_agent_output,
+                verbose=bool(getattr(args, "verbose", False)),
                 call_dir=call_dir,
             )
 

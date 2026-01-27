@@ -54,7 +54,7 @@ Both agents are capable of full implementation and review. Agent selection is dy
 - Review tasks: both agents can review code, catch edge cases, check prompt/schema compliance, and propose safer plans.
 - Task assignment: the orchestrator assigns tasks based on heuristics (keywords, workload balance) or explicit policy flags.
 
-When working in sequential mode, hand off to the other agent unless completing the project. When in --only-* mode, you are the sole agent and must handle all tasks yourself.
+When working in sequential mode with alternation enabled, hand off to the other agent unless completing the project. When in --only-* mode or when alternation is disabled (engineering profile default), you are the sole agent for your task and must handle it yourself. Do not delegate work you can do.
 
 ## Rules
 

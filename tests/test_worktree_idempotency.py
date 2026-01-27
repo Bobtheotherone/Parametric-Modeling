@@ -129,8 +129,9 @@ class TestBranchCollisionHandling:
 
         # Try to delete branch directly - should fail (checked out in worktree)
         rc, _, err = run_git(["branch", "-D", branch_name], temp_git_repo)
-        assert rc != 0 or "checked out" in err.lower() or "cannot delete" in err.lower(), \
+        assert rc != 0 or "checked out" in err.lower() or "cannot delete" in err.lower(), (
             "Deleting branch checked out in worktree should fail or warn"
+        )
 
         # Remove worktree first
         rc, _, _ = run_git(["worktree", "remove", "--force", str(worktree_path)], temp_git_repo)

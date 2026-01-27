@@ -203,8 +203,7 @@ class TestEarlyStopThreshold:
         # Iter 1: Add to history, count=0
         # Iter 2: Match, count=1
         # Iter 3: Match, count=2 -> stop
-        assert iterations_before_stop == 3, \
-            f"Old threshold would require {iterations_before_stop} iterations"
+        assert iterations_before_stop == 3, f"Old threshold would require {iterations_before_stop} iterations"
 
 
 class TestJan26VerifyRepairRegression:
@@ -249,8 +248,7 @@ class TestJan26VerifyRepairRegression:
             signature_history.append(signature)
 
         # With new threshold=1, we should stop after 2 attempts
-        assert attempts_before_stop == 2, \
-            f"Jan 26 scenario should stop after 2 attempts, not {attempts_before_stop}"
+        assert attempts_before_stop == 2, f"Jan 26 scenario should stop after 2 attempts, not {attempts_before_stop}"
 
     def test_jan26_would_have_thrashed_3_times(self):
         """Verify that the old behavior would have thrashed 3 times."""
@@ -279,8 +277,7 @@ class TestJan26VerifyRepairRegression:
             signature_history.append(signature)
 
         # Old behavior: stops after 3 attempts (wastes 1 iteration)
-        assert attempts_before_stop == 3, \
-            f"Old threshold would have taken {attempts_before_stop} attempts"
+        assert attempts_before_stop == 3, f"Old threshold would have taken {attempts_before_stop} attempts"
 
 
 class TestProgressVsStall:

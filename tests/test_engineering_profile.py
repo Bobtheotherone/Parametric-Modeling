@@ -12,13 +12,13 @@ from bridge.loop import (
     ParallelTask,
     RunConfig,
     RunState,
-    run_parallel,
     _build_parallel_task_prompt,
     _detect_non_progress_turn,
     _load_system_prompt,
     _max_retries_for_profile,
     _maybe_write_task_report,
     _should_self_heal_task,
+    run_parallel,
 )
 
 
@@ -40,8 +40,9 @@ def _make_config() -> RunConfig:
     )
 
 
-def test_engineering_prompt_composition_includes_agents_and_task_packet(tmp_path: Path) -> None:
-    agents_text = "AGENTS-PROTOCOL-TEST"
+def test_engineering_prompt_uses_system_engineering_without_agents_injection(tmp_path: Path) -> None:
+    """Engineering profile uses system_engineering.md but does NOT inject AGENTS.md content."""
+    agents_text = "AGENTS-PROTOCOL-SENTINEL-UNIQUE"
     system_text = "ENGINEERING-SYSTEM-PROMPT"
 
     (tmp_path / "AGENTS.md").write_text(agents_text, encoding="utf-8")
@@ -57,7 +58,8 @@ def test_engineering_prompt_composition_includes_agents_and_task_packet(tmp_path
     )
 
     assert "ENGINEERING-SYSTEM-PROMPT" in system_prompt
-    assert "AGENTS-PROTOCOL-TEST" in system_prompt
+    # AGENTS.md must NOT be in the prompt (directive file mechanism replaces injection)
+    assert "AGENTS-PROTOCOL-SENTINEL-UNIQUE" not in system_prompt
     assert effective_path.name == "system_engineering.md"
 
     task = ParallelTask(
@@ -79,7 +81,8 @@ def test_engineering_prompt_composition_includes_agents_and_task_packet(tmp_path
     )
 
     assert "Task Packet" in prompt_text
-    assert "Repo Protocol" in prompt_text
+    # No injected AGENTS.md content
+    assert "AGENTS-PROTOCOL-SENTINEL-UNIQUE" not in prompt_text
 
 
 def test_non_progress_detection_and_retry_policy() -> None:

@@ -12,7 +12,6 @@ Run with: pytest tests/test_backfill_policy_profile.py -v
 from __future__ import annotations
 
 import pytest
-
 from bridge.scheduler import BackfillGenerator
 
 
