@@ -2,6 +2,9 @@
 runs/
 **/runs/
 
+# Generated snapshots (not used by runtime — do not trust for behavior)
+*_flattened.txt
+
 # Python
 __pycache__/
 *.pyc
