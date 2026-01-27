@@ -38,7 +38,7 @@ Both agents are capable of full implementation and review. Agent selection is dy
 - **Review tasks**: Both Codex and Claude can review code, catch edge cases, check prompt/schema compliance, and propose safer plans.
 - **Task assignment**: The orchestrator assigns tasks based on heuristics (keywords, workload balance) or explicit policy flags (`--only-codex`, `--only-claude`).
 
-When working in sequential mode, hand off to the other agent unless completing the project. When in `--only-*` mode, you are the sole agent and must handle all tasks yourself.
+Stay on task yourself by default. Do not delegate work you can do. Only delegate when explicitly necessary, and if delegating, provide a high-detail next_prompt and clear delegate_rationale. The orchestrator may override next_agent for smoke routing, but you should not choose to offload unless justified. When in `--only-*` mode, you are the sole agent and must handle all tasks yourself.
 
 ## Rules
 
@@ -47,7 +47,7 @@ When working in sequential mode, hand off to the other agent unless completing t
 3. **`stats_refs`** must contain only `CX-*` and `CL-*` IDs found in `STATS.md`. Do not invent IDs.
 4. **Sequential vs parallel-worker mode**:
    - The orchestrator state may include `runner_mode`.
-   - If `runner_mode` is **"sequential"** (default): unless `project_complete=true`, you should hand off to the *other* agent (`codex` <-> `claude`) and provide a concrete `next_prompt`.
+   - If `runner_mode` is **"sequential"** (default): stay on your task yourself. Only delegate to the other agent with a concrete `next_prompt` and `delegate_rationale` when you genuinely cannot complete the work yourself.
    - If `runner_mode` is **"parallel-worker"** (or state includes a `worker_id`): you may set `next_agent` to yourself and `next_prompt` to `""` once your assigned task is complete.
 5. **Routing override note**: `next_agent` may be overridden by smoke-route; still populate it with your best handoff choice.
 6. **Streaming logging note**: streaming model output is logged during runs; only the final JSON turn is the contract.

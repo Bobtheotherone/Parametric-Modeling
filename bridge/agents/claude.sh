@@ -220,6 +220,7 @@ run_claude() {
   python3 - <<'PY' "$TIMEOUT_S" "$wrap_path" "$err_path" "${wrap_path}.meta.json" "${cmd[@]}"
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -237,6 +238,81 @@ rc = 0
 
 stdout_lines = []
 stderr_lines = []
+
+NO_MESSAGES_RE = re.compile(r"Error: No messages returned")
+STACK_RE = re.compile(r"^\s+at\b")
+STACK_ALT_RE = re.compile(r"^\s*at\s")
+ORIGINATED_RE = re.compile(r"^This error originated either by throwing", re.IGNORECASE)
+PROMISE_RE = re.compile(r"^The promise rejected with the reason", re.IGNORECASE)
+
+def parse_json_sequence(raw):
+    objects = []
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(raw)
+    while idx < n:
+        while idx < n and raw[idx] in " \t\n\r":
+            idx += 1
+        if idx >= n:
+            break
+        if raw[idx] not in "[{":
+            next_obj = raw.find("{", idx)
+            next_arr = raw.find("[", idx)
+            candidates = [i for i in (next_obj, next_arr) if i != -1]
+            if not candidates:
+                break
+            idx = min(candidates)
+        try:
+            obj, end = decoder.raw_decode(raw, idx)
+        except json.JSONDecodeError:
+            next_obj = raw.find("{", idx + 1)
+            next_arr = raw.find("[", idx + 1)
+            candidates = [i for i in (next_obj, next_arr) if i != -1]
+            if not candidates:
+                break
+            idx = min(candidates)
+            continue
+        if isinstance(obj, list):
+            objects.extend(obj)
+        else:
+            objects.append(obj)
+        idx = end
+    return objects
+
+def has_success_result(raw):
+    if not raw:
+        return False
+    try:
+        objects = parse_json_sequence(raw)
+    except Exception:
+        return False
+    for obj in reversed(objects):
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            subtype = obj.get("subtype")
+            if subtype == "success":
+                return True
+            if subtype is not None and subtype != "success":
+                return False
+            if obj.get("is_error") is False:
+                return True
+            return False
+    return False
+
+def filter_no_messages(lines):
+    filtered = []
+    skip_block = False
+    for line in lines:
+        if ORIGINATED_RE.search(line) or PROMISE_RE.search(line) or NO_MESSAGES_RE.search(line):
+            skip_block = True
+            continue
+        if skip_block:
+            if STACK_RE.match(line) or STACK_ALT_RE.match(line):
+                continue
+            if not line.strip():
+                continue
+            skip_block = False
+        filtered.append(line)
+    return filtered
 
 try:
     proc = subprocess.Popen(
@@ -258,15 +334,20 @@ except Exception as exc:
         json.dump({"cmd": cmd, "rc": rc, "error": str(exc)}, handle)
     sys.exit(0)
 
-def reader(stream, sink, dest):
+def reader_stdout(stream, sink):
     for line in iter(stream.readline, ""):
         sink.append(line)
-        dest.write(line)
-        dest.flush()
+        sys.stdout.write(line)
+        sys.stdout.flush()
     stream.close()
 
-t_out = threading.Thread(target=reader, args=(proc.stdout, stdout_lines, sys.stdout), daemon=True)
-t_err = threading.Thread(target=reader, args=(proc.stderr, stderr_lines, sys.stderr), daemon=True)
+def reader_stderr(stream, sink):
+    for line in iter(stream.readline, ""):
+        sink.append(line)
+    stream.close()
+
+t_out = threading.Thread(target=reader_stdout, args=(proc.stdout, stdout_lines), daemon=True)
+t_err = threading.Thread(target=reader_stderr, args=(proc.stderr, stderr_lines), daemon=True)
 t_out.start()
 t_err.start()
 
@@ -284,7 +365,15 @@ except subprocess.TimeoutExpired:
 t_out.join()
 t_err.join()
 out = "".join(stdout_lines)
+success_event = has_success_result(out)
+force_suppress = os.environ.get("CLAUDE_SUPPRESS_NO_MESSAGES", "") == "1"
+if success_event or force_suppress:
+    stderr_lines = filter_no_messages(stderr_lines)
 err = "".join(stderr_lines)
+
+if err:
+    sys.stderr.write(err)
+    sys.stderr.flush()
 
 with open(wrap_path, "w", encoding="utf-8") as handle:
     handle.write(out)
@@ -293,7 +382,15 @@ with open(err_path, "a", encoding="utf-8") as handle:
     handle.write(err)
 
 with open(meta_path, "w", encoding="utf-8") as handle:
-    json.dump({"cmd": cmd, "rc": rc}, handle)
+    json.dump(
+        {
+            "cmd": cmd,
+            "rc": rc,
+            "success_event": success_event,
+            "stderr_filtered": bool(success_event or force_suppress),
+        },
+        handle,
+    )
 PY
 }
 
@@ -307,7 +404,28 @@ run_claude "json" "$WRAP_SCHEMA" "$ERR_SCHEMA"
 
 # If that produced an error wrapper or no usable result, we'll fall back to plain.
 # Normalization logic below will choose the better wrapper automatically.
-run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
+schema_success=0
+if python3 - <<'PY' "${WRAP_SCHEMA}.meta.json"
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    data = json.loads(open(path, "r", encoding="utf-8").read())
+except Exception:
+    sys.exit(1)
+
+sys.exit(0 if data.get("success_event") else 1)
+PY
+then
+  schema_success=1
+fi
+
+if [[ "$schema_success" == "1" ]]; then
+  CLAUDE_SUPPRESS_NO_MESSAGES=1 run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
+else
+  run_claude "plain" "$WRAP_PLAIN" "$ERR_PLAIN"
+fi
 
 # Save combined raw stream for debugging
 cat "$WRAP_SCHEMA" "$WRAP_PLAIN" > "$RAW_STREAM" 2>/dev/null || true
@@ -636,6 +754,24 @@ def read_meta(path: str):
     meta_path = path + ".meta.json"
     return read_json(meta_path) or {}
 
+TAIL_LINES = 20
+
+def tail_lines(text: str, max_lines: int = TAIL_LINES) -> str:
+    lines = text.splitlines()
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+def tail_block(label: str, stdout_text: str, stderr_text: str) -> str:
+    parts = []
+    stdout_tail = tail_lines(stdout_text)
+    stderr_tail = tail_lines(stderr_text)
+    if stdout_tail:
+        parts.append(f"{label} stdout tail:\\n{stdout_tail}")
+    if stderr_tail:
+        parts.append(f"{label} stderr tail:\\n{stderr_tail}")
+    return "\\n".join(parts)
+
 def strip_fences(s: str) -> str:
     s = s.strip()
     if s.startswith("```"):
@@ -821,12 +957,21 @@ milestone_id = extract_milestone_id(prompt_text)
 def synthesize(reason: str, model_text: str) -> dict:
     meta_schema = read_meta(wrap_schema)
     meta_plain = read_meta(wrap_plain)
+    tail_sections = []
+    schema_tail = tail_block("schema_attempt", read_text(wrap_schema), read_text(err_schema))
+    if schema_tail:
+        tail_sections.append(schema_tail)
+    plain_tail = tail_block("plain_attempt", read_text(wrap_plain), read_text(err_plain))
+    if plain_tail:
+        tail_sections.append(plain_tail)
     diag = "\\n\\n".join(
         [
             diagnostic_block("schema_attempt", meta_schema, read_text(err_schema)),
             diagnostic_block("plain_attempt", meta_plain, read_text(err_plain)),
         ]
     )
+    if tail_sections:
+        diag = f"{diag}\\n\\nTail (last {TAIL_LINES} lines):\\n" + "\\n\\n".join(tail_sections)
     summary = append_wrapper_meta(f"{reason} Diagnostics:\\n{diag}", "error")
     return {
         "agent": "claude",

@@ -408,6 +408,17 @@ class MergeResolver:
                     attempt=attempt,
                 )
         else:
+            # Ensure directive files are materialized before agent invocation
+            from bridge.directives import materialize_directive_file
+
+            # Infer agent name from script path (e.g. "bridge/agents/claude.sh" -> "claude")
+            agent_name = Path(self.agent_script).stem or "claude"
+            materialize_directive_file(
+                project_root=self.project_root,
+                target_dir=self.project_root,
+                agent_name=agent_name,
+            )
+
             # Run real agent
             agent_script_path = self.project_root / self.agent_script
             if not agent_script_path.exists():

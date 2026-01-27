@@ -372,55 +372,10 @@ def compute_effective_max_workers(
 
 
 # ---------------------------------------------------------------------------
-# Directive-file materialization
+# Directive-file materialization (canonical impl in bridge.directives)
 # ---------------------------------------------------------------------------
 
-def materialize_directive_file(
-    *,
-    project_root: Path,
-    target_dir: Path,
-    agent_name: str,
-    verbose: bool = False,
-) -> None:
-    """Ensure the correct directive file exists in *target_dir* before agent invocation.
-
-    For Claude invocations:
-      - Prefer project_root/CLAUDE.md; fall back to project_root/AGENTS.md.
-      - Copy to target_dir/CLAUDE.md.
-    For all agents:
-      - If project_root/AGENTS.md exists, copy to target_dir/AGENTS.md.
-
-    Copies are atomic and idempotent (skip if content already matches).
-    """
-    def _copy_if_needed(src: Path, dst: Path) -> bool:
-        """Copy *src* to *dst* atomically if content differs. Returns True if written."""
-        if not src.exists():
-            return False
-        try:
-            if dst.exists() and dst.read_bytes() == src.read_bytes():
-                return False
-        except OSError:
-            # If we can't compare, fall back to copying.
-            pass
-        atomic_copy_file(src, dst)
-        return True
-
-    agents_src = project_root / "AGENTS.md"
-    claude_src = project_root / "CLAUDE.md"
-
-    # For Claude agents, materialize CLAUDE.md
-    if agent_name == "claude":
-        source = claude_src if claude_src.exists() else (agents_src if agents_src.exists() else None)
-        if source:
-            wrote = _copy_if_needed(source, target_dir / "CLAUDE.md")
-            if verbose and wrote:
-                print(f"[orchestrator] directive: copied {source.name} -> {target_dir / 'CLAUDE.md'}")
-
-    # For all agents, materialize AGENTS.md if present in project root
-    if agents_src.exists():
-        wrote = _copy_if_needed(agents_src, target_dir / "AGENTS.md")
-        if verbose and wrote:
-            print(f"[orchestrator] directive: copied AGENTS.md -> {target_dir / 'AGENTS.md'}")
+from bridge.directives import materialize_directive_file  # noqa: E402 — re-export for backwards compat
 
 
 def _load_system_prompt(
@@ -4796,7 +4751,14 @@ def run_parallel(
             return 2
 
         raw_tasks = plan_obj.get("tasks", [])
-        plan_max_parallel = int(plan_obj.get("max_parallel_tasks", safe_cap) or safe_cap)
+        raw_pmp = plan_obj.get("max_parallel_tasks")
+        try:
+            plan_max_parallel = int(raw_pmp)
+        except (TypeError, ValueError):
+            plan_max_parallel = planner_max_workers_limit
+        if plan_max_parallel <= 0:
+            plan_max_parallel = planner_max_workers_limit
+        plan_max_parallel = max(1, plan_max_parallel)
 
         # Helper to select agent when "either" is specified
         agent_round_robin_counter = [0]  # mutable for closure

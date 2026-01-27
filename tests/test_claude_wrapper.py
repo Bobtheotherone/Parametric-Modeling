@@ -760,6 +760,181 @@ PY
     assert payload["work_completed"] is True
 
 
+def test_claude_wrapper_suppresses_no_messages_error_on_success(tmp_path: Path) -> None:
+    """Success result should suppress the known 'No messages returned' stderr noise."""
+    claude_stub = tmp_path / "claude"
+    _write_executable(
+        claude_stub,
+        """#!/usr/bin/env bash
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
+  exit 0
+fi
+
+python3 - <<'PY'
+import json
+turn = {
+    "agent": "claude",
+    "milestone_id": "M0",
+    "phase": "finalize",
+    "work_completed": True,
+    "project_complete": False,
+    "summary": "ok",
+    "gates_passed": [],
+    "requirement_progress": {
+        "covered_req_ids": [],
+        "tests_added_or_modified": [],
+        "commands_run": [],
+    },
+    "next_agent": "codex",
+    "next_prompt": "",
+    "delegate_rationale": "",
+    "stats_refs": ["CL-1"],
+    "needs_write_access": True,
+    "artifacts": [],
+}
+events = [
+    {"type": "system", "subtype": "init"},
+    {"type": "result", "subtype": "success", "result": json.dumps(turn)},
+]
+print(json.dumps(events))
+PY
+echo "This error originated either by throwing inside of an async function without a catch block," >&2
+echo "or by rejecting a promise which was not handled with .catch()." >&2
+echo "The promise rejected with the reason:" >&2
+echo "Error: No messages returned" >&2
+echo '    at AJB (/$bunfs/root/claude:6144:641)' >&2
+echo '    at processTicksAndRejections (native:7:39)' >&2
+exit 1
+""",
+    )
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = _base_env(claude_stub)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, f"Wrapper failed: {result.stderr}"
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "This error originated either by throwing" not in result.stderr
+    assert "The promise rejected with the reason" not in result.stderr
+    assert "No messages returned" not in result.stderr
+    assert "processTicksAndRejections" not in result.stderr
+
+
+def test_claude_wrapper_reports_no_success_result(tmp_path: Path) -> None:
+    """When no success result exists, stderr tail should surface in the error turn."""
+    claude_stub = tmp_path / "claude"
+    _write_executable(
+        claude_stub,
+        """#!/usr/bin/env bash
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
+  exit 0
+fi
+
+echo "partial stdout line 1"
+echo "partial stdout line 2"
+echo "Error: No messages returned" >&2
+echo '    at AJB (/$bunfs/root/claude:6144:641)' >&2
+exit 1
+""",
+    )
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = _base_env(claude_stub)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert payload["agent"] == "claude"
+    assert "wrapper_status=error" in payload["summary"].lower()
+    assert "stdout tail:" in payload["summary"].lower()
+    assert "stderr tail:" in payload["summary"].lower()
+    assert "No messages returned" in result.stderr
+
+
+def test_claude_wrapper_newest_result_wins_on_suppression(tmp_path: Path) -> None:
+    """Newest result event decides success; later failure should not suppress noise."""
+    claude_stub = tmp_path / "claude"
+    _write_executable(
+        claude_stub,
+        """#!/usr/bin/env bash
+if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+  echo "Usage: claude --prompt --output-format --json-schema --model --no-session-persistence --permission-mode --tools --json"
+  exit 0
+fi
+if [[ "$1" == "--version" ]]; then
+  echo "claude 0.0.0"
+  exit 0
+fi
+
+python3 - <<'PY'
+import json
+events = [
+    {"type": "system", "subtype": "init"},
+    {"type": "result", "subtype": "success", "result": "not-json"},
+    {"type": "result", "subtype": "error", "result": "still-not-json"},
+]
+print(json.dumps(events))
+PY
+echo "This error originated either by throwing inside of an async function without a catch block," >&2
+echo "or by rejecting a promise which was not handled with .catch()." >&2
+echo "The promise rejected with the reason:" >&2
+echo "Error: No messages returned" >&2
+echo '    at AJB (/$bunfs/root/claude:6144:641)' >&2
+exit 1
+""",
+    )
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("**Milestone:** M0\nCL-1\n", encoding="utf-8")
+    out_path = tmp_path / "out.json"
+
+    env = _base_env(claude_stub)
+
+    result = subprocess.run(
+        [str(CLAUDE_WRAPPER), str(prompt_path), str(SCHEMA_PATH), str(out_path)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    _validate_turn(payload)
+    assert "wrapper_status=error" in payload["summary"].lower()
+    assert "No messages returned" in result.stderr
+
+
 # =============================================================================
 # Tests using the FakeClaudeCLI fixture
 # =============================================================================
