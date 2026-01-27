@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import platform
 import string
 import subprocess
@@ -10,6 +8,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from formula_foundry.common import canonical_json_dumps, sha256_bytes, sha256_file
 
 from .determinism import DeterminismConfig
 
@@ -98,14 +98,6 @@ def normalize_determinism_entry(entry: DeterminismConfig | Mapping[str, Any]) ->
     return dict(entry)
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
-
-
 def get_git_sha(project_root: Path) -> str:
     proc = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -164,17 +156,6 @@ def validate_manifest(data: Mapping[str, Any]) -> None:
         isinstance(key, str) and isinstance(value, str) for key, value in artifacts.items()
     ):
         raise ManifestValidationError("artifacts must be a mapping of string paths to string hashes")
-
-
-def canonical_json_dumps(data: Any) -> str:
-    """Serialize JSON with sorted keys and stable float formatting (repr-based, 17-digit)."""
-    return json.dumps(
-        data,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    )
 
 
 def write_manifest(path: Path, manifest: Manifest | Mapping[str, Any]) -> None:
