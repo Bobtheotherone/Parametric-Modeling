@@ -132,6 +132,32 @@ class TestDefaultProfilePolicy:
             assert not generator.is_type_on_cooldown(task_type), f"{task_type} should not be on cooldown"
 
 
+class TestEngineeringProfilePolicy:
+    """Test engineering profile disables all backfill generation."""
+
+    def test_engineering_profile_disables_generation(self, tmp_path):
+        """Verify engineering profile disables backfill generation."""
+        generator = BackfillGenerator(
+            project_root=str(tmp_path),
+            min_queue_depth=100,
+            planner_profile="engineering",
+        )
+
+        assert not generator.should_generate(current_queue_depth=0, worker_count=4)
+        assert generator.generate_filler_tasks(5) == []
+
+    def test_engineering_profile_disables_all_types(self, tmp_path):
+        """Verify engineering profile treats all task types as disabled."""
+        generator = BackfillGenerator(
+            project_root=str(tmp_path),
+            min_queue_depth=100,
+            planner_profile="engineering",
+        )
+
+        for task_type in ["lint", "test", "docs", "type_hints", "schema_lint"]:
+            assert generator.is_type_on_cooldown(task_type), f"{task_type} should be disabled in engineering profile"
+
+
 class TestProfileDisabledTypesConfig:
     """Test profile disabled types configuration."""
 

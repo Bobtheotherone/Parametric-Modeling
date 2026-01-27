@@ -89,10 +89,29 @@ The orchestrator refuses to stop unless the completion gates pass.
   - `GEMINI_MODEL`
   - `CLAUDE_MODEL`
 
+### Planner profiles
+
+The parallel orchestrator supports multiple planning profiles:
+
+- `balanced` (default): conservative planning and retries.
+- `throughput`: maximize parallel utilization with backfill tasks.
+- `engineering`: fail-fast, no backfill, and per-task reports.
+
+Enable engineering mode:
+
+```bash
+./run_parallel.sh --planner-profile engineering
+```
+
+Or via environment:
+
+```bash
+ORCH_PLANNER_PROFILE=engineering ./run_parallel.sh
+```
+
 ---
 
 ## Safety
 
 - `.env` is gitignored.
 - `tools/git_guard.py` performs a cheap local scan for common credential patterns.
-

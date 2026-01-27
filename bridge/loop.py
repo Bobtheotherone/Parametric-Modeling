@@ -63,6 +63,7 @@ from bridge.loop_pkg.turn_normalizer import (
 
 # Patch integration for commit-free worker operation
 from bridge.patch_integration import PatchIntegrator, collect_patch_artifact, save_patch_artifact
+from bridge.reports import write_task_report
 from bridge.scheduler import BackfillGenerator, FillerTask, LaneConfig, TwoLaneScheduler
 from bridge.smoke_route import resolve_smoke_route
 from bridge.streaming import run_cmd_with_streaming
@@ -73,6 +74,8 @@ from bridge.verify_repair import (
 )
 
 AGENTS: tuple[str, ...] = ("codex", "claude")
+PLANNER_PROFILES: tuple[str, ...] = ("balanced", "throughput", "engineering")
+DEFAULT_PLANNER_PROFILE = "balanced"
 
 
 # -----------------------------
@@ -297,6 +300,48 @@ def _write_text(path: Path, text: str) -> None:
 
 def _load_json(path: Path) -> Any:
     return json.loads(_read_text(path))
+
+
+def _normalize_planner_profile(profile: str | None) -> str:
+    if not profile:
+        return DEFAULT_PLANNER_PROFILE
+    normalized = profile.strip().lower()
+    if normalized == "default":
+        return DEFAULT_PLANNER_PROFILE
+    if normalized in PLANNER_PROFILES:
+        return normalized
+    return DEFAULT_PLANNER_PROFILE
+
+
+def _load_system_prompt(
+    *,
+    project_root: Path,
+    system_prompt_path: Path,
+    planner_profile: str,
+) -> tuple[str, Path]:
+    """Load the effective system prompt for the selected planner profile.
+
+    Returns a tuple of (prompt_text, effective_path). In engineering mode, this
+    forces the engineering system prompt and appends AGENTS.md content.
+    """
+    effective_path = system_prompt_path
+    if planner_profile == "engineering":
+        effective_path = project_root / "bridge" / "prompts" / "system_engineering.md"
+
+    prompt_text = _read_text(effective_path) if effective_path.exists() else ""
+
+    if planner_profile == "engineering":
+        agents_path = project_root / "AGENTS.md"
+        if agents_path.exists():
+            agents_text = _read_text(agents_path).strip()
+            if agents_text:
+                prompt_text = (
+                    prompt_text.strip()
+                    + "\n\n---\n\n# Repo Protocol (AGENTS.md)\n"
+                    + agents_text
+                )
+
+    return prompt_text, effective_path
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -904,6 +949,7 @@ def build_prompt(
     disabled_by_quota: dict[str, bool],
     stats_ids: list[str],
     readonly: bool,
+    planner_profile: str,
 ) -> str:
     last_summaries = "\n".join([f"- ({h['agent']}) {h['summary']}" for h in history[-4:]])
 
@@ -911,6 +957,7 @@ def build_prompt(
         {
             "agent": agent,
             "milestone_id": milestone_id,
+            "planner_profile": planner_profile,
             "call_counts": call_counts,
             "disabled_by_quota": disabled_by_quota,
             "known_stats_ids": stats_ids,
@@ -949,7 +996,11 @@ def build_prompt(
     if last_summaries.strip():
         parts += ["# Recent Turn Summaries\n", _truncate(last_summaries.strip(), 5000), "\n\n---\n\n"]
 
-    parts += ["# Your Work Item\n", next_prompt.strip() or "(Decide the next best step.)", "\n"]
+    if planner_profile == "engineering":
+        task_packet = _format_task_packet_for_sequential(next_prompt)
+        parts += ["# Task Packet\n", task_packet, "\n"]
+    else:
+        parts += ["# Your Work Item\n", next_prompt.strip() or "(Decide the next best step.)", "\n"]
     return "".join(parts)
 
 
@@ -2383,8 +2434,14 @@ class ParallelTask:
     work_completed: bool | None = None
     commit_sha: str | None = None
     turn_summary: str | None = None
+    turn_obj: dict[str, Any] | None = None
+    requirement_progress: dict[str, Any] | None = None
+    commands_run: list[str] = dataclasses.field(default_factory=list)
+    tests_added_or_modified: list[str] = dataclasses.field(default_factory=list)
+    covered_req_ids: list[str] = dataclasses.field(default_factory=list)
     # Patch integration (commit-free worker operation)
     patch_path: Path | None = None
+    patch_manifest_path: Path | None = None
     has_patch: bool = False
     # Retry tracking for plan-only responses
     retry_count: int = 0
@@ -3007,6 +3064,40 @@ For each milestone in the document, identify and create the necessary tasks."""
     return "\n\n".join(parts)
 
 
+def _format_task_packet_for_parallel(task: ParallelTask) -> str:
+    """Build a structured Task Packet for engineering mode prompts."""
+    def _fmt_list(items: list[str]) -> str:
+        if not items:
+            return "(none specified)"
+        return ", ".join(items)
+
+    lines = [
+        f"Objective: {task.title}",
+        f"Deliverables (from plan): {task.description.strip()}",
+        "Done criteria: Implement the task end-to-end, update tests/docs as needed, and set work_completed=true.",
+        f"Relevant files (declared): {_fmt_list([str(p) for p in task.touched_paths])}",
+        f"Locks: {_fmt_list([str(l) for l in task.locks])}",
+        f"Dependencies: {_fmt_list([str(d) for d in task.depends_on])}",
+        "Constraints: Follow AGENTS.md. No placeholders/TODO-only. Do not delegate unless explicitly required.",
+        "Suggested verification: Run targeted checks for touched files; if heavy, provide the exact command in summary.",
+    ]
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def _format_task_packet_for_sequential(next_prompt: str) -> str:
+    """Build a Task Packet for sequential engineering mode prompts."""
+    objective = next_prompt.strip() or "(decide the next best step)"
+    lines = [
+        f"Objective: {objective}",
+        "Deliverables: Complete the objective end-to-end with code + tests where applicable.",
+        "Done criteria: Work is implemented, verification commands are noted, summary includes a Work Report.",
+        "Relevant files: Identify and list in the Work Report.",
+        "Constraints: Follow AGENTS.md. No placeholders/TODO-only. Do not delegate unless required.",
+        "Suggested verification: Run the smallest relevant tests or provide exact commands.",
+    ]
+    return "\n".join(f"- {line}" for line in lines)
+
+
 def _build_parallel_task_prompt(
     *,
     system_prompt: str,
@@ -3016,6 +3107,7 @@ def _build_parallel_task_prompt(
     repo_snapshot: str,
     design_doc_text: str,
     resource_policy: dict[str, Any],
+    planner_profile: str,
 ) -> str:
     design_excerpt = _truncate(design_doc_text, 18000)
 
@@ -3023,6 +3115,7 @@ def _build_parallel_task_prompt(
         "runner_mode": "parallel-worker",
         "worker_id": worker_id,
         "milestone_id": milestone_id,
+        "planner_profile": planner_profile,
         "task": {
             "id": task.id,
             "title": task.title,
@@ -3033,6 +3126,18 @@ def _build_parallel_task_prompt(
         },
         "resource_policy": resource_policy,
     }
+
+    work_report_req = ""
+    if planner_profile == "engineering":
+        work_report_req = textwrap.dedent(
+            """
+            - Your summary MUST include a "Work Report" section with:
+              * Commands run (or "none")
+              * Files changed (or "no changes")
+              * Tests run (or "not run")
+              * Blockers/next steps if any
+            """
+        ).strip()
 
     instructions = textwrap.dedent(
         f"""
@@ -3054,6 +3159,7 @@ def _build_parallel_task_prompt(
         Output:
         - Output ONLY a single JSON object matching the schema.
         - In parallel-worker mode you may set next_agent to yourself and next_prompt to an empty string.
+        {work_report_req}
         """
     ).strip()
 
@@ -3069,6 +3175,15 @@ def _build_parallel_task_prompt(
     parts.extend(
         [
             "---\n\n# Orchestrator State\n" + json.dumps(state_blob, indent=2),
+        ]
+    )
+
+    if planner_profile == "engineering":
+        task_packet = _format_task_packet_for_parallel(task)
+        parts.append("---\n\n# Task Packet\n" + task_packet)
+
+    parts.extend(
+        [
             "---\n\n# Task\n" + task.description.strip(),
             "---\n\n# Repo Snapshot\n" + repo_snapshot.strip(),
             "---\n\n# Design Doc (truncated)\n" + design_excerpt.strip(),
@@ -3078,6 +3193,115 @@ def _build_parallel_task_prompt(
 
     return "\n\n".join(parts)
 
+
+NON_PROGRESS_SUMMARY_PATTERNS = [
+    "wrapper_status",
+    "auth",
+    "authentication",
+    "api key",
+    "quota",
+    "rate limit",
+    "tools are disabled",
+    "tools disabled",
+    "cannot use tools",
+    "no changes",
+    "nothing to commit",
+    "planning only",
+    "plan only",
+    "no-op",
+]
+
+NON_PROGRESS_ACTION_KEYWORDS = [
+    "implement",
+    "implemented",
+    "add",
+    "added",
+    "update",
+    "updated",
+    "fix",
+    "fixed",
+    "remove",
+    "removed",
+    "create",
+    "created",
+    "refactor",
+    "refactored",
+    "modify",
+    "modified",
+    "test",
+    "tests",
+    "ran",
+    "run",
+    "executed",
+    "command",
+    "patch",
+    "diff",
+    "changed",
+]
+
+
+def _normalize_commands(commands: list[str]) -> list[str]:
+    cleaned = []
+    for cmd in commands:
+        if cmd is None:
+            continue
+        text = str(cmd).strip()
+        if not text:
+            continue
+        if text.lower() in {"n/a", "none", "no commands", "noop", "-", "null"}:
+            continue
+        cleaned.append(text)
+    return cleaned
+
+
+def _summary_is_generic(summary: str) -> bool:
+    text = summary.strip()
+    if not text:
+        return True
+    lower = " ".join(text.lower().split())
+    has_action = any(word in lower for word in NON_PROGRESS_ACTION_KEYWORDS)
+    if any(pat in lower for pat in NON_PROGRESS_SUMMARY_PATTERNS) and not has_action:
+        return True
+    if len(lower) < 80 and not has_action:
+        return True
+    return False
+
+
+def _detect_non_progress_turn(turn_obj: dict[str, Any], has_changes: bool) -> tuple[bool, str]:
+    if not isinstance(turn_obj, dict):
+        return False, ""
+    if bool(turn_obj.get("work_completed", False)):
+        return False, ""
+    if has_changes:
+        return False, ""
+
+    requirement_progress = turn_obj.get("requirement_progress", {}) or {}
+    commands = _normalize_commands(requirement_progress.get("commands_run", []) or [])
+    summary = str(turn_obj.get("summary", "") or "")
+
+    if not commands and _summary_is_generic(summary):
+        return True, "work_completed=false with no commands and generic summary"
+    return False, ""
+
+
+def _max_retries_for_profile(planner_profile: str) -> int:
+    return 0 if planner_profile == "engineering" else 2
+
+
+def _should_self_heal_task(task: ParallelTask, planner_profile: str) -> tuple[bool, str]:
+    """Return (allowed, reason) for self-heal reruns."""
+    if planner_profile != "engineering":
+        return True, "default_profile"
+    error_lower = (task.error or "").lower()
+    if task.status == "resource_killed" or "stopped for resources" in error_lower:
+        return True, "resource_killed"
+    if "exit code 137" in error_lower or "killed" in error_lower:
+        return True, "process_killed"
+    if "timeout" in error_lower or "timed out" in error_lower:
+        return True, "timeout"
+    if "lock" in error_lower and ("contention" in error_lower or "lock" in error_lower):
+        return True, "lock_contention"
+    return False, "non_infra_failure"
 
 def _select_only_tasks(all_tasks: list[ParallelTask], only_ids: list[str]) -> list[ParallelTask]:
     if not only_ids:
@@ -3193,6 +3417,7 @@ def _generate_run_summary(
     tasks: list[ParallelTask],
     runs_dir: Path,
     verify_exit_code: int,
+    planner_profile: str = DEFAULT_PLANNER_PROFILE,
 ) -> dict[str, Any]:
     """Generate a structured summary of the parallel run.
 
@@ -3253,6 +3478,7 @@ def _generate_run_summary(
 
     summary = {
         "run_dir": str(runs_dir),
+        "planner_profile": planner_profile,
         "total_tasks": len(tasks),
         "completed": len(completed_tasks),
         "failed": failed_count,
@@ -3452,6 +3678,7 @@ def _run_parallel_task(
     milestone_id: str,
     design_doc_text: str,
     system_prompt: str,
+    planner_profile: str,
     stats_id_set: set,
     tasks_dir: Path,
     worktrees_dir: Path,
@@ -3611,6 +3838,7 @@ def _run_parallel_task(
                 repo_snapshot=repo_snapshot,
                 design_doc_text=design_doc_text,
                 resource_policy=resource_policy,
+                planner_profile=planner_profile,
             )
         else:
             # Retry: use focused "IMPLEMENT NOW" prompt
@@ -3911,8 +4139,14 @@ def _run_parallel_task(
             return
 
         # Track turn output metadata
+        task.turn_obj = turn_obj
         task.work_completed = bool(turn_obj.get("work_completed", False))
         task.turn_summary = str(turn_obj.get("summary", ""))[:500]
+        requirement_progress = turn_obj.get("requirement_progress", {}) or {}
+        task.requirement_progress = requirement_progress
+        task.commands_run = _normalize_commands(requirement_progress.get("commands_run", []) or [])
+        task.tests_added_or_modified = list(requirement_progress.get("tests_added_or_modified", []) or [])
+        task.covered_req_ids = list(requirement_progress.get("covered_req_ids", []) or [])
 
         # Collect changes as patch artifact (no git commit required from worker)
         # This eliminates the ".git/worktrees/*/index.lock permission denied" class of failures
@@ -3929,6 +4163,7 @@ def _run_parallel_task(
                 # Save patch artifacts atomically
                 patch_path, manifest_path = save_patch_artifact(patch_artifact, task.task_dir)
                 task.patch_path = patch_path
+                task.patch_manifest_path = manifest_path
                 task.has_patch = True
                 print(f"[orchestrator] {task.id}: collected patch with {len(patch_artifact.changes)} changed files")
             else:
@@ -3945,6 +4180,22 @@ def _run_parallel_task(
                     if rc_sha == 0:
                         task.commit_sha = sha_out.strip()
                 # If commit fails, that's OK - we'll rely on the patch artifact
+
+        # Engineering mode: fail fast on non-progress turns
+        non_progress = False
+        non_progress_reason = ""
+        if planner_profile == "engineering":
+            non_progress, non_progress_reason = _detect_non_progress_turn(turn_obj, has_changes or task.has_patch)
+            if non_progress:
+                task.status = "manual"
+                task.error = f"NON_PROGRESS: {non_progress_reason}"
+                _mark_task_manual(
+                    task=task,
+                    reason=task.error,
+                    manual_dir=manual_dir,
+                    schema_path=schema_path,
+                )
+                return
 
         # CRITICAL: Task is only "done" if work_completed==true
         if task.work_completed:
@@ -3968,6 +4219,16 @@ def _run_parallel_task(
             continue
         else:
             # All retries exhausted - mark for manual rerun
+            if planner_profile == "engineering":
+                task.status = "manual"
+                task.error = non_progress_reason or "work_completed=false with no changes"
+                _mark_task_manual(
+                    task=task,
+                    reason=f"{task.error}. Summary: {task.turn_summary}",
+                    manual_dir=manual_dir,
+                    schema_path=schema_path,
+                )
+                return
             task.status = "pending_rerun"
             task.error = f"Agent returned work_completed=false after {task.retry_count + 1} attempts; needs manual implementation"
             task.manual_path = _write_manual_task_file(
@@ -4041,6 +4302,28 @@ def _run_selftest_task(
         exc_path.write_text(traceback.format_exc(), encoding="utf-8")
 
 
+def _maybe_write_task_report(
+    *,
+    task: ParallelTask,
+    runs_dir: Path,
+    planner_profile: str,
+    config: RunConfig,
+) -> None:
+    if planner_profile != "engineering":
+        return
+    try:
+        agent_model = config.agent_models.get(task.agent)
+        report_path = write_task_report(
+            runs_dir=runs_dir,
+            task=task,
+            agent_model=agent_model,
+            planner_profile=planner_profile,
+        )
+        print(f"[orchestrator] wrote task report: {report_path}")
+    except Exception as e:
+        print(f"[orchestrator] warning: failed to write task report for {task.id}: {e}")
+
+
 def run_parallel(
     *,
     args: argparse.Namespace,
@@ -4051,6 +4334,7 @@ def run_parallel(
     system_prompt: str,
 ) -> int:
     machine_info = _collect_machine_info()
+    planner_profile = _normalize_planner_profile(getattr(args, "planner_profile", DEFAULT_PLANNER_PROFILE))
     selftest_mode = getattr(args, "selftest_parallel", False)
 
     # Preflight check: detect dirty repo before spending credits
@@ -4196,8 +4480,6 @@ def run_parallel(
         # Save design spec artifact for debugging
         design_spec_artifact = state.runs_dir / "design_doc_spec.json"
         try:
-            import json
-
             design_spec_artifact.write_text(json.dumps(design_spec.to_dict(), indent=2), encoding="utf-8")
         except Exception:
             pass  # Non-fatal if we can't write the artifact
@@ -4225,13 +4507,13 @@ def run_parallel(
         planner_max_workers_limit = cli_cap if cli_cap > 0 else safe_cap
 
         # Get planner profile (default: balanced)
-        planner_profile = getattr(args, "planner_profile", "balanced") or "balanced"
-
         # Log throughput mode settings
         if planner_profile == "throughput":
             print(
                 f"[orchestrator] planner_profile=throughput (target_roots={planner_max_workers_limit}, target_plan_cap={planner_max_workers_limit})"
             )
+        elif planner_profile == "engineering":
+            print("[orchestrator] planner_profile=engineering (no backfill, fail-fast, per-task reports)")
 
         plan_prompt = _build_task_plan_prompt(
             design_doc_text=design_doc_text,
@@ -4413,6 +4695,9 @@ def run_parallel(
             tid = str(t.get("id", "")).strip()
             if not tid:
                 continue
+            if planner_profile == "engineering" and tid.startswith("FILLER-"):
+                print(f"[orchestrator] engineering profile: skipping filler task {tid}")
+                continue
             # The planner schema uses preferred_agent/estimated_intensity, but we also
             # accept legacy keys (agent/intensity) for compatibility.
             agent = str(t.get("preferred_agent", t.get("agent", "either"))).strip().lower()
@@ -4436,6 +4721,7 @@ def run_parallel(
                     touched_paths=list(t.get("touched_paths", []) or []),
                     depends_on=list(t.get("depends_on", []) or []),
                     solo=bool(t.get("solo", False)),
+                    max_retries=_max_retries_for_profile(planner_profile),
                 )
             )
 
@@ -4626,6 +4912,9 @@ def run_parallel(
         6. Batch limit: max 2 FILLER tasks per generation cycle
         """
         nonlocal backfill_tasks_generated, tasks, by_id
+
+        if planner_profile == "engineering":
+            return 0
 
         # Don't generate in selftest mode
         if selftest_mode:
@@ -4892,6 +5181,7 @@ def run_parallel(
                     milestone_id=task_milestone_id,
                     design_doc_text=design_doc_text,
                     system_prompt=system_prompt,
+                    planner_profile=planner_profile,
                     stats_id_set=stats_id_set,
                     tasks_dir=tasks_dir,
                     worktrees_dir=worktrees_dir,
@@ -4912,6 +5202,13 @@ def run_parallel(
                 exc_path = t.task_dir / "exception.txt"
                 exc_path.write_text(traceback.format_exc(), encoding="utf-8")
             print(f"[orchestrator] ERROR: task {t.id} raised exception: {e}")
+        finally:
+            _maybe_write_task_report(
+                task=t,
+                runs_dir=state.runs_dir,
+                planner_profile=planner_profile,
+                config=config,
+            )
         return t.id
 
     # Main scheduler loop using concurrent.futures with FIRST_COMPLETED
@@ -4988,16 +5285,34 @@ def run_parallel(
                 if not recovered and root_failures:
                     print(f"[orchestrator] RECOVERY: {len(root_failures)} root failure(s) detected")
                     rerun_count = 0
+                    rerun_candidates: list[tuple[ParallelTask, str]] = []
                     for t in root_failures:
+                        allowed, reason = _should_self_heal_task(t, planner_profile)
+                        if not allowed:
+                            if planner_profile == "engineering":
+                                print(f"[orchestrator] SELF-HEAL SKIP: {t.id} ({reason})")
+                            continue
+                        rerun_candidates.append((t, reason))
+
+                    if planner_profile == "engineering" and rerun_candidates:
+                        # Fail-fast mode: only attempt one targeted rerun
+                        rerun_candidates = rerun_candidates[:1]
+
+                    for t, reason in rerun_candidates:
                         # Only retry if the task hasn't been retried too many times
                         current_retries = getattr(t, "_self_heal_retries", 0)
-                        max_self_heal_retries = 2
+                        max_self_heal_retries = 1 if planner_profile == "engineering" else 2
                         if current_retries < max_self_heal_retries:
                             t._self_heal_retries = current_retries + 1
                             # Reset the task for rerun
                             print(
-                                f"[orchestrator] RECOVERY: Scheduling {t.id} for self-heal rerun (attempt {t._self_heal_retries})"
+                                f"[orchestrator] RECOVERY: Scheduling {t.id} for self-heal rerun "
+                                f"(attempt {t._self_heal_retries}, reason={reason})"
                             )
+                            if reason == "resource_killed":
+                                # Reduce parallelism impact for resource-killed tasks
+                                t.solo = True
+                                t.intensity = "high"
                             t.status = "pending"
                             t.error = None
                             t.retry_count = 0  # Reset retry counter
@@ -5288,6 +5603,7 @@ def run_parallel(
         tasks=tasks,
         runs_dir=state.runs_dir,
         verify_exit_code=rc_v,
+        planner_profile=planner_profile,
     )
     summary_path = state.runs_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
@@ -5469,6 +5785,34 @@ def _run_parallel_with_auto_continue(
     - Has a high tolerance for stalled runs (max_stalled=10) before escalation
     - Continues burning credits to maximize chance of success
     """
+    planner_profile = _normalize_planner_profile(getattr(args, "planner_profile", DEFAULT_PLANNER_PROFILE))
+    if planner_profile == "engineering":
+        print("[orchestrator] engineering profile: auto-continue disabled (single run only)")
+        run_id = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        runs_dir = project_root / "runs" / run_id
+        _git_init_if_needed(project_root)
+        if not getattr(args, "no_agent_branch", False):
+            _checkout_agent_branch(project_root, run_id)
+        state = RunState(
+            run_id=run_id,
+            project_root=project_root,
+            runs_dir=runs_dir,
+            schema_path=schema_path,
+            system_prompt_path=system_prompt_path,
+            design_doc_path=(project_root / args.design_doc).resolve(),
+            smoke_route=config.smoke_route,
+            readonly=getattr(args, "readonly", False),
+        )
+        _ensure_dir(state.runs_dir)
+        get_agent_policy().runs_dir = state.runs_dir
+        return run_parallel(
+            args=args,
+            config=config,
+            state=state,
+            stats_ids=stats_ids,
+            stats_id_set=stats_id_set,
+            system_prompt=system_prompt,
+        )
     max_runs = max(1, args.max_continuation_runs)
     run_count = 0
     last_summary: dict[str, Any] | None = None
@@ -5722,10 +6066,11 @@ def main() -> int:
     )
     ap.add_argument(
         "--planner-profile",
-        choices=["balanced", "throughput"],
+        choices=["balanced", "throughput", "engineering"],
         default="balanced",
         help="Planner profile: 'balanced' (default) for conservative planning, "
-        "'throughput' for many small parallel tasks to maximize worker utilization",
+        "'throughput' for many small parallel tasks to maximize worker utilization, "
+        "'engineering' for fail-fast, no-backfill execution with durable reports",
     )
     ap.add_argument("--cpu-threshold", type=float, default=0.0, help="Override CPU%% threshold for auto-stop (0=use config)")
     ap.add_argument("--mem-threshold", type=float, default=0.0, help="Override RAM%% threshold for auto-stop (0=use config)")
@@ -5815,6 +6160,17 @@ def main() -> int:
     if os.environ.get("FF_SKIP_VERIFY") == "1":
         args.verify_mode = "off"
 
+    # Planner profile override via environment (unless explicitly set on CLI)
+    env_profile = os.environ.get("ORCH_PLANNER_PROFILE", "").strip().lower()
+    if env_profile and "--planner-profile" not in sys.argv:
+        normalized_env = _normalize_planner_profile(env_profile)
+        if normalized_env != env_profile:
+            print(f"[orchestrator] WARNING: ORCH_PLANNER_PROFILE '{env_profile}' not recognized; using {normalized_env}")
+        args.planner_profile = normalized_env
+
+    # Normalize planner profile for downstream logic
+    args.planner_profile = _normalize_planner_profile(args.planner_profile)
+
     readonly_env = os.environ.get("ORCH_READONLY", "").strip().lower() in ("1", "true", "yes")
     args.readonly = args.readonly or readonly_env
     if args.readonly and not args.no_agent_branch:
@@ -5823,6 +6179,10 @@ def main() -> int:
 
     # Handle --no-auto-continue override
     if args.no_auto_continue:
+        args.auto_continue = False
+
+    if args.planner_profile == "engineering" and args.auto_continue:
+        print("[orchestrator] engineering profile: disabling auto-continue (fail-fast mode)")
         args.auto_continue = False
 
     project_root = Path(args.project_root).resolve()
@@ -5883,7 +6243,13 @@ def main() -> int:
     stats_ids = _extract_stats_ids(stats_md)
     stats_id_set = set(stats_ids)
 
-    system_prompt = _read_text(system_prompt_path) if system_prompt_path.exists() else ""
+    system_prompt, effective_prompt_path = _load_system_prompt(
+        project_root=project_root,
+        system_prompt_path=system_prompt_path,
+        planner_profile=args.planner_profile,
+    )
+    if effective_prompt_path != system_prompt_path:
+        system_prompt_path = effective_prompt_path
 
     if args.runner == "parallel" or args.selftest_parallel:
         if not args.selftest_parallel and args.mode != "live":
@@ -5988,6 +6354,7 @@ def main() -> int:
             disabled_by_quota=state.disabled_by_quota,
             stats_ids=stats_ids,
             readonly=state.readonly,
+            planner_profile=args.planner_profile,
         )
 
         prompt_path = call_dir / "prompt.txt"
